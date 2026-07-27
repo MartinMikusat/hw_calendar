@@ -487,7 +487,7 @@ calendar_ui_header_rect :: proc() -> Calendar_UI_Rect {
 
 calendar_ui_title_rect :: proc() -> Calendar_UI_Rect {
 	return {
-		66,
+		86,
 		calendar_ui.height-CALENDAR_HEADER_CONTROL_HEIGHT-1,
 		360,
 		CALENDAR_HEADER_CONTROL_HEIGHT,
