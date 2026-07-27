@@ -99,6 +99,8 @@ rebuild and restart the host. An incompatible state layout also requests a
 controlled restart with exit status 75. A failed module build leaves the
 current generation active. `./dev.sh asan` uses the same reload path with
 AddressSanitizer instrumentation. Release mode keeps the full rebuild path.
+Every `./dev.sh` launch orders the window behind active applications. Launch
+the app directly when it must activate and move to the front.
 A watcher lock prevents a second `./dev.sh` invocation from opening another
 application instance.
 

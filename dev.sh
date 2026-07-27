@@ -103,9 +103,13 @@ check_app() {
 
 launch_app() {
   if [ "$MODE" = "release" ]; then
-    env MTL_DEBUG_LAYER=1 "$EXECUTABLE" &
+    env \
+      HW_CALENDAR_ACTIVATE_ON_LAUNCH=0 \
+      MTL_DEBUG_LAYER=1 \
+      "$EXECUTABLE" &
   else
     env \
+      HW_CALENDAR_ACTIVATE_ON_LAUNCH=0 \
       HW_HOT_RELOAD_MODULE="$MODULE" \
       MTL_DEBUG_LAYER=1 \
       "$EXECUTABLE" &

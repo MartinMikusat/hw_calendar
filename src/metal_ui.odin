@@ -3,6 +3,7 @@ package main
 import "base:runtime"
 import "core:fmt"
 import "core:hash"
+import "core:os"
 import "core:strings"
 import "core:time"
 import CF "core:sys/darwin/CoreFoundation"
@@ -2346,6 +2347,14 @@ calendar_ui_destroy :: proc() {
 	calendar_ui = {}
 }
 
+calendar_launch_should_activate :: proc(
+	value: string,
+	launch_in_background := false,
+) -> bool {
+	if len(value) > 0 {return value != "0"}
+	return !launch_in_background
+}
+
 calendar_gui_initialize :: proc(
 	services: ^hot_reload.Host_Services = nil,
 ) -> bool {
@@ -2450,8 +2459,16 @@ calendar_gui_initialize :: proc(
 		)
 	}
 	msg_void_id(calendar_ui.window, sel_registerName("makeFirstResponder:"), calendar_ui.view)
-	msg_void_id(calendar_ui.window, sel_registerName("makeKeyAndOrderFront:"), nil)
-	msg_void_i(app, sel_registerName("activateIgnoringOtherApps:"), 1)
+	launch_in_background := services != nil && services.launch_in_background
+	if calendar_launch_should_activate(
+		os.get_env("HW_CALENDAR_ACTIVATE_ON_LAUNCH"),
+		launch_in_background,
+	) {
+		msg_void_id(calendar_ui.window, sel_registerName("makeKeyAndOrderFront:"), nil)
+		msg_void_i(app, sel_registerName("activateIgnoringOtherApps:"), 1)
+	} else {
+		msg_void_id(calendar_ui.window, sel_registerName("orderBack:"), nil)
+	}
 	if !calendar_cli_ipc_server_start() {
 		fmt.eprintln("HW Calendar could not start its local control socket.")
 		return false

@@ -3,6 +3,17 @@ package main
 import "core:testing"
 import flash "flash:."
 
+@(test)
+calendar_launch_activation_respects_background_policy_test :: proc(
+	t: ^testing.T,
+) {
+	testing.expect(t, calendar_launch_should_activate(""))
+	testing.expect(t, !calendar_launch_should_activate("", true))
+	testing.expect(t, calendar_launch_should_activate("1", true))
+	testing.expect(t, !calendar_launch_should_activate("0"))
+	testing.expect(t, !calendar_launch_should_activate("0", true))
+}
+
 calendar_icon_points_use_iconoir_viewbox_test :: proc(
 	t: ^testing.T,
 	points: []Calendar_Icon_Point,
