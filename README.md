@@ -24,6 +24,10 @@ Press `/` when no text field has focus to activate Flash labels. Press
 Select an event or the New Event control to open the Metal event editor. The
 editor exposes the same controls to pointer input, Accessibility, and Flash.
 
+The application uses a square borderless window by product requirement. Its
+project-drawn close, minimize, and zoom controls call the corresponding AppKit
+operations and use the shared pointer, Accessibility, and Flash registry.
+
 ## RFC 5545 data
 
 The iCalendar engine parses the complete RFC 5545 component tree. It preserves

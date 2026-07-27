@@ -90,6 +90,9 @@ calendar_ui_diagnostic_serial: int
 calendar_ui_diagnostic_action_name :: proc(action: Calendar_UI_Action) -> string {
 	switch action {
 	case .None: return "none"
+	case .Window_Close: return "window-close"
+	case .Window_Minimize: return "window-minimize"
+	case .Window_Zoom: return "window-zoom"
 	case .Today: return "today"
 	case .Search: return "search"
 	case .New_Event: return "new-event"

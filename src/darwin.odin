@@ -81,6 +81,16 @@ msg_id_rect :: proc(receiver: Id, selector: Sel, value: Rect) -> Id {
 	return p(receiver, selector, value)
 }
 
+msg_void_rect_bool :: proc(
+	receiver: Id,
+	selector: Sel,
+	value: Rect,
+	display: bool,
+) {
+	p := transmute(proc "c" (Id, Sel, Rect, bool))objc_send_address
+	p(receiver, selector, value, display)
+}
+
 msg_id_rect_u_u_b :: proc(
 	receiver: Id,
 	selector: Sel,

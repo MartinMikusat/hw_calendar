@@ -34,6 +34,7 @@ foreign core_graphics {
 	CGContextSaveGState :: proc "c" (ctx: rawptr) ---
 	CGContextRestoreGState :: proc "c" (ctx: rawptr) ---
 	CGContextClipToRect :: proc "c" (ctx: rawptr, rect: Rect) ---
+	CGContextFillEllipseInRect :: proc "c" (ctx: rawptr, rect: Rect) ---
 }
 
 foreign import core_text "system:CoreText.framework"
@@ -91,6 +92,9 @@ Calendar_MTL_Region :: struct {origin: Calendar_MTL_Origin, size: Calendar_MTL_S
 
 Calendar_UI_Action :: enum {
 	None,
+	Window_Close,
+	Window_Minimize,
+	Window_Zoom,
 	Today,
 	Search,
 	New_Event,
@@ -133,6 +137,9 @@ Calendar_UI_State :: struct {
 	height: f64,
 	scale: f64,
 	needs_redraw: bool,
+	resize_edges: u8,
+	resize_start_mouse: Point,
+	resize_start_frame: Rect,
 	frame_index: int,
 	notification_reconcile_stamp: i64,
 	day_offset: int,
@@ -166,6 +173,11 @@ CALENDAR_HEADER_CONTROL_HEIGHT :: 30.0
 CALENDAR_DAY_ROW_HEIGHT :: 28.0
 CALENDAR_DAY_ROW_PITCH :: 30.0
 CALENDAR_DAY_TOP_GAP :: 4.0
+CALENDAR_WINDOW_STYLE :: uint(14)
+CALENDAR_WINDOW_MINIMIZE_STYLE :: uint(15)
+CALENDAR_WINDOW_RESIZE_INSET :: 6.0
+CALENDAR_WINDOW_MIN_WIDTH :: 640.0
+CALENDAR_WINDOW_MIN_HEIGHT :: 480.0
 
 calendar_msg_void_size :: proc(receiver: Id, selector: Sel, size: Size) {
 	p := transmute(proc "c" (Id, Sel, Size))objc_send_address
@@ -326,6 +338,9 @@ calendar_ui_ax_screen_rect :: proc(rect: Calendar_UI_Rect) -> Rect {
 calendar_ui_ax_label :: proc(control: ^Calendar_UI_Control) -> string {
 	if control == nil {return ""}
 	switch control.action {
+	case .Window_Close: return "Close window"
+	case .Window_Minimize: return "Minimize window"
+	case .Window_Zoom: return "Zoom window"
 	case .Today: return "Jump to today"
 	case .Search: return "Search events"
 	case .New_Event: return "New event"
@@ -422,6 +437,7 @@ calendar_ui_rebuild_accessibility :: proc() {
 	element_class := objc_getClass("HWCalendarAccessibilityElement")
 	for &control in calendar_ui.controls {
 		if calendar_ui.editor_open &&
+		   !calendar_ui_is_window_action(control.action) &&
 		   control.action != .Editor_Field &&
 		   control.action != .Editor_Important &&
 		   control.action != .Editor_Save &&
@@ -487,11 +503,26 @@ calendar_ui_header_rect :: proc() -> Calendar_UI_Rect {
 
 calendar_ui_title_rect :: proc() -> Calendar_UI_Rect {
 	return {
-		86,
+		94,
 		calendar_ui.height-CALENDAR_HEADER_CONTROL_HEIGHT-1,
 		360,
 		CALENDAR_HEADER_CONTROL_HEIGHT,
 	}
+}
+
+calendar_ui_window_control_rect :: proc(index: int) -> Calendar_UI_Rect {
+	return {
+		16+26*f64(index),
+		calendar_ui.height-24,
+		16,
+		16,
+	}
+}
+
+calendar_ui_is_window_action :: proc(action: Calendar_UI_Action) -> bool {
+	return action == .Window_Close ||
+	       action == .Window_Minimize ||
+	       action == .Window_Zoom
 }
 
 calendar_ui_today_rect :: proc() -> Calendar_UI_Rect {
@@ -577,6 +608,7 @@ calendar_ui_begin_flash :: proc() {
 	)
 	for control in calendar_ui.controls {
 		if calendar_ui.editor_open &&
+		   !calendar_ui_is_window_action(control.action) &&
 		   control.action != .Editor_Field &&
 		   control.action != .Editor_Important &&
 		   control.action != .Editor_Save &&
@@ -836,6 +868,26 @@ calendar_ui_activate_control :: proc(id: u64) {
 	for control in calendar_ui.controls {
 		if control.id != id {continue}
 		switch control.action {
+		case .Window_Close:
+			msg_void(calendar_ui.window, sel_registerName("close"))
+		case .Window_Minimize:
+			msg_void_u(
+				calendar_ui.window,
+				sel_registerName("setStyleMask:"),
+				CALENDAR_WINDOW_MINIMIZE_STYLE,
+			)
+			msg_void_id(
+				calendar_ui.window,
+				sel_registerName("miniaturize:"),
+				nil,
+			)
+			msg_void_u(
+				calendar_ui.window,
+				sel_registerName("setStyleMask:"),
+				CALENDAR_WINDOW_STYLE,
+			)
+		case .Window_Zoom:
+			msg_void_id(calendar_ui.window, sel_registerName("zoom:"), nil)
 		case .Today:
 			calendar_ui.day_offset = 0
 			calendar_ui_reload_data()
@@ -865,16 +917,92 @@ calendar_ui_activate_control :: proc(id: u64) {
 	calendar_ui.needs_redraw = true
 }
 
-calendar_ui_click :: proc(point: Point) {
+calendar_ui_click :: proc(point: Point) -> bool {
 	flash.cancel(&calendar_ui.flash)
 	for index := len(calendar_ui.controls)-1; index >= 0; index -= 1 {
 		control := calendar_ui.controls[index]
 		if calendar_ui_contains(control.rect, point) {
 			calendar_ui_activate_control(control.id)
-			return
+			return true
 		}
 	}
 	calendar_ui.needs_redraw = true
+	return false
+}
+
+calendar_ui_resize_edges :: proc(point: Point) -> u8 {
+	edges := u8(0)
+	if point.x <= CALENDAR_WINDOW_RESIZE_INSET {edges |= 1}
+	if point.x >= calendar_ui.width-CALENDAR_WINDOW_RESIZE_INSET {edges |= 2}
+	if point.y <= CALENDAR_WINDOW_RESIZE_INSET {edges |= 4}
+	if point.y >= calendar_ui.height-CALENDAR_WINDOW_RESIZE_INSET {edges |= 8}
+	return edges
+}
+
+calendar_ui_begin_resize :: proc(point: Point) -> bool {
+	edges := calendar_ui_resize_edges(point)
+	if edges == 0 {return false}
+	calendar_ui.resize_edges = edges
+	calendar_ui.resize_start_mouse = msg_point(
+		objc_getClass("NSEvent"),
+		sel_registerName("mouseLocation"),
+	)
+	calendar_ui.resize_start_frame = msg_rect(
+		calendar_ui.window,
+		sel_registerName("frame"),
+	)
+	return true
+}
+
+calendar_on_mouse_dragged :: proc "c" (self: Id, command: Sel, event: Id) {
+	context = runtime.default_context()
+	if calendar_ui.resize_edges == 0 {return}
+	mouse := msg_point(
+		objc_getClass("NSEvent"),
+		sel_registerName("mouseLocation"),
+	)
+	delta := Point{
+		mouse.x-calendar_ui.resize_start_mouse.x,
+		mouse.y-calendar_ui.resize_start_mouse.y,
+	}
+	start := calendar_ui.resize_start_frame
+	frame := start
+	if calendar_ui.resize_edges&1 != 0 {
+		frame.size.width = max(
+			CALENDAR_WINDOW_MIN_WIDTH,
+			start.size.width-delta.x,
+		)
+		frame.origin.x = start.origin.x+start.size.width-frame.size.width
+	} else if calendar_ui.resize_edges&2 != 0 {
+		frame.size.width = max(
+			CALENDAR_WINDOW_MIN_WIDTH,
+			start.size.width+delta.x,
+		)
+	}
+	if calendar_ui.resize_edges&4 != 0 {
+		frame.size.height = max(
+			CALENDAR_WINDOW_MIN_HEIGHT,
+			start.size.height-delta.y,
+		)
+		frame.origin.y = start.origin.y+start.size.height-frame.size.height
+	} else if calendar_ui.resize_edges&8 != 0 {
+		frame.size.height = max(
+			CALENDAR_WINDOW_MIN_HEIGHT,
+			start.size.height+delta.y,
+		)
+	}
+	msg_void_rect_bool(
+		calendar_ui.window,
+		sel_registerName("setFrame:display:"),
+		frame,
+		true,
+	)
+	calendar_ui.needs_redraw = true
+}
+
+calendar_on_mouse_up :: proc "c" (self: Id, command: Sel, event: Id) {
+	context = runtime.default_context()
+	calendar_ui.resize_edges = 0
 }
 
 calendar_on_mouse_down :: proc "c" (self: Id, command: Sel, event: Id) {
@@ -887,7 +1015,15 @@ calendar_on_mouse_down :: proc "c" (self: Id, command: Sel, event: Id) {
 		window_point,
 		nil,
 	)
-	calendar_ui_click(point)
+	if calendar_ui_begin_resize(point) {return}
+	if calendar_ui_click(point) {return}
+	if calendar_ui_contains(calendar_ui_header_rect(), point) {
+		msg_void_id(
+			calendar_ui.window,
+			sel_registerName("performWindowDragWithEvent:"),
+			event,
+		)
+	}
 }
 
 calendar_on_scroll :: proc "c" (self: Id, command: Sel, event: Id) {
@@ -1310,6 +1446,31 @@ calendar_draw_text :: proc(
 	CGContextRestoreGState(ctx)
 }
 
+calendar_draw_window_controls :: proc(ctx: rawptr) {
+	colors := [3][4]f64{
+		{1.0, 0.05, 0.24, 1},
+		{1.0, 0.64, 0.02, 1},
+		{0.0, 0.80, 0.24, 1},
+	}
+	for color, index in colors {
+		rect := calendar_ui_window_control_rect(index)
+		CGContextSetRGBFillColor(
+			ctx,
+			color[0],
+			color[1],
+			color[2],
+			color[3],
+		)
+		CGContextFillEllipseInRect(
+			ctx,
+			{
+				{rect.x*calendar_ui.scale, rect.y*calendar_ui.scale},
+				{rect.w*calendar_ui.scale, rect.h*calendar_ui.scale},
+			},
+		)
+	}
+}
+
 calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 	pixels := make([]u8, int(width*height*4))
 	space := CGColorSpaceCreateDeviceRGB()
@@ -1529,6 +1690,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			)
 		}
 	}
+	calendar_draw_window_controls(ctx)
 	return pixels
 }
 
@@ -1673,6 +1835,29 @@ calendar_render_frame :: proc() {
 	)
 	vertices := make([dynamic]Calendar_Solid_Vertex, context.temp_allocator)
 	calendar_ui_clear_controls()
+	window_actions := [3]Calendar_UI_Action{
+		.Window_Close,
+		.Window_Minimize,
+		.Window_Zoom,
+	}
+	window_names := [3]string{
+		"window close",
+		"window minimize",
+		"window zoom",
+	}
+	window_labels := [3]string{
+		"close window",
+		"minimize window",
+		"zoom window",
+	}
+	for action, index in window_actions {
+		calendar_ui_add_control(
+			window_names[index],
+			window_labels[index],
+			calendar_ui_window_control_rect(index),
+			action,
+		)
+	}
 	if !calendar_ui.editor_open {
 		calendar_ui_add_control(
 			"today",
@@ -1863,6 +2048,8 @@ calendar_register_classes :: proc() -> Id {
 	)
 	class_addMethod(view_class, sel_registerName("acceptsFirstResponder"), rawptr(calendar_on_accepts_first), "B@:")
 	class_addMethod(view_class, sel_registerName("mouseDown:"), rawptr(calendar_on_mouse_down), "v@:@")
+	class_addMethod(view_class, sel_registerName("mouseDragged:"), rawptr(calendar_on_mouse_dragged), "v@:@")
+	class_addMethod(view_class, sel_registerName("mouseUp:"), rawptr(calendar_on_mouse_up), "v@:@")
 	class_addMethod(view_class, sel_registerName("scrollWheel:"), rawptr(calendar_on_scroll), "v@:@")
 	class_addMethod(view_class, sel_registerName("keyDown:"), rawptr(calendar_on_key_down), "v@:@")
 	class_addMethod(
@@ -1940,14 +2127,18 @@ run_calendar_gui :: proc() {
 		msg_id(objc_getClass("NSWindow"), sel_registerName("alloc")),
 		sel_registerName("initWithContentRect:styleMask:backing:defer:"),
 		frame,
-		32783,
+		CALENDAR_WINDOW_STYLE,
 		2,
 		false,
 	)
 	msg_void_id(calendar_ui.window, sel_registerName("setTitle:"), nsstring("HW Calendar"))
-	msg_void_i(calendar_ui.window, sel_registerName("setTitleVisibility:"), 1)
-	msg_void_bool(calendar_ui.window, sel_registerName("setTitlebarAppearsTransparent:"), true)
-	msg_void_i(calendar_ui.window, sel_registerName("setTitlebarSeparatorStyle:"), 0)
+	msg_void_bool(calendar_ui.window, sel_registerName("setOpaque:"), true)
+	msg_void_bool(calendar_ui.window, sel_registerName("setHasShadow:"), true)
+	calendar_msg_void_size(
+		calendar_ui.window,
+		sel_registerName("setMinSize:"),
+		{CALENDAR_WINDOW_MIN_WIDTH, CALENDAR_WINDOW_MIN_HEIGHT},
+	)
 	msg_void_bool(calendar_ui.window, sel_registerName("setAcceptsMouseMovedEvents:"), true)
 	calendar_ui.view = msg_id_rect(
 		msg_id(view_class, sel_registerName("alloc")),
