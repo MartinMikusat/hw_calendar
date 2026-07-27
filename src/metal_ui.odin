@@ -26,6 +26,7 @@ foreign core_graphics {
 	) -> rawptr ---
 	CGContextRelease :: proc "c" (ctx: rawptr) ---
 	CGContextClearRect :: proc "c" (ctx: rawptr, rect: Rect) ---
+	CGContextFillRect :: proc "c" (ctx: rawptr, rect: Rect) ---
 	CGContextSetRGBFillColor :: proc "c" (
 		ctx: rawptr,
 		red, green, blue, alpha: f64,
@@ -1412,6 +1413,12 @@ Calendar_Text_Run :: struct {
 	advance, ascent, descent, leading: f64,
 }
 
+Calendar_Text_Alignment :: enum {
+	Start,
+	Center,
+	End,
+}
+
 Calendar_Icon_Point :: struct {
 	point: Point,
 	move: bool,
@@ -1497,6 +1504,7 @@ calendar_draw_text :: proc(
 	rect: Calendar_UI_Rect,
 	color: [4]f64,
 	inset := 8.0,
+	alignment := Calendar_Text_Alignment.Start,
 ) {
 	run := calendar_text_run(font, text)
 	if run.line == nil {return}
@@ -1511,12 +1519,116 @@ calendar_draw_text :: proc(
 	)
 	CGContextSetRGBFillColor(ctx, color[0], color[1], color[2], color[3])
 	x := (rect.x+inset)*calendar_ui.scale
+	switch alignment {
+	case .Center:
+		x = rect.x*calendar_ui.scale +
+		    (rect.w*calendar_ui.scale-run.advance)/2
+	case .End:
+		x = (rect.x+rect.w-inset)*calendar_ui.scale-run.advance
+	case .Start:
+	}
 	y := rect.y*calendar_ui.scale +
 	     (rect.h*calendar_ui.scale-(run.ascent+run.descent))/2 +
 	     run.descent
 	CGContextSetTextPosition(ctx, x, y)
 	CTLineDraw(run.line, ctx)
 	CGContextRestoreGState(ctx)
+}
+
+calendar_fill_overlay_rect :: proc(
+	ctx: rawptr,
+	rect: Calendar_UI_Rect,
+	color: [4]f64,
+) {
+	CGContextSetRGBFillColor(ctx, color[0], color[1], color[2], color[3])
+	CGContextFillRect(
+		ctx,
+		{
+			{rect.x*calendar_ui.scale, rect.y*calendar_ui.scale},
+			{rect.w*calendar_ui.scale, rect.h*calendar_ui.scale},
+		},
+	)
+}
+
+calendar_fill_overlay_border :: proc(
+	ctx: rawptr,
+	rect: Calendar_UI_Rect,
+	color: [4]f64,
+) {
+	calendar_fill_overlay_rect(ctx, {rect.x, rect.y, rect.w, 1}, color)
+	calendar_fill_overlay_rect(
+		ctx,
+		{rect.x, rect.y+rect.h-1, rect.w, 1},
+		color,
+	)
+	calendar_fill_overlay_rect(ctx, {rect.x, rect.y, 1, rect.h}, color)
+	calendar_fill_overlay_rect(
+		ctx,
+		{rect.x+rect.w-1, rect.y, 1, rect.h},
+		color,
+	)
+}
+
+calendar_flash_badge_rect :: proc(
+	target: flash.Target,
+	label_length: int,
+	view_width, view_height: f64,
+) -> Calendar_UI_Rect {
+	width := max(16, 8+f64(label_length)*8)
+	height := 18.0
+	rect := target.rect
+	x, y := rect.x+2, rect.y+rect.h-height-2
+	#partial switch target.anchor {
+	case .Top_Right:
+		x = rect.x+rect.w-width-2
+	case .Bottom_Left:
+		y = rect.y+2
+	case .Bottom_Right:
+		x, y = rect.x+rect.w-width-2, rect.y+2
+	case .Center:
+		x, y = rect.x+(rect.w-width)/2, rect.y+(rect.h-height)/2
+	}
+	x = min(max(x, 0), max(0, view_width-width))
+	y = min(max(y, 0), max(0, view_height-height))
+	return {x, y, width, height}
+}
+
+calendar_draw_flash_hints :: proc(ctx, font: rawptr) {
+	if !flash.is_active(&calendar_ui.flash) {return}
+	background := [4]f64{0.96, 0.94, 0.85, 1}
+	foreground := [4]f64{0.025, 0.027, 0.026, 1}
+	border := [4]f64{0.02, 0.02, 0.02, 1}
+	selected_background := [4]f64{0.98, 0.35, 0.09, 1}
+	selected_border := [4]f64{1.0, 0.55, 0.18, 1}
+	for &hint in flash.visible_hints(&calendar_ui.flash) {
+		badge := calendar_flash_badge_rect(
+			hint.target,
+			len(hint.label),
+			calendar_ui.width,
+			calendar_ui.height,
+		)
+		badge_background := hint.selected ? selected_background : background
+		badge_border := hint.selected ? selected_border : border
+		if hint.selected {
+			target := hint.target.rect
+			calendar_fill_overlay_border(
+				ctx,
+				{target.x, target.y, target.w, target.h},
+				selected_border,
+			)
+		}
+		calendar_fill_overlay_rect(ctx, badge, badge_background)
+		calendar_fill_overlay_border(ctx, badge, badge_border)
+		calendar_draw_text(
+			ctx,
+			font,
+			hint.label,
+			badge,
+			foreground,
+			0,
+			.Center,
+		)
+	}
 }
 
 calendar_draw_icon_path :: proc(
@@ -1676,18 +1788,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			)
 		}
 	}
-	if flash.is_active(&calendar_ui.flash) {
-		for hint in flash.visible_hints(&calendar_ui.flash) {
-			calendar_draw_text(
-				ctx,
-				font,
-				strings.to_upper(hint.label, context.temp_allocator),
-				{hint.target.rect.x, hint.target.rect.y+hint.target.rect.h-18, 42, 18},
-				hint.selected ? orange : bright,
-				2,
-			)
-		}
-	}
+	calendar_draw_flash_hints(ctx, font)
 	if command_palette.is_open(&calendar_ui.palette) {
 		modal := Calendar_UI_Rect{
 			calendar_ui.width*0.15,
