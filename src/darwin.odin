@@ -56,6 +56,11 @@ msg_void_id :: proc(receiver: Id, selector: Sel, value: Id) {
 	p(receiver, selector, value)
 }
 
+msg_void_id_id :: proc(receiver: Id, selector: Sel, a, b: Id) {
+	p := transmute(proc "c" (Id, Sel, Id, Id))objc_send_address
+	p(receiver, selector, a, b)
+}
+
 msg_void_i :: proc(receiver: Id, selector: Sel, value: int) {
 	p := transmute(proc "c" (Id, Sel, int))objc_send_address
 	p(receiver, selector, value)

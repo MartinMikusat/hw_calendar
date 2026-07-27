@@ -161,6 +161,12 @@ Calendar_UI_State :: struct {
 
 calendar_ui: Calendar_UI_State
 
+CALENDAR_HEADER_HEIGHT :: 40.0
+CALENDAR_HEADER_CONTROL_HEIGHT :: 30.0
+CALENDAR_DAY_ROW_HEIGHT :: 28.0
+CALENDAR_DAY_ROW_PITCH :: 30.0
+CALENDAR_DAY_TOP_GAP :: 4.0
+
 calendar_msg_void_size :: proc(receiver: Id, selector: Sel, size: Size) {
 	p := transmute(proc "c" (Id, Sel, Size))objc_send_address
 	p(receiver, selector, size)
@@ -471,19 +477,75 @@ calendar_ui_rebuild_accessibility :: proc() {
 }
 
 calendar_ui_header_rect :: proc() -> Calendar_UI_Rect {
-	return {0, calendar_ui.height-56, calendar_ui.width, 56}
+	return {
+		0,
+		calendar_ui.height-CALENDAR_HEADER_HEIGHT,
+		calendar_ui.width,
+		CALENDAR_HEADER_HEIGHT,
+	}
+}
+
+calendar_ui_title_rect :: proc() -> Calendar_UI_Rect {
+	return {
+		66,
+		calendar_ui.height-CALENDAR_HEADER_CONTROL_HEIGHT-1,
+		360,
+		CALENDAR_HEADER_CONTROL_HEIGHT,
+	}
 }
 
 calendar_ui_today_rect :: proc() -> Calendar_UI_Rect {
-	return {calendar_ui.width-282, calendar_ui.height-44, 76, 30}
+	return {
+		calendar_ui.width-282,
+		calendar_ui.height-CALENDAR_HEADER_CONTROL_HEIGHT-1,
+		76,
+		CALENDAR_HEADER_CONTROL_HEIGHT,
+	}
 }
 
 calendar_ui_search_rect :: proc() -> Calendar_UI_Rect {
-	return {calendar_ui.width-198, calendar_ui.height-44, 88, 30}
+	return {
+		calendar_ui.width-198,
+		calendar_ui.height-CALENDAR_HEADER_CONTROL_HEIGHT-1,
+		88,
+		CALENDAR_HEADER_CONTROL_HEIGHT,
+	}
 }
 
 calendar_ui_new_rect :: proc() -> Calendar_UI_Rect {
-	return {calendar_ui.width-102, calendar_ui.height-44, 90, 30}
+	return {
+		calendar_ui.width-102,
+		calendar_ui.height-CALENDAR_HEADER_CONTROL_HEIGHT-1,
+		90,
+		CALENDAR_HEADER_CONTROL_HEIGHT,
+	}
+}
+
+calendar_ui_visible_day_count :: proc() -> int {
+	available := calendar_ui.height-CALENDAR_HEADER_HEIGHT-CALENDAR_DAY_TOP_GAP
+	return max(1, int(available/CALENDAR_DAY_ROW_PITCH)+1)
+}
+
+calendar_ui_day_rect :: proc(index: int) -> Calendar_UI_Rect {
+	return {
+		12,
+		calendar_ui.height-CALENDAR_HEADER_HEIGHT-CALENDAR_DAY_TOP_GAP -
+		CALENDAR_DAY_ROW_PITCH*f64(index)-CALENDAR_DAY_ROW_HEIGHT,
+		calendar_ui.width-24,
+		CALENDAR_DAY_ROW_HEIGHT,
+	}
+}
+
+calendar_ui_event_rect :: proc(
+	day_rect: Calendar_UI_Rect,
+	index: int,
+) -> Calendar_UI_Rect {
+	return {
+		day_rect.x+178+f64(index)*max(120, (day_rect.w-190)/3),
+		day_rect.y+3,
+		max(110, (day_rect.w-202)/3),
+		day_rect.h-6,
+	}
 }
 
 calendar_ui_reload_data :: proc() {
@@ -832,6 +894,7 @@ calendar_on_scroll :: proc "c" (self: Id, command: Sel, event: Id) {
 	context = runtime.default_context()
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 	flash.cancel(&calendar_ui.flash)
+	if calendar_ui.editor_open {return}
 	delta := msg_f64(event, sel_registerName("scrollingDeltaY"))
 	if delta == 0 {delta = msg_f64(event, sel_registerName("deltaY"))}
 	if delta > 0 {
@@ -1033,12 +1096,10 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 	now := ical_date_time_from_stamp(time.to_unix_seconds(time.now()), true)
 	anchor := ical_days_from_civil(now.year, now.month, now.day) +
 	          i64(calendar_ui.day_offset)
-	row_height := 62.0
-	visible := max(1, int((calendar_ui.height-68)/row_height)+1)
+	visible := calendar_ui_visible_day_count()
 	for index in 0..<visible {
 		day := ical_date_time_from_stamp((anchor+i64(index))*86400, true)
-		y := calendar_ui.height-64-row_height*f64(index+1)
-		rect := Calendar_UI_Rect{12, y, calendar_ui.width-24, row_height-4}
+		rect := calendar_ui_day_rect(index)
 		day_events := calendar_occurrences_for_day(day)
 		is_important := false
 		for occurrence in day_events {
@@ -1054,12 +1115,7 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 		}
 		for occurrence, event_index in day_events {
 			if event_index >= 3 {break}
-			event_rect := Calendar_UI_Rect{
-				rect.x+178+f64(event_index)*max(120, (rect.w-190)/3),
-				rect.y+8,
-				max(110, (rect.w-202)/3),
-				rect.h-16,
-			}
+			event_rect := calendar_ui_event_rect(rect, event_index)
 			event_color := [4]f32{0.075, 0.081, 0.076, 1}
 			upper_categories := strings.to_upper(
 				occurrence.categories,
@@ -1082,17 +1138,19 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 					cyan,
 				)
 			}
-			calendar_ui_add_control(
-				fmt.tprintf(
-					"event:%s:%s",
-					occurrence.uid,
-					occurrence.recurrence_id,
-				),
-				"event",
-				event_rect,
-				.Open_Event,
-				occurrence.event_index,
-			)
+			if !calendar_ui.editor_open {
+				calendar_ui_add_control(
+					fmt.tprintf(
+						"event:%s:%s",
+						occurrence.uid,
+						occurrence.recurrence_id,
+					),
+					"event",
+					event_rect,
+					.Open_Event,
+					occurrence.event_index,
+				)
+			}
 		}
 	}
 	if command_palette.is_open(&calendar_ui.palette) {
@@ -1103,6 +1161,11 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 		)
 	}
 	if calendar_ui.editor_open {
+		calendar_push_rect(
+			vertices,
+			{0, 0, calendar_ui.width, calendar_ui.height},
+			[4]f32{0.012, 0.013, 0.012, 1},
+		)
 		modal := calendar_ui_editor_rect()
 		calendar_push_rect(vertices, modal, [4]f32{0.025, 0.028, 0.026, 1})
 		for field_index in 0..<7 {
@@ -1283,8 +1346,9 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 		ctx,
 		font,
 		"HW CALENDAR / CONTINUOUS DAYS",
-		{16, calendar_ui.height-52, 360, 42},
+		calendar_ui_title_rect(),
 		bright,
+		0,
 	)
 	calendar_draw_text(ctx, font, "TODAY", calendar_ui_today_rect(), muted, 14)
 	calendar_draw_text(ctx, font, "SEARCH", calendar_ui_search_rect(), cyan, 14)
@@ -1292,13 +1356,11 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 	now := ical_date_time_from_stamp(time.to_unix_seconds(time.now()), true)
 	anchor := ical_days_from_civil(now.year, now.month, now.day) +
 	          i64(calendar_ui.day_offset)
-	row_height := 62.0
-	visible := max(1, int((calendar_ui.height-68)/row_height)+1)
+	visible := calendar_ui_visible_day_count()
 	weekdays := [7]string{"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"}
 	for index in 0..<visible {
 		day := ical_date_time_from_stamp((anchor+i64(index))*86400, true)
-		y := calendar_ui.height-64-row_height*f64(index+1)
-		rect := Calendar_UI_Rect{12, y, calendar_ui.width-24, row_height-4}
+		rect := calendar_ui_day_rect(index)
 		date_text := fmt.tprintf(
 			"%s  %04d-%02d-%02d",
 			weekdays[int(ical_weekday(day))],
@@ -1310,12 +1372,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 		day_events := calendar_occurrences_for_day(day)
 		for occurrence, event_index in day_events {
 			if event_index >= 3 {break}
-			event_rect := Calendar_UI_Rect{
-				rect.x+178+f64(event_index)*max(120, (rect.w-190)/3),
-				rect.y+8,
-				max(110, (rect.w-202)/3),
-				rect.h-16,
-			}
+			event_rect := calendar_ui_event_rect(rect, event_index)
 			time_text := "ALL DAY"
 			if !occurrence.start.is_date {
 				time_text = fmt.tprintf(
@@ -1374,6 +1431,10 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 		}
 	}
 	if calendar_ui.editor_open {
+		CGContextClearRect(
+			ctx,
+			{{0, 0}, {f64(width), f64(height)}},
+		)
 		modal := calendar_ui_editor_rect()
 		title := "NEW EVENT"
 		if calendar_ui.editor_event_index >= 0 {title = "EDIT EVENT"}
@@ -1612,24 +1673,26 @@ calendar_render_frame :: proc() {
 	)
 	vertices := make([dynamic]Calendar_Solid_Vertex, context.temp_allocator)
 	calendar_ui_clear_controls()
-	calendar_ui_add_control(
-		"today",
-		"today",
-		calendar_ui_today_rect(),
-		.Today,
-	)
-	calendar_ui_add_control(
-		"search",
-		"search events",
-		calendar_ui_search_rect(),
-		.Search,
-	)
-	calendar_ui_add_control(
-		"new event",
-		"new event",
-		calendar_ui_new_rect(),
-		.New_Event,
-	)
+	if !calendar_ui.editor_open {
+		calendar_ui_add_control(
+			"today",
+			"today",
+			calendar_ui_today_rect(),
+			.Today,
+		)
+		calendar_ui_add_control(
+			"search",
+			"search events",
+			calendar_ui_search_rect(),
+			.Search,
+		)
+		calendar_ui_add_control(
+			"new event",
+			"new event",
+			calendar_ui_new_rect(),
+			.New_Event,
+		)
+	}
 	calendar_build_geometry(&vertices)
 	calendar_ui_rebuild_accessibility()
 	msg_void_id(encoder, sel_registerName("setRenderPipelineState:"), calendar_ui.solid_pipeline)
@@ -1872,7 +1935,7 @@ run_calendar_gui :: proc() {
 	calendar_register_accessibility_class()
 	view_class := calendar_register_classes()
 	msg_void_id(app, sel_registerName("setDelegate:"), calendar_ui.delegate)
-	frame := Rect{{120, 100}, {1120, 760}}
+	frame := Rect{{120, 100}, {896, 760}}
 	calendar_ui.window = msg_id_rect_u_u_b(
 		msg_id(objc_getClass("NSWindow"), sel_registerName("alloc")),
 		sel_registerName("initWithContentRect:styleMask:backing:defer:"),
@@ -1911,7 +1974,7 @@ run_calendar_gui :: proc() {
 	timer_send := transmute(proc "c" (
 		Id, Sel, f64, Id, Sel, Id, bool,
 	) -> Id)objc_send_address
-	_ = timer_send(
+	frame_timer := timer_send(
 		objc_getClass("NSTimer"),
 		sel_registerName("scheduledTimerWithTimeInterval:target:selector:userInfo:repeats:"),
 		1.0/60.0,
@@ -1919,6 +1982,16 @@ run_calendar_gui :: proc() {
 		sel_registerName("calendarFrame:"),
 		nil,
 		true,
+	)
+	main_run_loop := msg_id(
+		objc_getClass("NSRunLoop"),
+		sel_registerName("mainRunLoop"),
+	)
+	msg_void_id_id(
+		main_run_loop,
+		sel_registerName("addTimer:forMode:"),
+		frame_timer,
+		nsstring("NSEventTrackingRunLoopMode"),
 	)
 	msg_void_id(calendar_ui.window, sel_registerName("makeFirstResponder:"), calendar_ui.view)
 	msg_void_id(calendar_ui.window, sel_registerName("makeKeyAndOrderFront:"), nil)
