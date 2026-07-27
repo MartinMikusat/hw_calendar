@@ -513,7 +513,7 @@ calendar_ui_header_rect :: proc() -> Calendar_UI_Rect {
 
 calendar_ui_title_rect :: proc() -> Calendar_UI_Rect {
 	return {
-		108,
+		122,
 		calendar_ui.height-CALENDAR_HEADER_CONTROL_HEIGHT-1,
 		360,
 		CALENDAR_HEADER_CONTROL_HEIGHT,
@@ -522,10 +522,20 @@ calendar_ui_title_rect :: proc() -> Calendar_UI_Rect {
 
 calendar_ui_window_control_rect :: proc(index: int) -> Calendar_UI_Rect {
 	return {
-		16+28*f64(index),
-		calendar_ui.height-32,
-		24,
-		24,
+		38*f64(index),
+		calendar_ui.height-CALENDAR_HEADER_CONTROL_HEIGHT-1,
+		30,
+		CALENDAR_HEADER_CONTROL_HEIGHT,
+	}
+}
+
+calendar_ui_window_icon_rect :: proc(index: int) -> Calendar_UI_Rect {
+	control := calendar_ui_window_control_rect(index)
+	return {
+		control.x+5,
+		control.y+5,
+		20,
+		20,
 	}
 }
 
@@ -537,7 +547,7 @@ calendar_ui_is_window_action :: proc(action: Calendar_UI_Action) -> bool {
 
 calendar_ui_today_rect :: proc() -> Calendar_UI_Rect {
 	return {
-		calendar_ui.width-282,
+		calendar_ui.width-270,
 		calendar_ui.height-CALENDAR_HEADER_CONTROL_HEIGHT-1,
 		76,
 		CALENDAR_HEADER_CONTROL_HEIGHT,
@@ -546,7 +556,7 @@ calendar_ui_today_rect :: proc() -> Calendar_UI_Rect {
 
 calendar_ui_search_rect :: proc() -> Calendar_UI_Rect {
 	return {
-		calendar_ui.width-198,
+		calendar_ui.width-186,
 		calendar_ui.height-CALENDAR_HEADER_CONTROL_HEIGHT-1,
 		88,
 		CALENDAR_HEADER_CONTROL_HEIGHT,
@@ -555,7 +565,7 @@ calendar_ui_search_rect :: proc() -> Calendar_UI_Rect {
 
 calendar_ui_new_rect :: proc() -> Calendar_UI_Rect {
 	return {
-		calendar_ui.width-102,
+		calendar_ui.width-90,
 		calendar_ui.height-CALENDAR_HEADER_CONTROL_HEIGHT-1,
 		90,
 		CALENDAR_HEADER_CONTROL_HEIGHT,
@@ -1555,21 +1565,21 @@ calendar_draw_window_controls :: proc(ctx: rawptr) {
 	xmark := calendar_icon_xmark_points()
 	calendar_draw_icon_path(
 		ctx,
-		calendar_ui_window_control_rect(0),
+		calendar_ui_window_icon_rect(0),
 		colors[0],
 		xmark[:],
 	)
 	minus := calendar_icon_minus_points()
 	calendar_draw_icon_path(
 		ctx,
-		calendar_ui_window_control_rect(1),
+		calendar_ui_window_icon_rect(1),
 		colors[1],
 		minus[:],
 	)
 	maximize := calendar_icon_maximize_points()
 	calendar_draw_icon_path(
 		ctx,
-		calendar_ui_window_control_rect(2),
+		calendar_ui_window_icon_rect(2),
 		colors[2],
 		maximize[:],
 	)
