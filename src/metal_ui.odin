@@ -30,6 +30,17 @@ foreign core_graphics {
 		ctx: rawptr,
 		red, green, blue, alpha: f64,
 	) ---
+	CGContextSetRGBStrokeColor :: proc "c" (
+		ctx: rawptr,
+		red, green, blue, alpha: f64,
+	) ---
+	CGContextSetLineWidth :: proc "c" (ctx: rawptr, width: f64) ---
+	CGContextSetLineCap :: proc "c" (ctx: rawptr, cap: i32) ---
+	CGContextSetLineJoin :: proc "c" (ctx: rawptr, join: i32) ---
+	CGContextBeginPath :: proc "c" (ctx: rawptr) ---
+	CGContextMoveToPoint :: proc "c" (ctx: rawptr, x, y: f64) ---
+	CGContextAddLineToPoint :: proc "c" (ctx: rawptr, x, y: f64) ---
+	CGContextStrokePath :: proc "c" (ctx: rawptr) ---
 	CGContextSetTextPosition :: proc "c" (ctx: rawptr, x, y: f64) ---
 	CGContextSaveGState :: proc "c" (ctx: rawptr) ---
 	CGContextRestoreGState :: proc "c" (ctx: rawptr) ---
@@ -1387,6 +1398,48 @@ Calendar_Text_Run :: struct {
 	advance, ascent, descent, leading: f64,
 }
 
+Calendar_Icon_Point :: struct {
+	point: Point,
+	move: bool,
+}
+
+calendar_icon_xmark_points :: proc() -> [8]Calendar_Icon_Point {
+	return {
+		{{6.75827, 17.2426}, true},
+		{{12.0009, 12}, false},
+		{{17.2435, 6.75736}, true},
+		{{12.0009, 12}, false},
+		{{12.0009, 12}, true},
+		{{6.75827, 6.75736}, false},
+		{{12.0009, 12}, true},
+		{{17.2435, 17.2426}, false},
+	}
+}
+
+calendar_icon_minus_points :: proc() -> [2]Calendar_Icon_Point {
+	return {
+		{{6, 12}, true},
+		{{18, 12}, false},
+	}
+}
+
+calendar_icon_maximize_points :: proc() -> [12]Calendar_Icon_Point {
+	return {
+		{{7, 4}, true},
+		{{4, 4}, false},
+		{{4, 7}, false},
+		{{17, 4}, true},
+		{{20, 4}, false},
+		{{20, 7}, false},
+		{{7, 20}, true},
+		{{4, 20}, false},
+		{{4, 17}, false},
+		{{17, 20}, true},
+		{{20, 20}, false},
+		{{20, 17}, false},
+	}
+}
+
 calendar_text_run :: proc(font: rawptr, text: string) -> Calendar_Text_Run {
 	if len(text) == 0 {return {}}
 	bytes := transmute([]u8)text
@@ -1430,7 +1483,6 @@ calendar_draw_text :: proc(
 	rect: Calendar_UI_Rect,
 	color: [4]f64,
 	inset := 8.0,
-	center := false,
 ) {
 	run := calendar_text_run(font, text)
 	if run.line == nil {return}
@@ -1445,10 +1497,6 @@ calendar_draw_text :: proc(
 	)
 	CGContextSetRGBFillColor(ctx, color[0], color[1], color[2], color[3])
 	x := (rect.x+inset)*calendar_ui.scale
-	if center {
-		x = rect.x*calendar_ui.scale +
-		    (rect.w*calendar_ui.scale-run.advance)/2
-	}
 	y := rect.y*calendar_ui.scale +
 	     (rect.h*calendar_ui.scale-(run.ascent+run.descent))/2 +
 	     run.descent
@@ -1457,24 +1505,74 @@ calendar_draw_text :: proc(
 	CGContextRestoreGState(ctx)
 }
 
-calendar_draw_window_controls :: proc(ctx, font: rawptr) {
+calendar_draw_icon_path :: proc(
+	ctx: rawptr,
+	rect: Calendar_UI_Rect,
+	color: [4]f64,
+	points: []Calendar_Icon_Point,
+) {
+	CGContextSaveGState(ctx)
+	defer CGContextRestoreGState(ctx)
+	CGContextClipToRect(
+		ctx,
+		{
+			{rect.x*calendar_ui.scale, rect.y*calendar_ui.scale},
+			{rect.w*calendar_ui.scale, rect.h*calendar_ui.scale},
+		},
+	)
+	CGContextSetRGBStrokeColor(
+		ctx,
+		color[0],
+		color[1],
+		color[2],
+		color[3],
+	)
+	CGContextSetLineWidth(
+		ctx,
+		1.5*calendar_ui.scale*min(rect.w, rect.h)/24,
+	)
+	CGContextSetLineCap(ctx, 1)
+	CGContextSetLineJoin(ctx, 1)
+	CGContextBeginPath(ctx)
+	for command in points {
+		x := (rect.x+command.point.x*rect.w/24)*calendar_ui.scale
+		y := (rect.y+(24-command.point.y)*rect.h/24)*calendar_ui.scale
+		if command.move {
+			CGContextMoveToPoint(ctx, x, y)
+		} else {
+			CGContextAddLineToPoint(ctx, x, y)
+		}
+	}
+	CGContextStrokePath(ctx)
+}
+
+calendar_draw_window_controls :: proc(ctx: rawptr) {
 	colors := [3][4]f64{
 		{0.98, 0.35, 0.09, 1},
 		{0.47, 0.49, 0.46, 1},
 		{0.27, 0.72, 0.73, 1},
 	}
-	symbols := [3]string{"X", "-", "+"}
-	for color, index in colors {
-		calendar_draw_text(
-			ctx,
-			font,
-			symbols[index],
-			calendar_ui_window_control_rect(index),
-			color,
-			0,
-			true,
-		)
-	}
+	xmark := calendar_icon_xmark_points()
+	calendar_draw_icon_path(
+		ctx,
+		calendar_ui_window_control_rect(0),
+		colors[0],
+		xmark[:],
+	)
+	minus := calendar_icon_minus_points()
+	calendar_draw_icon_path(
+		ctx,
+		calendar_ui_window_control_rect(1),
+		colors[1],
+		minus[:],
+	)
+	maximize := calendar_icon_maximize_points()
+	calendar_draw_icon_path(
+		ctx,
+		calendar_ui_window_control_rect(2),
+		colors[2],
+		maximize[:],
+	)
 }
 
 calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
@@ -1696,7 +1794,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			)
 		}
 	}
-	calendar_draw_window_controls(ctx, font)
+	calendar_draw_window_controls(ctx)
 	return pixels
 }
 

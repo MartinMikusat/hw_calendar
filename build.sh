@@ -6,6 +6,7 @@ MATCH_SORTER_ROOT="$ROOT/../hw_odin_matchSorter"
 UI_FLASH_ROOT="$ROOT/../hw_odin_ui_flash"
 COMMAND_PALETTE_ROOT="$ROOT/../hw_odin_ui_commandPalette"
 FONT_ROOT="$ROOT/resources/fonts"
+ICON_ROOT="$ROOT/resources/icons/iconoir"
 
 "$ROOT/scripts/dependencies.sh" check
 
@@ -32,7 +33,10 @@ case "$MODE" in
     ;;
 esac
 
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/Fonts"
+mkdir -p \
+  "$APP/Contents/MacOS" \
+  "$APP/Contents/Resources/Fonts" \
+  "$APP/Contents/Resources/Icons/Iconoir"
 EXECUTABLE="$APP/Contents/MacOS/HWCalendar"
 TEMP="$ROOT/build/temp/$MODE"
 mkdir -p "$TEMP"
@@ -45,6 +49,10 @@ odin build "$ROOT/src" -out:"$EXECUTABLE" "$@" \
 cp "$ROOT/Info.plist" "$APP/Contents/Info.plist"
 cp "$FONT_ROOT/Iosevka-Regular.ttf" "$APP/Contents/Resources/Fonts/Iosevka-Regular.ttf"
 cp "$FONT_ROOT/IOSEVKA-LICENSE.md" "$APP/Contents/Resources/Fonts/IOSEVKA-LICENSE.md"
+cp "$ICON_ROOT/xmark.svg" "$APP/Contents/Resources/Icons/Iconoir/xmark.svg"
+cp "$ICON_ROOT/minus.svg" "$APP/Contents/Resources/Icons/Iconoir/minus.svg"
+cp "$ICON_ROOT/maximize.svg" "$APP/Contents/Resources/Icons/Iconoir/maximize.svg"
+cp "$ICON_ROOT/LICENSE" "$APP/Contents/Resources/Icons/Iconoir/LICENSE"
 cp "$EXECUTABLE" "$CLI"
 codesign --force --deep --sign - "$APP"
 

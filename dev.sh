@@ -43,7 +43,8 @@ acquire_lock() {
 
 fingerprint() {
   stat -f '%m:%z:%N' \
-    src/*.odin ./*.sh scripts/*.sh Info.plist dependencies.lock resources/fonts/* \
+    src/*.odin ./*.sh scripts/*.sh Info.plist dependencies.lock \
+    resources/fonts/* resources/icons/iconoir/* \
     2>/dev/null | shasum | cut -d' ' -f1
 }
 

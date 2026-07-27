@@ -107,6 +107,16 @@ Bundled font provenance:
 - SHA-256: `2fe6f742431e66f218b713ecca986370612bc27594a96a8ab45a41e9ebbaf5e3`
 - License: [SIL Open Font License, Version 1.1](resources/fonts/IOSEVKA-LICENSE.md)
 
+Bundled icon provenance:
+
+- Assets: Iconoir regular `xmark`, `minus`, and `maximize`
+- Version: 7.11.1, commit `59e3d5d969c59b3fb652a556795e08c1b3371c5b`
+- Source files: <https://github.com/iconoir-icons/iconoir/tree/v7.11.1/icons/regular>
+- SHA-256 (`xmark.svg`): `61aa0a4913a440aaafcc45064a87e24fe8eb22ba4abc4c5ef020530928ed8daf`
+- SHA-256 (`minus.svg`): `babb05bca016bffdd38cbd1dcaeef6ccdf42fc8654124dee169a412eeed6d425`
+- SHA-256 (`maximize.svg`): `3a3048cdc0e8e4aef5d68353b5434f0c0e074dc672b6c0abf25a5a64bc5cc8f4`
+- License: [MIT](resources/icons/iconoir/LICENSE)
+
 Test-only oracle provenance:
 
 - Asset: libical 4.0.5 source
