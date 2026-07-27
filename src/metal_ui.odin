@@ -34,7 +34,6 @@ foreign core_graphics {
 	CGContextSaveGState :: proc "c" (ctx: rawptr) ---
 	CGContextRestoreGState :: proc "c" (ctx: rawptr) ---
 	CGContextClipToRect :: proc "c" (ctx: rawptr, rect: Rect) ---
-	CGContextFillEllipseInRect :: proc "c" (ctx: rawptr, rect: Rect) ---
 }
 
 foreign import core_text "system:CoreText.framework"
@@ -503,7 +502,7 @@ calendar_ui_header_rect :: proc() -> Calendar_UI_Rect {
 
 calendar_ui_title_rect :: proc() -> Calendar_UI_Rect {
 	return {
-		94,
+		108,
 		calendar_ui.height-CALENDAR_HEADER_CONTROL_HEIGHT-1,
 		360,
 		CALENDAR_HEADER_CONTROL_HEIGHT,
@@ -512,10 +511,10 @@ calendar_ui_title_rect :: proc() -> Calendar_UI_Rect {
 
 calendar_ui_window_control_rect :: proc(index: int) -> Calendar_UI_Rect {
 	return {
-		16+26*f64(index),
-		calendar_ui.height-24,
-		16,
-		16,
+		16+28*f64(index),
+		calendar_ui.height-32,
+		24,
+		24,
 	}
 }
 
@@ -1374,6 +1373,13 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 			)
 		}
 	}
+	for index in 0..<3 {
+		calendar_push_rect(
+			vertices,
+			calendar_ui_window_control_rect(index),
+			button,
+		)
+	}
 }
 
 Calendar_Text_Run :: struct {
@@ -1424,6 +1430,7 @@ calendar_draw_text :: proc(
 	rect: Calendar_UI_Rect,
 	color: [4]f64,
 	inset := 8.0,
+	center := false,
 ) {
 	run := calendar_text_run(font, text)
 	if run.line == nil {return}
@@ -1438,6 +1445,10 @@ calendar_draw_text :: proc(
 	)
 	CGContextSetRGBFillColor(ctx, color[0], color[1], color[2], color[3])
 	x := (rect.x+inset)*calendar_ui.scale
+	if center {
+		x = rect.x*calendar_ui.scale +
+		    (rect.w*calendar_ui.scale-run.advance)/2
+	}
 	y := rect.y*calendar_ui.scale +
 	     (rect.h*calendar_ui.scale-(run.ascent+run.descent))/2 +
 	     run.descent
@@ -1446,27 +1457,22 @@ calendar_draw_text :: proc(
 	CGContextRestoreGState(ctx)
 }
 
-calendar_draw_window_controls :: proc(ctx: rawptr) {
+calendar_draw_window_controls :: proc(ctx, font: rawptr) {
 	colors := [3][4]f64{
-		{1.0, 0.05, 0.24, 1},
-		{1.0, 0.64, 0.02, 1},
-		{0.0, 0.80, 0.24, 1},
+		{0.98, 0.35, 0.09, 1},
+		{0.47, 0.49, 0.46, 1},
+		{0.27, 0.72, 0.73, 1},
 	}
+	symbols := [3]string{"X", "-", "+"}
 	for color, index in colors {
-		rect := calendar_ui_window_control_rect(index)
-		CGContextSetRGBFillColor(
+		calendar_draw_text(
 			ctx,
-			color[0],
-			color[1],
-			color[2],
-			color[3],
-		)
-		CGContextFillEllipseInRect(
-			ctx,
-			{
-				{rect.x*calendar_ui.scale, rect.y*calendar_ui.scale},
-				{rect.w*calendar_ui.scale, rect.h*calendar_ui.scale},
-			},
+			font,
+			symbols[index],
+			calendar_ui_window_control_rect(index),
+			color,
+			0,
+			true,
 		)
 	}
 }
@@ -1690,7 +1696,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			)
 		}
 	}
-	calendar_draw_window_controls(ctx)
+	calendar_draw_window_controls(ctx, font)
 	return pixels
 }
 
