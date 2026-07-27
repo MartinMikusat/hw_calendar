@@ -607,7 +607,7 @@ calendar_cli_event_search :: proc(request: Calendar_CLI_Request) -> Calendar_CLI
 		return calendar_cli_error(request.command, 6, "search_failed", "The search context could not be initialized.")
 	}
 	defer match_sorter.search_context_destroy(&search)
-	keys := []match_sorter.Typed_Key(Calendar_Event){
+	keys := []match_sorter.Key(Calendar_Event){
 		{getter=calendar_event_search_summary},
 		{getter=calendar_event_search_description},
 		{getter=calendar_event_search_location},
@@ -615,12 +615,20 @@ calendar_cli_event_search :: proc(request: Calendar_CLI_Request) -> Calendar_CLI
 		{getter=calendar_event_search_categories},
 		{getter=calendar_event_search_uid},
 	}
-	indices := match_sorter.match_indices(
+	indices, search_error := match_sorter.match_indices(
 		&search,
 		events[:],
 		request.query,
-		match_sorter.Typed_Options(Calendar_Event){keys=keys},
+		match_sorter.Options(Calendar_Event){keys=keys},
 	)
+	if search_error != .None {
+		return calendar_cli_error(
+			request.command,
+			6,
+			"search_failed",
+			"Event data or the query contains invalid UTF-8.",
+		)
+	}
 	defer delete(indices)
 	valid_total := 0
 	for event_index in indices {

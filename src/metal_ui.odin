@@ -657,6 +657,18 @@ calendar_event_palette_title :: proc(event: ^Calendar_Event) -> string {
 	return event.summary
 }
 
+calendar_ui_set_palette_query :: proc(value: string) -> bool {
+	search_error := command_palette.set_query(&calendar_ui.palette, value)
+	if search_error != .None {
+		fmt.eprintln("[hw_calendar] command palette rejected invalid UTF-8")
+		return false
+	}
+	copy := strings.clone(value)
+	delete(calendar_ui.palette_query)
+	calendar_ui.palette_query = copy
+	return true
+}
+
 calendar_ui_open_palette :: proc() {
 	if command_palette.is_open(&calendar_ui.palette) {
 		command_palette.close(&calendar_ui.palette)
@@ -691,7 +703,13 @@ calendar_ui_open_palette :: proc() {
 		})
 		append(&calendar_ui.palette_event_indices, event_index)
 	}
-	command_palette.open(&calendar_ui.palette, entries[:], 0)
+	search_error := command_palette.open(&calendar_ui.palette, entries[:], 0)
+	if search_error != .None {
+		clear(&calendar_ui.palette_event_indices)
+		fmt.eprintln("[hw_calendar] command palette rejected invalid UTF-8")
+		calendar_ui.needs_redraw = true
+		return
+	}
 	calendar_ui.palette_query = ""
 	calendar_ui.needs_redraw = true
 }
@@ -1126,22 +1144,13 @@ calendar_on_key_down :: proc "c" (self: Id, command: Sel, event: Id) {
 						)
 					],
 				)
-				delete(calendar_ui.palette_query)
-				calendar_ui.palette_query = next
-				command_palette.set_query(
-					&calendar_ui.palette,
-					calendar_ui.palette_query,
-				)
+				_ = calendar_ui_set_palette_query(next)
+				delete(next)
 			}
 		case:
 			if len(text) == 1 && text[0] >= 0x20 {
 				next := fmt.tprintf("%s%s", calendar_ui.palette_query, text)
-				delete(calendar_ui.palette_query)
-				calendar_ui.palette_query = strings.clone(next)
-				command_palette.set_query(
-					&calendar_ui.palette,
-					calendar_ui.palette_query,
-				)
+				_ = calendar_ui_set_palette_query(next)
 			}
 		}
 		calendar_ui.needs_redraw = true
