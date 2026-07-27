@@ -88,9 +88,17 @@ Install Odin and keep the sibling libraries beside this repository:
 ./scripts/libical-oracle.sh
 ```
 
-`./dev.sh` watches the source, build scripts, application metadata, dependency
-lock, and bundled resources. A successful rebuild replaces its one tracked
-application process. A failed rebuild leaves the last working process running.
+`./dev.sh` builds a stable AppKit host and loads the application from a
+generation-specific dylib. A source edit builds a new dylib. The host swaps it
+at a frame boundary and preserves the window, current view, editor state,
+database connection, and UI allocations. It defers the swap while CLI or
+notification work is active.
+
+Changes to the host contract, application metadata, or bundled resources
+rebuild and restart the host. An incompatible state layout also requests a
+controlled restart with exit status 75. A failed module build leaves the
+current generation active. `./dev.sh asan` uses the same reload path with
+AddressSanitizer instrumentation. Release mode keeps the full rebuild path.
 A watcher lock prevents a second `./dev.sh` invocation from opening another
 application instance.
 

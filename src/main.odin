@@ -3,11 +3,13 @@ package main
 import "core:fmt"
 import "core:os"
 
-main :: proc() {
+HOT_RELOAD_MODULE :: #config(HOT_RELOAD_MODULE, false)
+
+calendar_process_main :: proc(args := os.args) {
 	defer calendar_database_close()
 	defer calendar_cli_database_release()
-	if len(os.args) > 1 {
-		request, parse_result, parsed := calendar_cli_parse(os.args[1:])
+	if len(args) > 1 {
+		request, parse_result, parsed := calendar_cli_parse(args[1:])
 		result := parse_result
 		if parsed {
 			input_bytes: []u8
@@ -48,4 +50,10 @@ main :: proc() {
 		return
 	}
 	run_calendar_gui()
+}
+
+when !HOT_RELOAD_MODULE {
+	main :: proc() {
+		calendar_process_main()
+	}
 }

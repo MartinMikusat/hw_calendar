@@ -15,6 +15,7 @@ case "$MODE" in
 esac
 
 EXECUTABLE="$APP/Contents/MacOS/HWCalendar"
+MODULE="$ROOT/build/hot-reload/$MODE/calendar.dylib"
 LOCK_DIR="$ROOT/build/dev-watcher.lock"
 LOCK_PID="$LOCK_DIR/pid"
 APP_PID=""
@@ -41,11 +42,28 @@ acquire_lock() {
   printf '%s\n' "$$" > "$LOCK_PID"
 }
 
-fingerprint() {
+legacy_fingerprint() {
   stat -f '%m:%z:%N' \
     src/*.odin ./*.sh scripts/*.sh Info.plist dependencies.lock \
     resources/fonts/* resources/icons/iconoir/* \
     2>/dev/null | shasum | cut -d' ' -f1
+}
+
+module_fingerprint() {
+  stat -f '%m:%z:%N' src/*.odin dependencies.lock 2>/dev/null |
+    shasum | cut -d' ' -f1
+}
+
+host_fingerprint() {
+  find dev -type f -name '*.odin' -exec stat -f '%m:%z:%N' {} + 2>/dev/null
+  stat -f '%m:%z:%N' \
+    Info.plist scripts/hot-reload-build.sh \
+    resources/fonts/* resources/icons/iconoir/* \
+    2>/dev/null
+}
+
+hot_reload_fingerprint() {
+  host_fingerprint | shasum | cut -d' ' -f1
 }
 
 stop_app() {
@@ -78,15 +96,25 @@ check_app() {
   exited_pid=$APP_PID
   APP_PID=""
   printf '[hw_calendar] app pid %s exited with status %s\n' "$exited_pid" "$status"
+  if [ "$MODE" != "release" ] && [ "$status" -eq 75 ]; then
+    launch_app
+  fi
 }
 
 launch_app() {
-  env MTL_DEBUG_LAYER=1 "$EXECUTABLE" &
+  if [ "$MODE" = "release" ]; then
+    env MTL_DEBUG_LAYER=1 "$EXECUTABLE" &
+  else
+    env \
+      HW_HOT_RELOAD_MODULE="$MODULE" \
+      MTL_DEBUG_LAYER=1 \
+      "$EXECUTABLE" &
+  fi
   APP_PID=$!
   printf '[hw_calendar] launched pid %s (%s)\n' "$APP_PID" "$MODE"
 }
 
-rebuild_and_launch() {
+legacy_rebuild_and_launch() {
   printf '\n[hw_calendar] rebuilding %s...\n' "$MODE"
   if ! "$ROOT/build.sh" "$MODE"; then
     printf '[hw_calendar] build failed; keeping the current app running\n'
@@ -97,18 +125,56 @@ rebuild_and_launch() {
   launch_app
 }
 
+hot_rebuild_and_launch() {
+  printf '\n[hw_calendar] rebuilding hot-reload %s host and module...\n' "$MODE"
+  if ! "$ROOT/scripts/hot-reload-build.sh" "$MODE" all; then
+    printf '[hw_calendar] build failed; keeping the current app running\n'
+    return
+  fi
+
+  stop_app
+  launch_app
+}
+
+hot_rebuild_module() {
+  printf '\n[hw_calendar] rebuilding hot-reload %s module...\n' "$MODE"
+  if ! "$ROOT/scripts/hot-reload-build.sh" "$MODE" module; then
+    printf '[hw_calendar] module build failed; the current module remains active\n'
+  fi
+}
+
 acquire_lock
 trap cleanup INT TERM EXIT
 
-rebuild_and_launch
-LAST_FINGERPRINT=$(fingerprint)
+if [ "$MODE" = "release" ]; then
+  legacy_rebuild_and_launch
+  LAST_FINGERPRINT=$(legacy_fingerprint)
+else
+  hot_rebuild_and_launch
+  LAST_MODULE_FINGERPRINT=$(module_fingerprint)
+  LAST_HOST_FINGERPRINT=$(hot_reload_fingerprint)
+fi
 
 while :; do
   sleep 0.5
   check_app
-  CURRENT_FINGERPRINT=$(fingerprint)
-  if [ "$CURRENT_FINGERPRINT" != "$LAST_FINGERPRINT" ]; then
-    LAST_FINGERPRINT=$CURRENT_FINGERPRINT
-    rebuild_and_launch
+  if [ "$MODE" = "release" ]; then
+    CURRENT_FINGERPRINT=$(legacy_fingerprint)
+    if [ "$CURRENT_FINGERPRINT" != "$LAST_FINGERPRINT" ]; then
+      LAST_FINGERPRINT=$CURRENT_FINGERPRINT
+      legacy_rebuild_and_launch
+    fi
+    continue
+  fi
+
+  CURRENT_HOST_FINGERPRINT=$(hot_reload_fingerprint)
+  CURRENT_MODULE_FINGERPRINT=$(module_fingerprint)
+  if [ "$CURRENT_HOST_FINGERPRINT" != "$LAST_HOST_FINGERPRINT" ]; then
+    LAST_HOST_FINGERPRINT=$CURRENT_HOST_FINGERPRINT
+    LAST_MODULE_FINGERPRINT=$CURRENT_MODULE_FINGERPRINT
+    hot_rebuild_and_launch
+  elif [ "$CURRENT_MODULE_FINGERPRINT" != "$LAST_MODULE_FINGERPRINT" ]; then
+    LAST_MODULE_FINGERPRINT=$CURRENT_MODULE_FINGERPRINT
+    hot_rebuild_module
   fi
 done

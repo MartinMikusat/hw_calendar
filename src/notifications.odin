@@ -22,6 +22,7 @@ Calendar_Notification_Authorization :: enum int {
 
 calendar_notification_authorization: Calendar_Notification_Authorization
 calendar_notification_center: Id
+calendar_notification_callbacks_pending: int
 
 Calendar_Block_Descriptor :: struct {
 	reserved: uint,
@@ -92,6 +93,9 @@ calendar_notification_auth_completed :: proc "c" (
 ) {
 	context = runtime.default_context()
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	if calendar_notification_callbacks_pending > 0 {
+		calendar_notification_callbacks_pending -= 1
+	}
 	if error != nil || !granted {
 		calendar_notification_authorization = .Denied
 	} else {
@@ -105,6 +109,9 @@ calendar_notification_settings_completed :: proc "c" (
 ) {
 	context = runtime.default_context()
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	if calendar_notification_callbacks_pending > 0 {
+		calendar_notification_callbacks_pending -= 1
+	}
 	if settings == nil {return}
 	status := calendar_msg_uint(settings, sel_registerName("authorizationStatus"))
 	switch status {
@@ -211,6 +218,7 @@ calendar_notification_request_authorization :: proc() {
 		return
 	}
 	p := transmute(proc "c" (Id, Sel, uint, ^Calendar_Auth_Block))objc_send_address
+	calendar_notification_callbacks_pending += 1
 	p(
 		calendar_notification_center,
 		sel_registerName("requestAuthorizationWithOptions:completionHandler:"),
@@ -603,6 +611,7 @@ calendar_notification_initialize :: proc() {
 	settings := transmute(proc "c" (
 		Id, Sel, ^Calendar_Settings_Block,
 	))objc_send_address
+	calendar_notification_callbacks_pending += 1
 	settings(
 		calendar_notification_center,
 		sel_registerName("getNotificationSettingsWithCompletionHandler:"),

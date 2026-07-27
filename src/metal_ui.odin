@@ -8,6 +8,7 @@ import "core:time"
 import CF "core:sys/darwin/CoreFoundation"
 import command_palette "command_palette:."
 import flash "flash:."
+import hot_reload "../dev/hot_reload_contract"
 
 foreign import metal "system:Metal.framework"
 foreign metal {
@@ -2345,12 +2346,13 @@ calendar_ui_destroy :: proc() {
 	calendar_ui = {}
 }
 
-run_calendar_gui :: proc() {
+calendar_gui_initialize :: proc(
+	services: ^hot_reload.Host_Services = nil,
+) -> bool {
 	if !objc_initialize() {
 		fmt.eprintln("HW Calendar could not initialize the Objective-C runtime.")
-		return
+		return false
 	}
-	defer calendar_ui_destroy()
 	calendar_ui.scale = 1
 	calendar_ui.needs_redraw = true
 	calendar_ui.controls = make([dynamic]Calendar_UI_Control)
@@ -2363,15 +2365,25 @@ run_calendar_gui :: proc() {
 		search_commit_size = 64*1024,
 	); error != nil {
 		fmt.eprintln("HW Calendar could not initialize search.")
-		return
+		return false
 	}
 	calendar_ui_reload_data()
-	app := msg_id(objc_getClass("NSApplication"), sel_registerName("sharedApplication"))
+	app := Id(nil)
+	view_class := Id(nil)
+	window_class := Id(nil)
+	if services == nil {
+		app = msg_id(objc_getClass("NSApplication"), sel_registerName("sharedApplication"))
+		calendar_register_accessibility_class()
+		view_class = calendar_register_classes()
+		window_class = calendar_register_window_class()
+	} else {
+		app = Id(services.app)
+		calendar_ui.delegate = Id(services.delegate)
+		view_class = Id(services.view_class)
+		window_class = Id(services.window_class)
+	}
 	calendar_ui.app = app
 	msg_void_i(app, sel_registerName("setActivationPolicy:"), 0)
-	calendar_register_accessibility_class()
-	view_class := calendar_register_classes()
-	window_class := calendar_register_window_class()
 	msg_void_id(app, sel_registerName("setDelegate:"), calendar_ui.delegate)
 	frame := Rect{{120, 100}, {896, 760}}
 	calendar_ui.window = msg_id_rect_u_u_b(
@@ -2400,7 +2412,7 @@ run_calendar_gui :: proc() {
 	calendar_ui.device = MTLCreateSystemDefaultDevice()
 	if calendar_ui.device == nil {
 		fmt.eprintln("HW Calendar requires a Metal device.")
-		return
+		return false
 	}
 	calendar_ui.queue = msg_id(calendar_ui.device, sel_registerName("newCommandQueue"))
 	calendar_ui.layer = msg_id(objc_getClass("CAMetalLayer"), sel_registerName("layer"))
@@ -2411,38 +2423,51 @@ run_calendar_gui :: proc() {
 	msg_void_id(calendar_ui.view, sel_registerName("setLayer:"), calendar_ui.layer)
 	if !calendar_compile_pipelines() {
 		fmt.eprintln("HW Calendar could not compile its Metal pipelines.")
-		return
+		return false
 	}
-	timer_send := transmute(proc "c" (
-		Id, Sel, f64, Id, Sel, Id, bool,
-	) -> Id)objc_send_address
-	frame_timer := timer_send(
-		objc_getClass("NSTimer"),
-		sel_registerName("scheduledTimerWithTimeInterval:target:selector:userInfo:repeats:"),
-		1.0/60.0,
-		calendar_ui.delegate,
-		sel_registerName("calendarFrame:"),
-		nil,
-		true,
-	)
-	main_run_loop := msg_id(
-		objc_getClass("NSRunLoop"),
-		sel_registerName("mainRunLoop"),
-	)
-	msg_void_id_id(
-		main_run_loop,
-		sel_registerName("addTimer:forMode:"),
-		frame_timer,
-		nsstring("NSEventTrackingRunLoopMode"),
-	)
+	if services == nil {
+		timer_send := transmute(proc "c" (
+			Id, Sel, f64, Id, Sel, Id, bool,
+		) -> Id)objc_send_address
+		frame_timer := timer_send(
+			objc_getClass("NSTimer"),
+			sel_registerName("scheduledTimerWithTimeInterval:target:selector:userInfo:repeats:"),
+			1.0/60.0,
+			calendar_ui.delegate,
+			sel_registerName("calendarFrame:"),
+			nil,
+			true,
+		)
+		main_run_loop := msg_id(
+			objc_getClass("NSRunLoop"),
+			sel_registerName("mainRunLoop"),
+		)
+		msg_void_id_id(
+			main_run_loop,
+			sel_registerName("addTimer:forMode:"),
+			frame_timer,
+			nsstring("NSEventTrackingRunLoopMode"),
+		)
+	}
 	msg_void_id(calendar_ui.window, sel_registerName("makeFirstResponder:"), calendar_ui.view)
 	msg_void_id(calendar_ui.window, sel_registerName("makeKeyAndOrderFront:"), nil)
 	msg_void_i(app, sel_registerName("activateIgnoringOtherApps:"), 1)
 	if !calendar_cli_ipc_server_start() {
 		fmt.eprintln("HW Calendar could not start its local control socket.")
-		return
+		return false
 	}
-	defer calendar_cli_ipc_server_stop()
 	calendar_notification_initialize()
+	return true
+}
+
+calendar_gui_shutdown :: proc() {
+	calendar_cli_ipc_server_stop()
+	calendar_ui_destroy()
+}
+
+run_calendar_gui :: proc() {
+	if !calendar_gui_initialize() {return}
+	defer calendar_gui_shutdown()
+	app := calendar_ui.app
 	msg_void(app, sel_registerName("run"))
 }
