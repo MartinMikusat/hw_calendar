@@ -2384,7 +2384,7 @@ run_calendar_gui :: proc() {
 	)
 	msg_void_id(calendar_ui.window, sel_registerName("setTitle:"), nsstring("HW Calendar"))
 	msg_void_bool(calendar_ui.window, sel_registerName("setOpaque:"), true)
-	msg_void_bool(calendar_ui.window, sel_registerName("setHasShadow:"), true)
+	msg_void_bool(calendar_ui.window, sel_registerName("setHasShadow:"), false)
 	calendar_msg_void_size(
 		calendar_ui.window,
 		sel_registerName("setMinSize:"),
