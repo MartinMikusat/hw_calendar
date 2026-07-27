@@ -29,7 +29,7 @@ check_one() {
   fi
 }
 
-check_one hw_odin_matchSorter https://github.com/MartinMikusat/hw_odin_matchSorter.git d128cfcdf28b3c37d9f4ed7641825bbb01364a63
+check_one hw_odin_matchSorter https://github.com/MartinMikusat/hw_odin_matchSorter.git 4f205e2b51eb00e6f02b5f7b9390060e3c065731
 check_one hw_odin_ui_flash https://github.com/MartinMikusat/hw_odin_ui_flash.git d06e98a40640b13eea5b979319022aad0a470d72
 check_one hw_odin_ui_commandPalette https://github.com/MartinMikusat/hw_odin_ui_commandPalette.git aa1537506ae2b154a2dc8ecd132ea7088381ba6f
 
