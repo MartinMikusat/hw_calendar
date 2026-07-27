@@ -88,6 +88,12 @@ Install Odin and keep the sibling libraries beside this repository:
 ./scripts/libical-oracle.sh
 ```
 
+`./dev.sh` watches the source, build scripts, application metadata, dependency
+lock, and bundled resources. A successful rebuild replaces its one tracked
+application process. A failed rebuild leaves the last working process running.
+A watcher lock prevents a second `./dev.sh` invocation from opening another
+application instance.
+
 The build pins every sibling origin and commit in
 [`dependencies.lock`](dependencies.lock). The test-only differential oracle is
 libical 4.0.5 at commit
