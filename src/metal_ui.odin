@@ -1182,6 +1182,10 @@ calendar_on_accepts_first :: proc "c" (self: Id, command: Sel) -> bool {
 	return true
 }
 
+calendar_window_can_become_key :: proc "c" (self: Id, command: Sel) -> bool {
+	return true
+}
+
 calendar_should_terminate :: proc "c" (self: Id, command: Sel, app: Id) -> bool {
 	return true
 }
@@ -2182,6 +2186,28 @@ calendar_register_classes :: proc() -> Id {
 	return view_class
 }
 
+calendar_register_window_class :: proc() -> Id {
+	window_class := objc_allocateClassPair(
+		objc_getClass("NSWindow"),
+		"HWCalendarWindow",
+		0,
+	)
+	class_addMethod(
+		window_class,
+		sel_registerName("canBecomeKeyWindow"),
+		rawptr(calendar_window_can_become_key),
+		"B@:",
+	)
+	class_addMethod(
+		window_class,
+		sel_registerName("canBecomeMainWindow"),
+		rawptr(calendar_window_can_become_key),
+		"B@:",
+	)
+	objc_registerClassPair(window_class)
+	return window_class
+}
+
 calendar_ui_destroy :: proc() {
 	calendar_events_destroy(&calendar_ui.events)
 	calendar_occurrences_destroy(&calendar_ui.occurrences)
@@ -2235,10 +2261,11 @@ run_calendar_gui :: proc() {
 	msg_void_i(app, sel_registerName("setActivationPolicy:"), 0)
 	calendar_register_accessibility_class()
 	view_class := calendar_register_classes()
+	window_class := calendar_register_window_class()
 	msg_void_id(app, sel_registerName("setDelegate:"), calendar_ui.delegate)
 	frame := Rect{{120, 100}, {896, 760}}
 	calendar_ui.window = msg_id_rect_u_u_b(
-		msg_id(objc_getClass("NSWindow"), sel_registerName("alloc")),
+		msg_id(window_class, sel_registerName("alloc")),
 		sel_registerName("initWithContentRect:styleMask:backing:defer:"),
 		frame,
 		CALENDAR_WINDOW_STYLE,
