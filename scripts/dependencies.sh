@@ -37,3 +37,8 @@ if [ ! -f "$ROOT/resources/fonts/Iosevka-Regular.ttf" ]; then
   echo "[hw_calendar] missing bundled Iosevka font" >&2
   exit 1
 fi
+
+if [ ! -f "$ROOT/resources/holidays/sk.json" ]; then
+  echo "[hw_calendar] missing bundled Slovak holiday data" >&2
+  exit 1
+fi

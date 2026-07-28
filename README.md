@@ -19,10 +19,15 @@ Coffee background.
 Use the `DARK` or `LIGHT` header control to switch the interface theme. The
 application stores the selected theme in its local database.
 
+The command palette can enable or disable each bundled country holiday
+calendar. Slovakia is enabled by default. Its read-only entries use official
+Slovak names and include state holidays, statutory holidays, and memorial days
+from 2026 onward. Holiday search results jump to the next matching date.
+
 Press `/` when no text field has focus to activate Flash labels. Press
-`Control-K` to open the command palette. Global event search ranks `SUMMARY`,
-`DESCRIPTION`, `LOCATION`, `URL`, `CATEGORIES`, and `UID` through
-`hw_odin_matchSorter`.
+`Control-K` to open the command palette. Global search ranks bundled holiday
+names and the stored event fields `SUMMARY`, `DESCRIPTION`, `LOCATION`, `URL`,
+`CATEGORIES`, and `UID` through `hw_odin_matchSorter`.
 
 Select an event or the New Event control to open the Metal event editor. The
 editor exposes the same controls to pointer input, Accessibility, and Flash.
@@ -129,6 +134,18 @@ Bundled icon provenance:
 - SHA-256 (`minus.svg`): `babb05bca016bffdd38cbd1dcaeef6ccdf42fc8654124dee169a412eeed6d425`
 - SHA-256 (`maximize.svg`): `3a3048cdc0e8e4aef5d68353b5434f0c0e074dc672b6c0abf25a5a64bc5cc8f4`
 - License: [MIT](resources/icons/iconoir/LICENSE)
+
+Bundled holiday data:
+
+- Asset: Slovak state holidays, statutory holidays, and memorial days
+- Effective range: Current definitions from 2026 onward
+- Source: [Act 241/1993, effective November 1, 2025](https://static.slov-lex.sk/static/SK/ZZ/1993/241/20251101.print.html)
+- Retrieved: July 28, 2026
+- SHA-256: `3555b57422a8bc6aa11d7f861fdfca106bc5eb1c423148a13b5a2f7574c5452f`
+- Local data: [resources/holidays/sk.json](resources/holidays/sk.json)
+
+The JSON is a project-authored transcription. The application does not bundle
+a third-party holiday data file.
 
 Test-only oracle provenance:
 

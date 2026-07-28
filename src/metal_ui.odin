@@ -134,6 +134,19 @@ Calendar_UI_AX_Binding :: struct {
 	control_id: u64,
 }
 
+Calendar_Palette_Action_Kind :: enum {
+	Today,
+	Open_Event,
+	Toggle_Holiday_Country,
+	Jump_Holiday,
+}
+
+Calendar_Palette_Action :: struct {
+	kind: Calendar_Palette_Action_Kind,
+	index: int,
+	definition_index: int,
+}
+
 Calendar_UI_State :: struct {
 	app: Id,
 	window: Id,
@@ -162,11 +175,17 @@ Calendar_UI_State :: struct {
 	dark_theme: bool,
 	events: [dynamic]Calendar_Event,
 	occurrences: [dynamic]Calendar_Occurrence,
+	holiday_countries: [dynamic]Calendar_Holiday_Country,
+	holiday_occurrences: [dynamic]Calendar_Holiday_Occurrence,
 	controls: [dynamic]Calendar_UI_Control,
 	flash: flash.State,
 	palette: command_palette.State,
 	palette_query: string,
-	palette_event_indices: [dynamic]int,
+	palette_actions: [dynamic]Calendar_Palette_Action,
+	promoted_holiday_active: bool,
+	promoted_holiday_country_index: int,
+	promoted_holiday_definition_index: int,
+	promoted_holiday_days: i64,
 	editor_open: bool,
 	editor_event_index: int,
 	editor_field: int,
@@ -377,7 +396,7 @@ calendar_ui_ax_label :: proc(control: ^Calendar_UI_Control) -> string {
 	case .Theme_Toggle:
 		return calendar_ui.dark_theme ? "Switch to light theme" : "Switch to dark theme"
 	case .Today: return "Jump to today"
-	case .Search: return "Search events"
+	case .Search: return "Search calendar"
 	case .New_Event: return "New event"
 	case .Open_Event:
 		if control.event_index >= 0 &&
@@ -655,6 +674,7 @@ calendar_ui_event_rect :: proc(
 calendar_ui_reload_data :: proc() {
 	calendar_events_destroy(&calendar_ui.events)
 	calendar_occurrences_destroy(&calendar_ui.occurrences)
+	clear(&calendar_ui.holiday_occurrences)
 	events, loaded := calendar_events_load()
 	if !loaded {return}
 	calendar_ui.events = events
@@ -670,6 +690,11 @@ calendar_ui_reload_data :: proc() {
 		1_000,
 	)
 	calendar_ui.occurrences = occurrences
+	calendar_ui.holiday_occurrences = calendar_holiday_occurrences_expand(
+		calendar_ui.holiday_countries[:],
+		range_start,
+		range_end,
+	)
 }
 
 calendar_ui_begin_flash :: proc() {
@@ -709,6 +734,23 @@ calendar_event_palette_title :: proc(event: ^Calendar_Event) -> string {
 	return event.summary
 }
 
+calendar_holiday_kind_label :: proc(kind: Calendar_Holiday_Kind) -> string {
+	switch kind {
+	case .State_Holiday: return "ŠTÁTNY SVIATOK"
+	case .Public_Holiday: return "SVIATOK"
+	case .Memorial_Day: return "PAMÄTNÝ DEŇ"
+	case .Invalid:
+	}
+	return "SVIATOK"
+}
+
+calendar_ui_clear_holiday_promotion :: proc() {
+	calendar_ui.promoted_holiday_active = false
+	calendar_ui.promoted_holiday_country_index = -1
+	calendar_ui.promoted_holiday_definition_index = -1
+	calendar_ui.promoted_holiday_days = 0
+}
+
 calendar_ui_set_palette_query :: proc(value: string) -> bool {
 	search_error := command_palette.set_query(&calendar_ui.palette, value)
 	if search_error != .None {
@@ -725,7 +767,7 @@ calendar_ui_open_palette :: proc() {
 	if command_palette.is_open(&calendar_ui.palette) {
 		command_palette.close(&calendar_ui.palette)
 		calendar_ui.palette_query = ""
-		clear(&calendar_ui.palette_event_indices)
+		clear(&calendar_ui.palette_actions)
 		calendar_ui.needs_redraw = true
 		return
 	}
@@ -733,14 +775,64 @@ calendar_ui_open_palette :: proc() {
 		[dynamic]command_palette.Entry,
 		context.temp_allocator,
 	)
-	clear(&calendar_ui.palette_event_indices)
+	clear(&calendar_ui.palette_actions)
 	append(&entries, command_palette.Entry{
 		id = 1,
 		title = "Today",
 		category = "Command",
 		keywords = []string{"jump", "current", "date"},
 	})
-	append(&calendar_ui.palette_event_indices, -1)
+	append(&calendar_ui.palette_actions, Calendar_Palette_Action{kind = .Today})
+	for &country, country_index in calendar_ui.holiday_countries {
+		action := country.enabled ? "Disable" : "Enable"
+		append(&entries, command_palette.Entry{
+			id = command_palette.Entry_ID(len(entries)+1),
+			title = fmt.tprintf("%s holidays: %s", action, country.country_name),
+			subtitle = fmt.tprintf(
+				"%s / %d bundled dates",
+				country.country_code,
+				len(country.entries),
+			),
+			category = "Command",
+			keywords = []string{
+				"holidays",
+				"memorial days",
+				country.country_code,
+				country.country_name,
+			},
+		})
+		append(&calendar_ui.palette_actions, Calendar_Palette_Action{
+			kind = .Toggle_Holiday_Country,
+			index = country_index,
+		})
+		if !country.enabled {continue}
+		for &definition, definition_index in country.entries {
+			kind_label := calendar_holiday_kind_label(
+				calendar_holiday_kind(definition.kind),
+			)
+			append(&entries, command_palette.Entry{
+				id = command_palette.Entry_ID(len(entries)+1),
+				title = definition.name,
+				subtitle = fmt.tprintf(
+					"%s / %s",
+					country.country_code,
+					kind_label,
+				),
+				category = "Holiday",
+				keywords = []string{
+					country.country_code,
+					country.country_name,
+					kind_label,
+					definition.id,
+				},
+			})
+			append(&calendar_ui.palette_actions, Calendar_Palette_Action{
+				kind = .Jump_Holiday,
+				index = country_index,
+				definition_index = definition_index,
+			})
+		}
+	}
 	for &event, event_index in calendar_ui.events {
 		if len(event.recurrence_id) > 0 ||
 		   strings.equal_fold(event.status, "CANCELLED") {
@@ -753,11 +845,14 @@ calendar_ui_open_palette :: proc() {
 			category = "Event",
 			keywords = []string{event.description, event.categories, event.uid, event.url},
 		})
-		append(&calendar_ui.palette_event_indices, event_index)
+		append(&calendar_ui.palette_actions, Calendar_Palette_Action{
+			kind = .Open_Event,
+			index = event_index,
+		})
 	}
 	search_error := command_palette.open(&calendar_ui.palette, entries[:], 0)
 	if search_error != .None {
-		clear(&calendar_ui.palette_event_indices)
+		clear(&calendar_ui.palette_actions)
 		fmt.eprintln("[hw_calendar] command palette rejected invalid UTF-8")
 		calendar_ui.needs_redraw = true
 		return
@@ -770,18 +865,61 @@ calendar_ui_activate_palette :: proc() {
 	id, activated := command_palette.activate_selected(&calendar_ui.palette)
 	if !activated {return}
 	index := int(id)-1
-	if index <= 0 {
+	if index < 0 || index >= len(calendar_ui.palette_actions) {return}
+	action := calendar_ui.palette_actions[index]
+	now := ical_date_time_from_stamp(time.to_unix_seconds(time.now()), true)
+	now_days := ical_days_from_civil(now.year, now.month, now.day)
+	switch action.kind {
+	case .Today:
+		calendar_ui_clear_holiday_promotion()
 		calendar_ui.day_offset = 0
-	} else if index < len(calendar_ui.palette_event_indices) {
-		event_index := calendar_ui.palette_event_indices[index]
-		if event_index >= 0 {
-			start, ok := ical_parse_date_time(calendar_ui.events[event_index].dtstart)
+	case .Open_Event:
+		calendar_ui_clear_holiday_promotion()
+		if action.index >= 0 && action.index < len(calendar_ui.events) {
+			start, ok := ical_parse_date_time(calendar_ui.events[action.index].dtstart)
 			if ok {
-				now := ical_date_time_from_stamp(time.to_unix_seconds(time.now()), true)
 				calendar_ui.day_offset = int(
 					ical_days_from_civil(start.year, start.month, start.day) -
-					ical_days_from_civil(now.year, now.month, now.day),
+					now_days,
 				)
+			}
+		}
+	case .Toggle_Holiday_Country:
+		calendar_ui_clear_holiday_promotion()
+		if action.index >= 0 &&
+		   action.index < len(calendar_ui.holiday_countries) {
+			country := &calendar_ui.holiday_countries[action.index]
+			if !calendar_holiday_country_set_enabled(
+				country,
+				!country.enabled,
+			) {
+				fmt.eprintln("[hw_calendar] could not persist the holiday setting")
+			}
+		}
+	case .Jump_Holiday:
+		if action.index >= 0 &&
+		   action.index < len(calendar_ui.holiday_countries) {
+			country := &calendar_ui.holiday_countries[action.index]
+			if action.definition_index >= 0 &&
+			   action.definition_index < len(country.entries) {
+				date, found := calendar_holiday_next_date(
+					country,
+					&country.entries[action.definition_index],
+					now,
+				)
+				if found {
+					target_days := ical_days_from_civil(
+						date.year,
+						date.month,
+						date.day,
+					)
+					calendar_ui.day_offset = int(target_days-now_days)
+					calendar_ui.promoted_holiday_active = true
+					calendar_ui.promoted_holiday_country_index = action.index
+					calendar_ui.promoted_holiday_definition_index =
+						action.definition_index
+					calendar_ui.promoted_holiday_days = target_days
+				}
 			}
 		}
 	}
@@ -1021,6 +1159,7 @@ calendar_ui_activate_control :: proc(id: u64) {
 				fmt.eprintln("[hw_calendar] could not persist the interface theme")
 			}
 		case .Today:
+			calendar_ui_clear_holiday_promotion()
 			calendar_ui.day_offset = 0
 			calendar_ui_reload_data()
 		case .Search:
@@ -1179,6 +1318,7 @@ calendar_on_scroll :: proc "c" (self: Id, command: Sel, event: Id) {
 	} else if delta < 0 {
 		calendar_ui.day_offset += max(1, int(-delta/12))
 	}
+	calendar_ui_clear_holiday_promotion()
 	calendar_ui_reload_data()
 	calendar_ui.needs_redraw = true
 }
@@ -1280,10 +1420,12 @@ calendar_on_key_down :: proc "c" (self: Id, command: Sel, event: Id) {
 	if text == "/" {
 		calendar_ui_begin_flash()
 	} else if key_code == 125 {
+		calendar_ui_clear_holiday_promotion()
 		calendar_ui.day_offset += 1
 		calendar_ui_reload_data()
 		calendar_ui.needs_redraw = true
 	} else if key_code == 126 {
+		calendar_ui_clear_holiday_promotion()
 		calendar_ui.day_offset -= 1
 		calendar_ui_reload_data()
 		calendar_ui.needs_redraw = true
@@ -1346,6 +1488,89 @@ calendar_occurrences_for_day :: proc(day: ICal_Date_Time) -> []Calendar_Occurren
 	return result[:]
 }
 
+Calendar_Day_Item_Kind :: enum {
+	Event,
+	Holiday,
+}
+
+Calendar_Day_Item :: struct {
+	kind: Calendar_Day_Item_Kind,
+	event: Calendar_Occurrence,
+	holiday: Calendar_Holiday_Occurrence,
+}
+
+calendar_holiday_occurrence_is_promoted :: proc(
+	occurrence: Calendar_Holiday_Occurrence,
+) -> bool {
+	return calendar_ui.promoted_holiday_active &&
+	       occurrence.country_index ==
+				calendar_ui.promoted_holiday_country_index &&
+	       occurrence.definition_index ==
+				calendar_ui.promoted_holiday_definition_index &&
+	       ical_days_from_civil(
+				occurrence.date.year,
+				occurrence.date.month,
+				occurrence.date.day,
+		   ) == calendar_ui.promoted_holiday_days
+}
+
+calendar_day_items :: proc(day: ICal_Date_Time) -> []Calendar_Day_Item {
+	result := make([dynamic]Calendar_Day_Item, context.temp_allocator)
+	day_days := ical_days_from_civil(day.year, day.month, day.day)
+	for occurrence in calendar_ui.holiday_occurrences {
+		if ical_days_from_civil(
+			occurrence.date.year,
+			occurrence.date.month,
+			occurrence.date.day,
+		) == day_days && calendar_holiday_occurrence_is_promoted(occurrence) {
+			append(&result, Calendar_Day_Item{
+				kind = .Holiday,
+				holiday = occurrence,
+			})
+			break
+		}
+	}
+	for occurrence in calendar_occurrences_for_day(day) {
+		append(&result, Calendar_Day_Item{
+			kind = .Event,
+			event = occurrence,
+		})
+	}
+	for occurrence in calendar_ui.holiday_occurrences {
+		if ical_days_from_civil(
+			occurrence.date.year,
+			occurrence.date.month,
+			occurrence.date.day,
+		) != day_days || calendar_holiday_occurrence_is_promoted(occurrence) {
+			continue
+		}
+		append(&result, Calendar_Day_Item{
+			kind = .Holiday,
+			holiday = occurrence,
+		})
+	}
+	return result[:]
+}
+
+calendar_holiday_definition_for_occurrence :: proc(
+	occurrence: Calendar_Holiday_Occurrence,
+) -> (
+	^Calendar_Holiday_Country,
+	^Calendar_Holiday_Definition,
+	bool,
+) {
+	if occurrence.country_index < 0 ||
+	   occurrence.country_index >= len(calendar_ui.holiday_countries) {
+		return nil, nil, false
+	}
+	country := &calendar_ui.holiday_countries[occurrence.country_index]
+	if occurrence.definition_index < 0 ||
+	   occurrence.definition_index >= len(country.entries) {
+		return nil, nil, false
+	}
+	return country, &country.entries[occurrence.definition_index], true
+}
+
 calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 	chassis := [4]f32{0.80, 0.78, 0.72, 1}
 	header := [4]f32{0.91, 0.89, 0.82, 1}
@@ -1385,10 +1610,12 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 	for index in 0..<visible {
 		day := ical_date_time_from_stamp((anchor+i64(index))*86400, true)
 		rect := calendar_ui_day_rect(index)
-		day_events := calendar_occurrences_for_day(day)
+		day_items := calendar_day_items(day)
 		is_important := false
-		for occurrence in day_events {
-			if occurrence.important {is_important = true}
+		for item in day_items {
+			if item.kind == .Event && item.event.important {
+				is_important = true
+			}
 		}
 		color := row
 		if index%2 == 1 {color = row_alt}
@@ -1398,15 +1625,32 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 		   ical_days_from_civil(now.year, now.month, now.day) {
 			calendar_push_border(vertices, rect, focus)
 		}
-		for occurrence, event_index in day_events {
-			if event_index >= 3 {break}
-			event_rect := calendar_ui_event_rect(rect, event_index)
+		for item, item_index in day_items {
+			if item_index >= 3 {break}
+			event_rect := calendar_ui_event_rect(rect, item_index)
 			event_color := [4]f32{0.20, 0.20, 0.21, 1}
 			if calendar_ui.dark_theme {
 				event_color = [4]f32{0.075, 0.081, 0.076, 1}
 			}
+			if item.kind == .Holiday {
+				calendar_push_rect(vertices, event_rect, event_color)
+				_, definition, found :=
+					calendar_holiday_definition_for_occurrence(item.holiday)
+				if found {
+					accent := CALENDAR_COLOR_COFFEE_32
+					if calendar_holiday_kind(definition.kind) == .Memorial_Day {
+						accent = CALENDAR_COLOR_GUM_32
+					}
+					calendar_push_rect(
+						vertices,
+						{event_rect.x, event_rect.y, 4, event_rect.h},
+						accent,
+					)
+				}
+				continue
+			}
 			upper_categories := strings.to_upper(
-				occurrence.categories,
+				item.event.categories,
 				context.temp_allocator,
 			)
 			personal := strings.contains(upper_categories, "PERSONAL")
@@ -1430,13 +1674,13 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 				calendar_ui_add_control(
 					fmt.tprintf(
 						"event:%s:%s",
-						occurrence.uid,
-						occurrence.recurrence_id,
+						item.event.uid,
+						item.event.recurrence_id,
 					),
 					"event",
 					event_rect,
 					.Open_Event,
-					occurrence.event_index,
+					item.event.event_index,
 				)
 			}
 		}
@@ -1915,28 +2159,47 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			day.day,
 		)
 		calendar_draw_text(ctx, font, date_text, {rect.x+8, rect.y, 164, rect.h}, muted, 0)
-		day_events := calendar_occurrences_for_day(day)
-		for occurrence, event_index in day_events {
-			if event_index >= 3 {break}
-			event_rect := calendar_ui_event_rect(rect, event_index)
+		day_items := calendar_day_items(day)
+		for item, item_index in day_items {
+			if item_index >= 3 {break}
+			event_rect := calendar_ui_event_rect(rect, item_index)
+			if item.kind == .Holiday {
+				country, definition, found :=
+					calendar_holiday_definition_for_occurrence(item.holiday)
+				if found {
+					calendar_draw_text(
+						ctx,
+						font,
+						fmt.tprintf(
+							"%s / %s",
+							country.country_code,
+							definition.name,
+						),
+						event_rect,
+						ink,
+						8,
+					)
+				}
+				continue
+			}
 			time_text := "ALL DAY"
-			if !occurrence.start.is_date {
+			if !item.event.start.is_date {
 				time_text = fmt.tprintf(
 					"%02d:%02d  %s",
-					occurrence.start.hour,
-					occurrence.start.minute,
-					occurrence.summary,
+					item.event.start.hour,
+					item.event.start.minute,
+					item.event.summary,
 				)
 			} else {
-				time_text = fmt.tprintf("ALL DAY  %s", occurrence.summary)
+				time_text = fmt.tprintf("ALL DAY  %s", item.event.summary)
 			}
 			calendar_draw_text(ctx, font, time_text, event_rect, inverse)
 		}
-		if len(day_events) > 3 {
+		if len(day_items) > 3 {
 			calendar_draw_text(
 				ctx,
 				font,
-				fmt.tprintf("+%d", len(day_events)-3),
+				fmt.tprintf("+%d", len(day_items)-3),
 				{rect.x+rect.w-42, rect.y, 38, rect.h},
 				ink_soft,
 				0,
@@ -2253,7 +2516,7 @@ calendar_render_frame :: proc() {
 		)
 		calendar_ui_add_control(
 			"search",
-			"search events",
+			"search calendar",
 			calendar_ui_search_rect(),
 			.Search,
 		)
@@ -2479,10 +2742,12 @@ calendar_register_window_class :: proc() -> Id {
 calendar_ui_destroy :: proc() {
 	calendar_events_destroy(&calendar_ui.events)
 	calendar_occurrences_destroy(&calendar_ui.occurrences)
+	calendar_holiday_countries_destroy(&calendar_ui.holiday_countries)
+	delete(calendar_ui.holiday_occurrences)
 	calendar_ui_clear_controls()
 	delete(calendar_ui.controls)
 	delete(calendar_ui.palette_query)
-	delete(calendar_ui.palette_event_indices)
+	delete(calendar_ui.palette_actions)
 	calendar_ui_editor_clear()
 	if calendar_ui.ax_children != nil {
 		msg_void(calendar_ui.ax_children, sel_registerName("release"))
@@ -2525,8 +2790,10 @@ calendar_gui_initialize :: proc(
 		calendar_ui.dark_theme = calendar_theme_is_dark(theme)
 	}
 	calendar_ui.controls = make([dynamic]Calendar_UI_Control)
-	calendar_ui.palette_event_indices = make([dynamic]int)
+	calendar_ui.palette_actions = make([dynamic]Calendar_Palette_Action)
 	calendar_ui.ax_bindings = make([dynamic]Calendar_UI_AX_Binding)
+	calendar_ui.promoted_holiday_country_index = -1
+	calendar_ui.promoted_holiday_definition_index = -1
 	flash.state_init(&calendar_ui.flash)
 	if error := command_palette.state_init(
 		&calendar_ui.palette,
@@ -2536,6 +2803,7 @@ calendar_gui_initialize :: proc(
 		fmt.eprintln("HW Calendar could not initialize search.")
 		return false
 	}
+	calendar_ui.holiday_countries = calendar_holiday_countries_load()
 	calendar_ui_reload_data()
 	app := Id(nil)
 	view_class := Id(nil)

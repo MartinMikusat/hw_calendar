@@ -7,6 +7,7 @@ UI_FLASH_ROOT="$ROOT/../hw_odin_ui_flash"
 COMMAND_PALETTE_ROOT="$ROOT/../hw_odin_ui_commandPalette"
 FONT_ROOT="$ROOT/resources/fonts"
 ICON_ROOT="$ROOT/resources/icons/iconoir"
+HOLIDAY_ROOT="$ROOT/resources/holidays"
 
 MODE=${1:-debug}
 PART=${2:-all}
@@ -44,7 +45,8 @@ mkdir -p \
   "$HOT_DIR" \
   "$APP/Contents/MacOS" \
   "$APP/Contents/Resources/Fonts" \
-  "$APP/Contents/Resources/Icons/Iconoir"
+  "$APP/Contents/Resources/Icons/Iconoir" \
+  "$APP/Contents/Resources/Holidays"
 
 COMMON_COLLECTIONS="-collection:match_sorter=$MATCH_SORTER_ROOT -collection:flash=$UI_FLASH_ROOT -collection:command_palette=$COMMAND_PALETTE_ROOT"
 APP_FRAMEWORKS="-framework AppKit -framework Foundation -framework Metal -framework QuartzCore -framework CoreText -framework CoreGraphics -framework UserNotifications"
@@ -67,6 +69,7 @@ build_host() {
   cp "$ICON_ROOT/minus.svg" "$APP/Contents/Resources/Icons/Iconoir/minus.svg"
   cp "$ICON_ROOT/maximize.svg" "$APP/Contents/Resources/Icons/Iconoir/maximize.svg"
   cp "$ICON_ROOT/LICENSE" "$APP/Contents/Resources/Icons/Iconoir/LICENSE"
+  cp "$HOLIDAY_ROOT/sk.json" "$APP/Contents/Resources/Holidays/sk.json"
   xcrun dsymutil "$HOST" -o "$APP.dSYM"
   codesign --force --deep --sign - "$APP"
 }

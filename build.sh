@@ -7,6 +7,7 @@ UI_FLASH_ROOT="$ROOT/../hw_odin_ui_flash"
 COMMAND_PALETTE_ROOT="$ROOT/../hw_odin_ui_commandPalette"
 FONT_ROOT="$ROOT/resources/fonts"
 ICON_ROOT="$ROOT/resources/icons/iconoir"
+HOLIDAY_ROOT="$ROOT/resources/holidays"
 
 "$ROOT/scripts/dependencies.sh" check
 
@@ -36,7 +37,8 @@ esac
 mkdir -p \
   "$APP/Contents/MacOS" \
   "$APP/Contents/Resources/Fonts" \
-  "$APP/Contents/Resources/Icons/Iconoir"
+  "$APP/Contents/Resources/Icons/Iconoir" \
+  "$APP/Contents/Resources/Holidays"
 EXECUTABLE="$APP/Contents/MacOS/HWCalendar"
 TEMP="$ROOT/build/temp/$MODE"
 mkdir -p "$TEMP"
@@ -53,6 +55,7 @@ cp "$ICON_ROOT/xmark.svg" "$APP/Contents/Resources/Icons/Iconoir/xmark.svg"
 cp "$ICON_ROOT/minus.svg" "$APP/Contents/Resources/Icons/Iconoir/minus.svg"
 cp "$ICON_ROOT/maximize.svg" "$APP/Contents/Resources/Icons/Iconoir/maximize.svg"
 cp "$ICON_ROOT/LICENSE" "$APP/Contents/Resources/Icons/Iconoir/LICENSE"
+cp "$HOLIDAY_ROOT/sk.json" "$APP/Contents/Resources/Holidays/sk.json"
 cp "$EXECUTABLE" "$CLI"
 codesign --force --deep --sign - "$APP"
 

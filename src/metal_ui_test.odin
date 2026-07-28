@@ -3,6 +3,8 @@ package main
 import "core:testing"
 import flash "flash:."
 
+CALENDAR_SLOVAK_HOLIDAY_TEST_DATA :: #load("../resources/holidays/sk.json")
+
 @(test)
 calendar_launch_activation_respects_background_policy_test :: proc(
 	t: ^testing.T,
@@ -68,6 +70,87 @@ calendar_theme_switch_precedes_header_actions_test :: proc(t: ^testing.T) {
 	testing.expect_value(t, theme, Calendar_UI_Rect{554, 729, 64, 30})
 	testing.expect_value(t, today, Calendar_UI_Rect{626, 729, 76, 30})
 	testing.expect_value(t, today.x-(theme.x+theme.w), 8.0)
+}
+
+@(test)
+calendar_slovak_holiday_data_matches_current_legal_categories_test :: proc(
+	t: ^testing.T,
+) {
+	country, decoded := calendar_holiday_decode(
+		transmute([]u8)CALENDAR_SLOVAK_HOLIDAY_TEST_DATA,
+	)
+	testing.expect(t, decoded)
+	if !decoded {return}
+	defer calendar_holiday_country_destroy(&country)
+	testing.expect_value(t, country.country_code, "SK")
+	testing.expect_value(t, country.country_name, "Slovensko")
+	testing.expect_value(t, country.effective_from_year, 2026)
+	testing.expect_value(t, len(country.entries), 39)
+	counts: [Calendar_Holiday_Kind]int
+	for entry in country.entries {counts[calendar_holiday_kind(entry.kind)] += 1}
+	testing.expect_value(t, counts[.State_Holiday], 6)
+	testing.expect_value(t, counts[.Public_Holiday], 10)
+	testing.expect_value(t, counts[.Memorial_Day], 23)
+}
+
+@(test)
+calendar_slovak_movable_holidays_follow_gregorian_easter_test :: proc(
+	t: ^testing.T,
+) {
+	easter := calendar_gregorian_easter(2026)
+	testing.expect_value(t, easter, ICal_Date_Time{
+		year = 2026,
+		month = 4,
+		day = 5,
+		is_date = true,
+	})
+	good_friday := Calendar_Holiday_Definition{
+		rule = "easter_offset",
+		easter_offset_days = -2,
+	}
+	date, valid := calendar_holiday_definition_date(&good_friday, 2026)
+	testing.expect(t, valid)
+	testing.expect_value(t, date, ICal_Date_Time{
+		year = 2026,
+		month = 4,
+		day = 3,
+		is_date = true,
+	})
+	easter_monday := good_friday
+	easter_monday.easter_offset_days = 1
+	date, valid = calendar_holiday_definition_date(&easter_monday, 2026)
+	testing.expect(t, valid)
+	testing.expect_value(t, date, ICal_Date_Time{
+		year = 2026,
+		month = 4,
+		day = 6,
+		is_date = true,
+	})
+}
+
+@(test)
+calendar_slovak_holidays_start_in_2026_test :: proc(t: ^testing.T) {
+	country, decoded := calendar_holiday_decode(
+		transmute([]u8)CALENDAR_SLOVAK_HOLIDAY_TEST_DATA,
+	)
+	testing.expect(t, decoded)
+	if !decoded {return}
+	defer calendar_holiday_country_destroy(&country)
+	country.enabled = true
+	before := calendar_holiday_occurrences_expand(
+		[]Calendar_Holiday_Country{country},
+		{year = 2025, month = 1, day = 1, is_date = true},
+		{year = 2026, month = 1, day = 1, is_date = true},
+	)
+	defer delete(before)
+	testing.expect_value(t, len(before), 0)
+	first_week := calendar_holiday_occurrences_expand(
+		[]Calendar_Holiday_Country{country},
+		{year = 2026, month = 1, day = 1, is_date = true},
+		{year = 2026, month = 1, day = 7, is_date = true},
+	)
+	defer delete(first_week)
+	testing.expect_value(t, len(first_week), 2)
 }
 
 @(test)

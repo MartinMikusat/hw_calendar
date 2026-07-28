@@ -45,7 +45,7 @@ acquire_lock() {
 legacy_fingerprint() {
   stat -f '%m:%z:%N' \
     src/*.odin ./*.sh scripts/*.sh Info.plist dependencies.lock \
-    resources/fonts/* resources/icons/iconoir/* \
+    resources/fonts/* resources/icons/iconoir/* resources/holidays/* \
     2>/dev/null | shasum | cut -d' ' -f1
 }
 
@@ -58,7 +58,7 @@ host_fingerprint() {
   find dev -type f -name '*.odin' -exec stat -f '%m:%z:%N' {} + 2>/dev/null
   stat -f '%m:%z:%N' \
     Info.plist scripts/hot-reload-build.sh \
-    resources/fonts/* resources/icons/iconoir/* \
+    resources/fonts/* resources/icons/iconoir/* resources/holidays/* \
     2>/dev/null
 }
 
