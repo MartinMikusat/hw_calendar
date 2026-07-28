@@ -73,6 +73,58 @@ calendar_theme_switch_precedes_header_actions_test :: proc(t: ^testing.T) {
 }
 
 @(test)
+calendar_navigation_selects_adjacent_event_and_holiday_test :: proc(
+	t: ^testing.T,
+) {
+	day := ical_days_from_civil(2026, 7, 28)*86400
+	items := []Calendar_Navigation_Item{
+		{
+			kind = .Event,
+			event = {event_index = 4, start = ical_date_time_from_stamp(day)},
+		},
+		{
+			kind = .Holiday,
+			holiday = {
+				country_index = 0,
+				definition_index = 1,
+				date = ical_date_time_from_stamp(day, true),
+			},
+		},
+		{
+			kind = .Event,
+			event = {
+				event_index = 5,
+				start = ical_date_time_from_stamp(day+9*3600),
+			},
+		},
+	}
+	next, found := calendar_navigation_find(items, .Next, day)
+	testing.expect(t, found)
+	testing.expect_value(t, next.kind, Calendar_Navigation_Item_Kind.Event)
+	testing.expect_value(t, next.event.event_index, 4)
+
+	next, found = calendar_navigation_find(items, .Next, day, &items[0])
+	testing.expect(t, found)
+	testing.expect_value(t, next.kind, Calendar_Navigation_Item_Kind.Holiday)
+
+	previous, previous_found := calendar_navigation_find(
+		items,
+		.Previous,
+		day,
+		&items[2],
+	)
+	testing.expect(t, previous_found)
+	testing.expect_value(
+		t,
+		previous.kind,
+		Calendar_Navigation_Item_Kind.Holiday,
+	)
+
+	_, found = calendar_navigation_find(items, .Previous, day)
+	testing.expect(t, !found)
+}
+
+@(test)
 calendar_slovak_holiday_data_matches_current_legal_categories_test :: proc(
 	t: ^testing.T,
 ) {

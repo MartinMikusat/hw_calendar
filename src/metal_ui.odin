@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:fmt"
 import "core:hash"
 import "core:os"
+import "core:sort"
 import "core:strings"
 import "core:time"
 import CF "core:sys/darwin/CoreFoundation"
@@ -147,6 +148,22 @@ Calendar_Palette_Action :: struct {
 	definition_index: int,
 }
 
+Calendar_Navigation_Item_Kind :: enum {
+	Event,
+	Holiday,
+}
+
+Calendar_Navigation_Item :: struct {
+	kind: Calendar_Navigation_Item_Kind,
+	event: Calendar_Occurrence,
+	holiday: Calendar_Holiday_Occurrence,
+}
+
+Calendar_Navigation_Direction :: enum {
+	Previous,
+	Next,
+}
+
 Calendar_UI_State :: struct {
 	app: Id,
 	window: Id,
@@ -186,6 +203,12 @@ Calendar_UI_State :: struct {
 	promoted_holiday_country_index: int,
 	promoted_holiday_definition_index: int,
 	promoted_holiday_days: i64,
+	navigation_active: bool,
+	navigation_kind: Calendar_Navigation_Item_Kind,
+	navigation_event_index: int,
+	navigation_start_stamp: i64,
+	navigation_holiday_country_index: int,
+	navigation_holiday_definition_index: int,
 	editor_open: bool,
 	editor_event_index: int,
 	editor_field: int,
@@ -206,6 +229,7 @@ calendar_ui: Calendar_UI_State
 
 CALENDAR_HEADER_HEIGHT :: 40.0
 CALENDAR_HEADER_CONTROL_HEIGHT :: 30.0
+CALENDAR_EVENT_MODIFIER_COMMAND :: uint(1 << 20)
 CALENDAR_COLOR_SAND_32 :: [4]f32{0.882353, 0.850980, 0.788235, 1}
 CALENDAR_COLOR_STONE_32 :: [4]f32{0.682353, 0.576471, 0.447059, 1}
 CALENDAR_COLOR_COFFEE_32 :: [4]f32{0.698039, 0.490196, 0.341176, 1}
@@ -751,6 +775,190 @@ calendar_ui_clear_holiday_promotion :: proc() {
 	calendar_ui.promoted_holiday_days = 0
 }
 
+calendar_ui_clear_navigation_selection :: proc() {
+	calendar_ui.navigation_active = false
+	calendar_ui.navigation_event_index = -1
+	calendar_ui.navigation_start_stamp = 0
+	calendar_ui.navigation_holiday_country_index = -1
+	calendar_ui.navigation_holiday_definition_index = -1
+}
+
+calendar_navigation_item_stamp :: proc(item: Calendar_Navigation_Item) -> i64 {
+	if item.kind == .Event {return ical_date_time_stamp(item.event.start)}
+	return ical_date_time_stamp(item.holiday.date)
+}
+
+calendar_navigation_item_compare :: proc(
+	a, b: Calendar_Navigation_Item,
+) -> int {
+	a_stamp := calendar_navigation_item_stamp(a)
+	b_stamp := calendar_navigation_item_stamp(b)
+	if a_stamp < b_stamp {return -1}
+	if a_stamp > b_stamp {return 1}
+	if a.kind < b.kind {return -1}
+	if a.kind > b.kind {return 1}
+	if a.kind == .Event {
+		return calendar_occurrence_compare(a.event, b.event)
+	}
+	return calendar_holiday_occurrence_compare(a.holiday, b.holiday)
+}
+
+calendar_navigation_item_matches_selection :: proc(
+	item: Calendar_Navigation_Item,
+) -> bool {
+	if !calendar_ui.navigation_active || item.kind != calendar_ui.navigation_kind {
+		return false
+	}
+	if calendar_navigation_item_stamp(item) != calendar_ui.navigation_start_stamp {
+		return false
+	}
+	if item.kind == .Event {
+		return item.event.event_index == calendar_ui.navigation_event_index
+	}
+	return item.holiday.country_index == calendar_ui.navigation_holiday_country_index &&
+	       item.holiday.definition_index ==
+			calendar_ui.navigation_holiday_definition_index
+}
+
+calendar_ui_set_navigation_selection :: proc(item: Calendar_Navigation_Item) {
+	calendar_ui.navigation_active = true
+	calendar_ui.navigation_kind = item.kind
+	calendar_ui.navigation_start_stamp = calendar_navigation_item_stamp(item)
+	if item.kind == .Event {
+		calendar_ui.navigation_event_index = item.event.event_index
+		calendar_ui.navigation_holiday_country_index = -1
+		calendar_ui.navigation_holiday_definition_index = -1
+		return
+	}
+	calendar_ui.navigation_event_index = -1
+	calendar_ui.navigation_holiday_country_index = item.holiday.country_index
+	calendar_ui.navigation_holiday_definition_index = item.holiday.definition_index
+}
+
+calendar_ui_navigation_selection_item :: proc() -> (
+	Calendar_Navigation_Item,
+	bool,
+) {
+	if !calendar_ui.navigation_active {return {}, false}
+	item := Calendar_Navigation_Item{kind = calendar_ui.navigation_kind}
+	if item.kind == .Event {
+		item.event.event_index = calendar_ui.navigation_event_index
+		item.event.start = ical_date_time_from_stamp(
+			calendar_ui.navigation_start_stamp,
+		)
+	} else {
+		item.holiday.country_index = calendar_ui.navigation_holiday_country_index
+		item.holiday.definition_index =
+			calendar_ui.navigation_holiday_definition_index
+		item.holiday.date = ical_date_time_from_stamp(
+			calendar_ui.navigation_start_stamp,
+			true,
+		)
+	}
+	return item, true
+}
+
+calendar_navigation_items :: proc(
+	events: []Calendar_Event,
+	countries: []Calendar_Holiday_Country,
+	range_start, range_end: ICal_Date_Time,
+	allocator := context.allocator,
+) -> [dynamic]Calendar_Navigation_Item {
+	items := make([dynamic]Calendar_Navigation_Item, allocator)
+	occurrences, _ := calendar_expand_events(
+		events,
+		range_start,
+		range_end,
+		1_000,
+		allocator,
+	)
+	for occurrence in occurrences {
+		append(&items, Calendar_Navigation_Item{kind = .Event, event = occurrence})
+	}
+	for holiday in calendar_holiday_occurrences_expand(
+		countries,
+		range_start,
+		range_end,
+		allocator,
+	) {
+		append(&items, Calendar_Navigation_Item{kind = .Holiday, holiday = holiday})
+	}
+	sort.merge_sort_proc(items[:], calendar_navigation_item_compare)
+	return items
+}
+
+calendar_navigation_find :: proc(
+	items: []Calendar_Navigation_Item,
+	direction: Calendar_Navigation_Direction,
+	initial_day_stamp: i64,
+	selection: ^Calendar_Navigation_Item = nil,
+) -> (Calendar_Navigation_Item, bool) {
+	if direction == .Next {
+		for item in items {
+			if selection != nil {
+				if calendar_navigation_item_compare(item, selection^) <= 0 {continue}
+			} else if calendar_navigation_item_stamp(item) < initial_day_stamp {
+				continue
+			}
+			return item, true
+		}
+		return {}, false
+	}
+	for index := len(items)-1; index >= 0; index -= 1 {
+		item := items[index]
+		if selection != nil {
+			if calendar_navigation_item_compare(item, selection^) >= 0 {continue}
+		} else if calendar_navigation_item_stamp(item) >= initial_day_stamp {
+			continue
+		}
+		return item, true
+	}
+	return {}, false
+}
+
+calendar_ui_navigate :: proc(direction: Calendar_Navigation_Direction) {
+	now := ical_date_time_from_stamp(time.to_unix_seconds(time.now()), true)
+	anchor_days := ical_days_from_civil(now.year, now.month, now.day) +
+	               i64(calendar_ui.day_offset)
+	initial_day_stamp := anchor_days*86400
+	reference_stamp := initial_day_stamp
+	selection, has_selection := calendar_ui_navigation_selection_item()
+	if calendar_ui.navigation_active {
+		reference_stamp = calendar_ui.navigation_start_stamp
+	}
+	for span_days := i64(366); span_days <= 366*128; span_days *= 2 {
+		range_start := reference_stamp
+		range_end := reference_stamp+span_days*86400
+		if direction == .Previous {
+			range_start = reference_stamp-span_days*86400
+			range_end = reference_stamp
+			if calendar_ui.navigation_active {range_end += 86400}
+		}
+		items := calendar_navigation_items(
+			calendar_ui.events[:],
+			calendar_ui.holiday_countries[:],
+			ical_date_time_from_stamp(range_start, true),
+			ical_date_time_from_stamp(range_end, true),
+			context.temp_allocator,
+		)
+		item, found := calendar_navigation_find(
+			items[:],
+			direction,
+			initial_day_stamp,
+			&selection if has_selection else nil,
+		)
+		if !found {continue}
+		calendar_ui_clear_holiday_promotion()
+		calendar_ui_set_navigation_selection(item)
+		target_days := calendar_navigation_item_stamp(item)/86400
+		calendar_ui.day_offset = int(target_days-anchor_days) +
+		                         calendar_ui.day_offset
+		calendar_ui_reload_data()
+		calendar_ui.needs_redraw = true
+		return
+	}
+}
+
 calendar_ui_set_palette_query :: proc(value: string) -> bool {
 	search_error := command_palette.set_query(&calendar_ui.palette, value)
 	if search_error != .None {
@@ -872,9 +1080,11 @@ calendar_ui_activate_palette :: proc() {
 	switch action.kind {
 	case .Today:
 		calendar_ui_clear_holiday_promotion()
+		calendar_ui_clear_navigation_selection()
 		calendar_ui.day_offset = 0
 	case .Open_Event:
 		calendar_ui_clear_holiday_promotion()
+		calendar_ui_clear_navigation_selection()
 		if action.index >= 0 && action.index < len(calendar_ui.events) {
 			start, ok := ical_parse_date_time(calendar_ui.events[action.index].dtstart)
 			if ok {
@@ -886,6 +1096,7 @@ calendar_ui_activate_palette :: proc() {
 		}
 	case .Toggle_Holiday_Country:
 		calendar_ui_clear_holiday_promotion()
+		calendar_ui_clear_navigation_selection()
 		if action.index >= 0 &&
 		   action.index < len(calendar_ui.holiday_countries) {
 			country := &calendar_ui.holiday_countries[action.index]
@@ -897,6 +1108,7 @@ calendar_ui_activate_palette :: proc() {
 			}
 		}
 	case .Jump_Holiday:
+		calendar_ui_clear_navigation_selection()
 		if action.index >= 0 &&
 		   action.index < len(calendar_ui.holiday_countries) {
 			country := &calendar_ui.holiday_countries[action.index]
@@ -1160,6 +1372,7 @@ calendar_ui_activate_control :: proc(id: u64) {
 			}
 		case .Today:
 			calendar_ui_clear_holiday_promotion()
+			calendar_ui_clear_navigation_selection()
 			calendar_ui.day_offset = 0
 			calendar_ui_reload_data()
 		case .Search:
@@ -1190,6 +1403,7 @@ calendar_ui_activate_control :: proc(id: u64) {
 
 calendar_ui_click :: proc(point: Point) -> bool {
 	flash.cancel(&calendar_ui.flash)
+	calendar_ui_clear_navigation_selection()
 	for index := len(calendar_ui.controls)-1; index >= 0; index -= 1 {
 		control := calendar_ui.controls[index]
 		if calendar_ui_contains(control.rect, point) {
@@ -1319,6 +1533,7 @@ calendar_on_scroll :: proc "c" (self: Id, command: Sel, event: Id) {
 		calendar_ui.day_offset += max(1, int(-delta/12))
 	}
 	calendar_ui_clear_holiday_promotion()
+	calendar_ui_clear_navigation_selection()
 	calendar_ui_reload_data()
 	calendar_ui.needs_redraw = true
 }
@@ -1333,6 +1548,7 @@ calendar_on_key_down :: proc "c" (self: Id, command: Sel, event: Id) {
 	modifiers := calendar_msg_uint(event, sel_registerName("modifierFlags"))
 	key_code := calendar_msg_uint(event, sel_registerName("keyCode"))
 	control_down := modifiers & (1 << 18) != 0
+	command_down := modifiers & CALENDAR_EVENT_MODIFIER_COMMAND != 0
 	if calendar_ui.editor_open {
 		switch key_code {
 		case 53:
@@ -1417,15 +1633,31 @@ calendar_on_key_down :: proc "c" (self: Id, command: Sel, event: Id) {
 		calendar_ui.needs_redraw = true
 		return
 	}
+	if command_down && key_code == 125 {
+		calendar_ui_navigate(.Next)
+		return
+	}
+	if command_down && key_code == 126 {
+		calendar_ui_navigate(.Previous)
+		return
+	}
 	if text == "/" {
 		calendar_ui_begin_flash()
+	} else if key_code == 53 {
+		calendar_ui_clear_holiday_promotion()
+		calendar_ui_clear_navigation_selection()
+		calendar_ui.day_offset = 0
+		calendar_ui_reload_data()
+		calendar_ui.needs_redraw = true
 	} else if key_code == 125 {
 		calendar_ui_clear_holiday_promotion()
+		calendar_ui_clear_navigation_selection()
 		calendar_ui.day_offset += 1
 		calendar_ui_reload_data()
 		calendar_ui.needs_redraw = true
 	} else if key_code == 126 {
 		calendar_ui_clear_holiday_promotion()
+		calendar_ui_clear_navigation_selection()
 		calendar_ui.day_offset -= 1
 		calendar_ui_reload_data()
 		calendar_ui.needs_redraw = true
@@ -1514,23 +1746,75 @@ calendar_holiday_occurrence_is_promoted :: proc(
 		   ) == calendar_ui.promoted_holiday_days
 }
 
+calendar_event_occurrence_is_navigation_selected :: proc(
+	occurrence: Calendar_Occurrence,
+) -> bool {
+	return calendar_ui.navigation_active &&
+	       calendar_ui.navigation_kind == .Event &&
+	       occurrence.event_index == calendar_ui.navigation_event_index &&
+	       ical_date_time_stamp(occurrence.start) ==
+			calendar_ui.navigation_start_stamp
+}
+
+calendar_holiday_occurrence_is_navigation_selected :: proc(
+	occurrence: Calendar_Holiday_Occurrence,
+) -> bool {
+	return calendar_ui.navigation_active &&
+	       calendar_ui.navigation_kind == .Holiday &&
+	       occurrence.country_index == calendar_ui.navigation_holiday_country_index &&
+	       occurrence.definition_index ==
+			calendar_ui.navigation_holiday_definition_index &&
+	       ical_date_time_stamp(occurrence.date) ==
+			calendar_ui.navigation_start_stamp
+}
+
+calendar_day_item_is_navigation_selected :: proc(item: Calendar_Day_Item) -> bool {
+	if item.kind == .Event {
+		return calendar_event_occurrence_is_navigation_selected(item.event)
+	}
+	return calendar_holiday_occurrence_is_navigation_selected(item.holiday)
+}
+
 calendar_day_items :: proc(day: ICal_Date_Time) -> []Calendar_Day_Item {
 	result := make([dynamic]Calendar_Day_Item, context.temp_allocator)
 	day_days := ical_days_from_civil(day.year, day.month, day.day)
-	for occurrence in calendar_ui.holiday_occurrences {
-		if ical_days_from_civil(
-			occurrence.date.year,
-			occurrence.date.month,
-			occurrence.date.day,
-		) == day_days && calendar_holiday_occurrence_is_promoted(occurrence) {
-			append(&result, Calendar_Day_Item{
-				kind = .Holiday,
-				holiday = occurrence,
-			})
+	if calendar_ui.navigation_active {
+		for occurrence in calendar_occurrences_for_day(day) {
+			if !calendar_event_occurrence_is_navigation_selected(occurrence) {continue}
+			append(&result, Calendar_Day_Item{kind = .Event, event = occurrence})
 			break
+		}
+		if len(result) == 0 {
+			for occurrence in calendar_ui.holiday_occurrences {
+				if ical_days_from_civil(
+					occurrence.date.year,
+					occurrence.date.month,
+					occurrence.date.day,
+				) != day_days ||
+				   !calendar_holiday_occurrence_is_navigation_selected(occurrence) {
+					continue
+				}
+				append(&result, Calendar_Day_Item{kind = .Holiday, holiday = occurrence})
+				break
+			}
+		}
+	} else {
+		for occurrence in calendar_ui.holiday_occurrences {
+			if ical_days_from_civil(
+				occurrence.date.year,
+				occurrence.date.month,
+				occurrence.date.day,
+			) == day_days && calendar_holiday_occurrence_is_promoted(occurrence) {
+				append(&result, Calendar_Day_Item{
+					kind = .Holiday,
+					holiday = occurrence,
+				})
+				break
+			}
 		}
 	}
 	for occurrence in calendar_occurrences_for_day(day) {
+		if calendar_event_occurrence_is_navigation_selected(occurrence) {continue}
 		append(&result, Calendar_Day_Item{
 			kind = .Event,
 			event = occurrence,
@@ -1541,7 +1825,8 @@ calendar_day_items :: proc(day: ICal_Date_Time) -> []Calendar_Day_Item {
 			occurrence.date.year,
 			occurrence.date.month,
 			occurrence.date.day,
-		) != day_days || calendar_holiday_occurrence_is_promoted(occurrence) {
+		) != day_days || calendar_holiday_occurrence_is_promoted(occurrence) ||
+		   calendar_holiday_occurrence_is_navigation_selected(occurrence) {
 			continue
 		}
 		append(&result, Calendar_Day_Item{
@@ -1647,6 +1932,9 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 						accent,
 					)
 				}
+				if calendar_day_item_is_navigation_selected(item) {
+					calendar_push_border(vertices, event_rect, focus)
+				}
 				continue
 			}
 			upper_categories := strings.to_upper(
@@ -1669,6 +1957,9 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 					{event_rect.x+4, event_rect.y, 4, event_rect.h},
 					CALENDAR_COLOR_GUM_32,
 				)
+			}
+			if calendar_day_item_is_navigation_selected(item) {
+				calendar_push_border(vertices, event_rect, focus)
 			}
 			if !calendar_ui.editor_open {
 				calendar_ui_add_control(
@@ -2794,6 +3085,7 @@ calendar_gui_initialize :: proc(
 	calendar_ui.ax_bindings = make([dynamic]Calendar_UI_AX_Binding)
 	calendar_ui.promoted_holiday_country_index = -1
 	calendar_ui.promoted_holiday_definition_index = -1
+	calendar_ui_clear_navigation_selection()
 	flash.state_init(&calendar_ui.flash)
 	if error := command_palette.state_init(
 		&calendar_ui.palette,
