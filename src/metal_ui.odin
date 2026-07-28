@@ -153,6 +153,8 @@ Calendar_UI_State :: struct {
 	resize_edges: u8,
 	resize_start_mouse: Point,
 	resize_start_frame: Rect,
+	window_zoom_restore_frame: Rect,
+	window_has_zoom_restore: bool,
 	frame_index: int,
 	notification_reconcile_stamp: i64,
 	day_offset: int,
@@ -523,13 +525,20 @@ calendar_ui_title_rect :: proc() -> Calendar_UI_Rect {
 	}
 }
 
-calendar_ui_window_control_rect :: proc(index: int) -> Calendar_UI_Rect {
+calendar_ui_window_control_rect_for_height :: proc(
+	index: int,
+	height: f64,
+) -> Calendar_UI_Rect {
 	return {
 		38*f64(index),
-		calendar_ui.height-CALENDAR_HEADER_CONTROL_HEIGHT-1,
+		height-CALENDAR_HEADER_CONTROL_HEIGHT,
 		30,
 		CALENDAR_HEADER_CONTROL_HEIGHT,
 	}
+}
+
+calendar_ui_window_control_rect :: proc(index: int) -> Calendar_UI_Rect {
+	return calendar_ui_window_control_rect_for_height(index, calendar_ui.height)
 }
 
 calendar_ui_window_icon_rect :: proc(index: int) -> Calendar_UI_Rect {
@@ -905,6 +914,41 @@ calendar_ui_editor_commit :: proc(cancelled := false) {
 	calendar_notification_reconcile()
 }
 
+calendar_window_zoom_next_frame :: proc(
+	current, visible, restore: Rect,
+	has_restore: bool,
+) -> (next, next_restore: Rect, next_has_restore: bool) {
+	if has_restore && current == visible {
+		return restore, {}, false
+	}
+	return visible, current, true
+}
+
+calendar_toggle_window_zoom :: proc() {
+	screen := msg_id(calendar_ui.window, sel_registerName("screen"))
+	if screen == nil {
+		screen = msg_id(objc_getClass("NSScreen"), sel_registerName("mainScreen"))
+	}
+	if screen == nil {return}
+	current := msg_rect(calendar_ui.window, sel_registerName("frame"))
+	visible := msg_rect(screen, sel_registerName("visibleFrame"))
+	next, restore, has_restore := calendar_window_zoom_next_frame(
+		current,
+		visible,
+		calendar_ui.window_zoom_restore_frame,
+		calendar_ui.window_has_zoom_restore,
+	)
+	calendar_ui.window_zoom_restore_frame = restore
+	calendar_ui.window_has_zoom_restore = has_restore
+	msg_void_rect_bool(
+		calendar_ui.window,
+		sel_registerName("setFrame:display:"),
+		next,
+		true,
+	)
+	calendar_ui.needs_redraw = true
+}
+
 calendar_ui_activate_control :: proc(id: u64) {
 	for control in calendar_ui.controls {
 		if control.id != id {continue}
@@ -928,7 +972,7 @@ calendar_ui_activate_control :: proc(id: u64) {
 				CALENDAR_WINDOW_STYLE,
 			)
 		case .Window_Zoom:
-			msg_void_id(calendar_ui.window, sel_registerName("zoom:"), nil)
+			calendar_toggle_window_zoom()
 		case .Today:
 			calendar_ui.day_offset = 0
 			calendar_ui_reload_data()
@@ -1046,6 +1090,10 @@ calendar_on_mouse_up :: proc "c" (self: Id, command: Sel, event: Id) {
 	calendar_ui.resize_edges = 0
 }
 
+calendar_header_click_should_zoom :: proc(click_count: uint) -> bool {
+	return click_count >= 2
+}
+
 calendar_on_mouse_down :: proc "c" (self: Id, command: Sel, event: Id) {
 	context = runtime.default_context()
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
@@ -1059,11 +1107,16 @@ calendar_on_mouse_down :: proc "c" (self: Id, command: Sel, event: Id) {
 	if calendar_ui_begin_resize(point) {return}
 	if calendar_ui_click(point) {return}
 	if calendar_ui_contains(calendar_ui_header_rect(), point) {
-		msg_void_id(
-			calendar_ui.window,
-			sel_registerName("performWindowDragWithEvent:"),
-			event,
-		)
+		click_count := calendar_msg_uint(event, sel_registerName("clickCount"))
+		if calendar_header_click_should_zoom(click_count) {
+			calendar_toggle_window_zoom()
+		} else {
+			msg_void_id(
+				calendar_ui.window,
+				sel_registerName("performWindowDragWithEvent:"),
+				event,
+			)
+		}
 	}
 }
 
