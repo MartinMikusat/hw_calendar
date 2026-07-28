@@ -123,6 +123,54 @@ calendar_action_bar_enables_actions_for_focused_item_test :: proc(t: ^testing.T)
 }
 
 @(test)
+calendar_number_keys_map_to_action_slots_test :: proc(t: ^testing.T) {
+	expected_codes := [8]uint{18, 19, 20, 21, 23, 22, 26, 28}
+	for key_code, expected_slot in expected_codes {
+		slot, found := calendar_number_slot_for_key_code(key_code)
+		testing.expect(t, found)
+		testing.expect_value(t, slot, expected_slot)
+	}
+	_, found := calendar_number_slot_for_key_code(29)
+	testing.expect(t, !found)
+}
+
+@(test)
+calendar_archive_modal_numbers_actions_from_left_to_right_test :: proc(
+	t: ^testing.T,
+) {
+	testing.expect_value(
+		t,
+		calendar_archive_action_for_slot(false, 0),
+		Calendar_UI_Action.Archive_Occurrence,
+	)
+	testing.expect_value(
+		t,
+		calendar_archive_action_for_slot(false, 1),
+		Calendar_UI_Action.Archive_Cancel,
+	)
+	testing.expect_value(
+		t,
+		calendar_archive_action_for_slot(true, 0),
+		Calendar_UI_Action.Archive_Occurrence,
+	)
+	testing.expect_value(
+		t,
+		calendar_archive_action_for_slot(true, 1),
+		Calendar_UI_Action.Archive_Series,
+	)
+	testing.expect_value(
+		t,
+		calendar_archive_action_for_slot(true, 2),
+		Calendar_UI_Action.Archive_Cancel,
+	)
+	testing.expect_value(
+		t,
+		calendar_archive_action_for_slot(true, 3),
+		Calendar_UI_Action.None,
+	)
+}
+
+@(test)
 calendar_navigation_selects_adjacent_event_and_holiday_test :: proc(
 	t: ^testing.T,
 ) {

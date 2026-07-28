@@ -245,6 +245,8 @@ calendar_ui: Calendar_UI_State
 
 CALENDAR_HEADER_HEIGHT :: 40.0
 CALENDAR_HEADER_CONTROL_HEIGHT :: 30.0
+CALENDAR_EVENT_MODIFIER_SHIFT :: uint(1 << 17)
+CALENDAR_EVENT_MODIFIER_OPTION :: uint(1 << 19)
 CALENDAR_EVENT_MODIFIER_COMMAND :: uint(1 << 20)
 CALENDAR_DEFAULT_WINDOW_WIDTH :: 1280.0
 CALENDAR_DEFAULT_WINDOW_HEIGHT :: 760.0
@@ -791,6 +793,33 @@ calendar_ui_archive_button_rect :: proc(index, count: int) -> Calendar_UI_Rect {
 		width,
 		34,
 	}
+}
+
+calendar_number_slot_for_key_code :: proc(key_code: uint) -> (int, bool) {
+	key_codes := [8]uint{18, 19, 20, 21, 23, 22, 26, 28}
+	for candidate, index in key_codes {
+		if candidate == key_code {return index, true}
+	}
+	return -1, false
+}
+
+calendar_archive_action_for_slot :: proc(
+	recurring: bool,
+	slot: int,
+) -> Calendar_UI_Action {
+	if recurring {
+		switch slot {
+		case 0: return .Archive_Occurrence
+		case 1: return .Archive_Series
+		case 2: return .Archive_Cancel
+		}
+		return .None
+	}
+	switch slot {
+	case 0: return .Archive_Occurrence
+	case 1: return .Archive_Cancel
+	}
+	return .None
 }
 
 calendar_ui_day_rect :: proc(index: int) -> Calendar_UI_Rect {
@@ -1942,12 +1971,35 @@ calendar_on_key_down :: proc "c" (self: Id, command: Sel, event: Id) {
 	modifiers := calendar_msg_uint(event, sel_registerName("modifierFlags"))
 	key_code := calendar_msg_uint(event, sel_registerName("keyCode"))
 	control_down := modifiers & (1 << 18) != 0
+	shift_down := modifiers & CALENDAR_EVENT_MODIFIER_SHIFT != 0
+	option_down := modifiers & CALENDAR_EVENT_MODIFIER_OPTION != 0
 	command_down := modifiers & CALENDAR_EVENT_MODIFIER_COMMAND != 0
 	if calendar_ui.archive_modal_open && !flash.is_active(&calendar_ui.flash) {
 		if key_code == 53 {
 			calendar_ui_archive_modal_close()
 		} else if text == "/" {
 			calendar_ui_begin_flash()
+		} else if !command_down && !control_down &&
+		          !shift_down && !option_down {
+			if slot, found := calendar_number_slot_for_key_code(key_code);
+			   found {
+				event := &calendar_ui.events[
+					calendar_ui.navigation_event_index
+				]
+				action := calendar_archive_action_for_slot(
+					calendar_event_is_recurring(event),
+					slot,
+				)
+				#partial switch action {
+				case .Archive_Occurrence:
+					calendar_ui_archive_confirm(false)
+				case .Archive_Series:
+					calendar_ui_archive_confirm(true)
+				case .Archive_Cancel:
+					calendar_ui_archive_modal_close()
+				case:
+				}
+			}
 		}
 		return
 	}
@@ -2043,14 +2095,16 @@ calendar_on_key_down :: proc "c" (self: Id, command: Sel, event: Id) {
 		calendar_ui_navigate(.Previous)
 		return
 	}
-	if !command_down && !control_down {
-		action := Calendar_UI_Action.None
-		switch key_code {
-		case 18: action = .Action_Edit
-		case 19: action = .Action_Open_URL
-		case 20: action = .Action_Archive
-		}
-		if action != .None && calendar_ui_action_available(action) {
+	if !command_down && !control_down && !shift_down && !option_down {
+		if slot, found := calendar_number_slot_for_key_code(key_code);
+		   found && slot < 3 {
+			actions := [3]Calendar_UI_Action{
+				.Action_Edit,
+				.Action_Open_URL,
+				.Action_Archive,
+			}
+			action := actions[slot]
+			if !calendar_ui_action_available(action) {return}
 			#partial switch action {
 			case .Action_Edit:
 				calendar_ui_editor_open(calendar_ui.navigation_event_index)
@@ -2650,13 +2704,8 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 		}
 	}
 	if calendar_ui.archive_modal_open {
-		calendar_push_rect(
-			vertices,
-			{0, 0, calendar_ui.width, calendar_ui.height},
-			ink,
-		)
 		modal := calendar_ui_archive_modal_rect()
-		calendar_push_rect(vertices, modal, header)
+		calendar_push_rect(vertices, modal, row_alt)
 		event := &calendar_ui.events[calendar_ui.navigation_event_index]
 		recurring := calendar_event_is_recurring(event)
 		count := recurring ? 3 : 2
@@ -2831,6 +2880,31 @@ calendar_draw_text :: proc(
 	CGContextSetTextPosition(ctx, x, y)
 	CTLineDraw(run.line, ctx)
 	CGContextRestoreGState(ctx)
+}
+
+calendar_draw_numbered_action :: proc(
+	ctx, font: rawptr,
+	label: string,
+	slot: int,
+	rect: Calendar_UI_Rect,
+	label_color, number_color: [4]f64,
+) {
+	calendar_draw_text(
+		ctx,
+		font,
+		fmt.tprintf("%02d", slot+1),
+		{rect.x+8, rect.y, 28, rect.h},
+		number_color,
+		0,
+	)
+	calendar_draw_text(
+		ctx,
+		font,
+		label,
+		{rect.x+36, rect.y, rect.w-44, rect.h},
+		label_color,
+		0,
+	)
 }
 
 calendar_fill_overlay_rect :: proc(
@@ -3155,21 +3229,14 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 		rect := calendar_ui_action_rect(action_index)
 		color := muted
 		if calendar_ui_action_available(action) {color = ink}
-		calendar_draw_text(
-			ctx,
-			font,
-			fmt.tprintf("%02d", action_index+1),
-			{rect.x+8, rect.y, 28, rect.h},
-			muted,
-			0,
-		)
-		calendar_draw_text(
+		calendar_draw_numbered_action(
 			ctx,
 			font,
 			action_labels[action_index],
-			{rect.x+36, rect.y, rect.w-44, rect.h},
+			action_index,
+			rect,
 			color,
-			0,
+			muted,
 		)
 	}
 	if command_palette.is_open(&calendar_ui.palette) {
@@ -3295,11 +3362,23 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 		}
 	}
 	if calendar_ui.archive_modal_open {
-		CGContextClearRect(
+		backdrop := [4]f64{0.02, 0.02, 0.02, 0.28}
+		if calendar_ui.dark_theme {
+			backdrop = [4]f64{0.0, 0.0, 0.0, 0.38}
+		}
+		calendar_fill_overlay_rect(
 			ctx,
-			{{0, 0}, {f64(width), f64(height)}},
+			{0, 0, calendar_ui.width, calendar_ui.height},
+			backdrop,
 		)
 		modal := calendar_ui_archive_modal_rect()
+		CGContextClearRect(
+			ctx,
+			{
+				{modal.x*calendar_ui.scale, modal.y*calendar_ui.scale},
+				{modal.w*calendar_ui.scale, modal.h*calendar_ui.scale},
+			},
+		)
 		event := &calendar_ui.events[calendar_ui.navigation_event_index]
 		recurring := calendar_event_is_recurring(event)
 		calendar_draw_text(
@@ -3332,43 +3411,43 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 		)
 		count := recurring ? 3 : 2
 		if recurring {
-			calendar_draw_text(
+			calendar_draw_numbered_action(
 				ctx,
 				font,
 				"ARCHIVE OCCURRENCE",
+				0,
 				calendar_ui_archive_button_rect(0, count),
 				ink,
-				0,
-				.Center,
+				muted,
 			)
-			calendar_draw_text(
+			calendar_draw_numbered_action(
 				ctx,
 				font,
 				"ARCHIVE SERIES",
+				1,
 				calendar_ui_archive_button_rect(1, count),
 				inverse,
-				0,
-				.Center,
+				inverse,
 			)
 		} else {
-			calendar_draw_text(
+			calendar_draw_numbered_action(
 				ctx,
 				font,
 				"ARCHIVE",
+				0,
 				calendar_ui_archive_button_rect(0, count),
 				inverse,
-				0,
-				.Center,
+				inverse,
 			)
 		}
-		calendar_draw_text(
+		calendar_draw_numbered_action(
 			ctx,
 			font,
 			"CANCEL",
+			count-1,
 			calendar_ui_archive_button_rect(count-1, count),
 			muted,
-			0,
-			.Center,
+			muted,
 		)
 		if len(calendar_ui.archive_error) > 0 {
 			calendar_draw_text(
@@ -3435,6 +3514,11 @@ fragment float4 texture_fragment(TextureOut in [[stage_in]], texture2d<float> im
 		0,
 	)
 	msg_void_u(attachment, sel_registerName("setPixelFormat:"), 80)
+	msg_void_bool(attachment, sel_registerName("setBlendingEnabled:"), true)
+	msg_void_u(attachment, sel_registerName("setSourceRGBBlendFactor:"), 4)
+	msg_void_u(attachment, sel_registerName("setDestinationRGBBlendFactor:"), 5)
+	msg_void_u(attachment, sel_registerName("setSourceAlphaBlendFactor:"), 1)
+	msg_void_u(attachment, sel_registerName("setDestinationAlphaBlendFactor:"), 5)
 	calendar_ui.solid_pipeline = calendar_msg_id_id_error_2(
 		calendar_ui.device,
 		sel_registerName("newRenderPipelineStateWithDescriptor:error:"),
