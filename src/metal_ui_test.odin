@@ -73,6 +73,42 @@ calendar_theme_switch_precedes_header_actions_test :: proc(t: ^testing.T) {
 }
 
 @(test)
+calendar_details_layout_splits_default_content_width_test :: proc(t: ^testing.T) {
+	calendar, details := calendar_ui_content_rects_for_size(
+		CALENDAR_DEFAULT_WINDOW_WIDTH,
+		CALENDAR_DEFAULT_WINDOW_HEIGHT,
+	)
+	testing.expect_value(t, calendar.w, 624.0)
+	testing.expect_value(t, details.w, 624.0)
+	testing.expect_value(t, details.x-(calendar.x+calendar.w), 8.0)
+	testing.expect_value(t, calendar.h, 696.0)
+}
+
+@(test)
+calendar_details_actions_match_focused_item_test :: proc(t: ^testing.T) {
+	testing.expect_value(
+		t,
+		calendar_details_action_count(Calendar_Navigation_Item_Kind.Event, false),
+		1,
+	)
+	testing.expect_value(
+		t,
+		calendar_details_action_count(Calendar_Navigation_Item_Kind.Event, true),
+		2,
+	)
+	testing.expect_value(
+		t,
+		calendar_details_action_count(Calendar_Navigation_Item_Kind.Holiday, true),
+		1,
+	)
+	testing.expect_value(
+		t,
+		calendar_details_action_count(Calendar_Navigation_Item_Kind.Holiday, false),
+		0,
+	)
+}
+
+@(test)
 calendar_navigation_selects_adjacent_event_and_holiday_test :: proc(
 	t: ^testing.T,
 ) {

@@ -114,6 +114,10 @@ Calendar_UI_Action :: enum {
 	Search,
 	New_Event,
 	Open_Event,
+	Focus_Event,
+	Focus_Holiday,
+	Detail_Edit,
+	Detail_Open_URL,
 	Editor_Field,
 	Editor_Important,
 	Editor_Save,
@@ -128,6 +132,9 @@ Calendar_UI_Control :: struct {
 	rect: Calendar_UI_Rect,
 	action: Calendar_UI_Action,
 	event_index: int,
+	occurrence_stamp: i64,
+	holiday_country_index: int,
+	holiday_definition_index: int,
 }
 
 Calendar_UI_AX_Binding :: struct {
@@ -209,6 +216,9 @@ Calendar_UI_State :: struct {
 	navigation_start_stamp: i64,
 	navigation_holiday_country_index: int,
 	navigation_holiday_definition_index: int,
+	details_scroll: f64,
+	details_actions_active: bool,
+	details_action_index: int,
 	editor_open: bool,
 	editor_event_index: int,
 	editor_field: int,
@@ -230,6 +240,8 @@ calendar_ui: Calendar_UI_State
 CALENDAR_HEADER_HEIGHT :: 40.0
 CALENDAR_HEADER_CONTROL_HEIGHT :: 30.0
 CALENDAR_EVENT_MODIFIER_COMMAND :: uint(1 << 20)
+CALENDAR_DEFAULT_WINDOW_WIDTH :: 1280.0
+CALENDAR_DEFAULT_WINDOW_HEIGHT :: 760.0
 CALENDAR_COLOR_SAND_32 :: [4]f32{0.882353, 0.850980, 0.788235, 1}
 CALENDAR_COLOR_STONE_32 :: [4]f32{0.682353, 0.576471, 0.447059, 1}
 CALENDAR_COLOR_COFFEE_32 :: [4]f32{0.698039, 0.490196, 0.341176, 1}
@@ -369,6 +381,9 @@ calendar_ui_add_control :: proc(
 	rect: Calendar_UI_Rect,
 	action := Calendar_UI_Action.None,
 	event_index := -1,
+	occurrence_stamp := i64(0),
+	holiday_country_index := -1,
+	holiday_definition_index := -1,
 ) {
 	append(&calendar_ui.controls, Calendar_UI_Control{
 		id = calendar_control_id(name),
@@ -377,6 +392,9 @@ calendar_ui_add_control :: proc(
 		rect = rect,
 		action = action,
 		event_index = event_index,
+		occurrence_stamp = occurrence_stamp,
+		holiday_country_index = holiday_country_index,
+		holiday_definition_index = holiday_definition_index,
 	})
 }
 
@@ -431,6 +449,10 @@ calendar_ui_ax_label :: proc(control: ^Calendar_UI_Control) -> string {
 			)
 		}
 		return "Open event"
+	case .Focus_Event: return "Show event details"
+	case .Focus_Holiday: return "Show holiday details"
+	case .Detail_Edit: return "Edit focused event"
+	case .Detail_Open_URL: return "Open focused details URL"
 	case .Editor_Field:
 		labels := [7]string{
 			"Event summary",
@@ -673,12 +695,45 @@ calendar_ui_visible_day_count :: proc() -> int {
 	return max(1, int(available/CALENDAR_DAY_ROW_PITCH)+1)
 }
 
-calendar_ui_day_rect :: proc(index: int) -> Calendar_UI_Rect {
-	return {
+calendar_ui_content_rects_for_size :: proc(
+	width, height: f64,
+) -> (calendar, details: Calendar_UI_Rect) {
+	calendar_width := (width-32)/2
+	calendar = {12, 12, calendar_width, height-CALENDAR_HEADER_HEIGHT-24}
+	details = {
+		calendar.x+calendar.w+8,
 		12,
+		width-calendar.x-calendar.w-20,
+		calendar.h,
+	}
+	return
+}
+
+calendar_ui_calendar_content_rect :: proc() -> Calendar_UI_Rect {
+	calendar, _ := calendar_ui_content_rects_for_size(
+		calendar_ui.width,
+		calendar_ui.height,
+	)
+	return calendar
+}
+
+calendar_ui_details_rect :: proc() -> Calendar_UI_Rect {
+	_, details := calendar_ui_content_rects_for_size(calendar_ui.width, calendar_ui.height)
+	return details
+}
+
+calendar_ui_details_action_rect :: proc(index: int) -> Calendar_UI_Rect {
+	details := calendar_ui_details_rect()
+	return {details.x+16+f64(index)*98, details.y+12, 90, 30}
+}
+
+calendar_ui_day_rect :: proc(index: int) -> Calendar_UI_Rect {
+	content := calendar_ui_calendar_content_rect()
+	return {
+		content.x,
 		calendar_ui.height-CALENDAR_HEADER_HEIGHT-CALENDAR_DAY_TOP_GAP -
 		CALENDAR_DAY_ROW_PITCH*f64(index)-CALENDAR_DAY_ROW_HEIGHT,
-		calendar_ui.width-24,
+		content.w,
 		CALENDAR_DAY_ROW_HEIGHT,
 	}
 }
@@ -781,6 +836,9 @@ calendar_ui_clear_navigation_selection :: proc() {
 	calendar_ui.navigation_start_stamp = 0
 	calendar_ui.navigation_holiday_country_index = -1
 	calendar_ui.navigation_holiday_definition_index = -1
+	calendar_ui.details_scroll = 0
+	calendar_ui.details_actions_active = false
+	calendar_ui.details_action_index = 0
 }
 
 calendar_navigation_item_stamp :: proc(item: Calendar_Navigation_Item) -> i64 {
@@ -822,6 +880,8 @@ calendar_navigation_item_matches_selection :: proc(
 
 calendar_ui_set_navigation_selection :: proc(item: Calendar_Navigation_Item) {
 	calendar_ui.navigation_active = true
+	calendar_ui.details_scroll = 0
+	calendar_ui.details_actions_active = false
 	calendar_ui.navigation_kind = item.kind
 	calendar_ui.navigation_start_stamp = calendar_navigation_item_stamp(item)
 	if item.kind == .Event {
@@ -833,6 +893,94 @@ calendar_ui_set_navigation_selection :: proc(item: Calendar_Navigation_Item) {
 	calendar_ui.navigation_event_index = -1
 	calendar_ui.navigation_holiday_country_index = item.holiday.country_index
 	calendar_ui.navigation_holiday_definition_index = item.holiday.definition_index
+}
+
+calendar_ui_focus_event :: proc(event_index: int, start_stamp: i64) {
+	if event_index < 0 || event_index >= len(calendar_ui.events) {return}
+	calendar_ui_clear_holiday_promotion()
+	calendar_ui.navigation_active = true
+	calendar_ui.navigation_kind = .Event
+	calendar_ui.navigation_event_index = event_index
+	calendar_ui.navigation_start_stamp = start_stamp
+	calendar_ui.navigation_holiday_country_index = -1
+	calendar_ui.navigation_holiday_definition_index = -1
+	calendar_ui.details_scroll = 0
+	calendar_ui.details_actions_active = false
+}
+
+calendar_ui_focus_holiday :: proc(
+	country_index, definition_index: int,
+	date_stamp: i64,
+) {
+	if country_index < 0 || country_index >= len(calendar_ui.holiday_countries) {
+		return
+	}
+	calendar_ui_clear_holiday_promotion()
+	calendar_ui.navigation_active = true
+	calendar_ui.navigation_kind = .Holiday
+	calendar_ui.navigation_event_index = -1
+	calendar_ui.navigation_start_stamp = date_stamp
+	calendar_ui.navigation_holiday_country_index = country_index
+	calendar_ui.navigation_holiday_definition_index = definition_index
+	calendar_ui.details_scroll = 0
+	calendar_ui.details_actions_active = false
+}
+
+calendar_ui_details_url :: proc() -> string {
+	if !calendar_ui.navigation_active {return ""}
+	if calendar_ui.navigation_kind == .Event {
+		index := calendar_ui.navigation_event_index
+		if index >= 0 && index < len(calendar_ui.events) {
+			return calendar_ui.events[index].url
+		}
+		return ""
+	}
+	occurrence := Calendar_Holiday_Occurrence{
+		country_index = calendar_ui.navigation_holiday_country_index,
+		definition_index = calendar_ui.navigation_holiday_definition_index,
+	}
+	country, _, found := calendar_holiday_definition_for_occurrence(occurrence)
+	return country.source_url if found else ""
+}
+
+calendar_details_action_count :: proc(
+	kind: Calendar_Navigation_Item_Kind,
+	has_url: bool,
+) -> int {
+	if kind == .Event {return 1 + (has_url ? 1 : 0)}
+	return has_url ? 1 : 0
+}
+
+calendar_ui_details_action_count :: proc() -> int {
+	if !calendar_ui.navigation_active {return 0}
+	return calendar_details_action_count(
+		calendar_ui.navigation_kind,
+		len(calendar_ui_details_url()) > 0,
+	)
+}
+
+calendar_ui_open_url :: proc(value: string) {
+	if len(value) == 0 {return}
+	url := msg_id_id(
+		objc_getClass("NSURL"),
+		sel_registerName("URLWithString:"),
+		nsstring(value),
+	)
+	if url == nil {return}
+	workspace := msg_id(
+		objc_getClass("NSWorkspace"),
+		sel_registerName("sharedWorkspace"),
+	)
+	if workspace != nil {msg_void_id(workspace, sel_registerName("openURL:"), url)}
+}
+
+calendar_ui_activate_details_action :: proc() {
+	if !calendar_ui.details_actions_active {return}
+	if calendar_ui.navigation_kind == .Event && calendar_ui.details_action_index == 0 {
+		calendar_ui_editor_open(calendar_ui.navigation_event_index)
+		return
+	}
+	calendar_ui_open_url(calendar_ui_details_url())
 }
 
 calendar_ui_navigation_selection_item :: proc() -> (
@@ -1384,6 +1532,24 @@ calendar_ui_activate_control :: proc(id: u64) {
 			   control.event_index < len(calendar_ui.events) {
 				calendar_ui_editor_open(control.event_index)
 			}
+		case .Focus_Event:
+			calendar_ui_focus_event(
+				control.event_index,
+				control.occurrence_stamp,
+			)
+		case .Focus_Holiday:
+			calendar_ui_focus_holiday(
+				control.holiday_country_index,
+				control.holiday_definition_index,
+				control.occurrence_stamp,
+			)
+		case .Detail_Edit:
+			if calendar_ui.navigation_active &&
+			   calendar_ui.navigation_kind == .Event {
+				calendar_ui_editor_open(calendar_ui.navigation_event_index)
+			}
+		case .Detail_Open_URL:
+			calendar_ui_open_url(calendar_ui_details_url())
 		case .Editor_Field:
 			calendar_ui.editor_field = control.event_index
 		case .Editor_Important:
@@ -1403,7 +1569,6 @@ calendar_ui_activate_control :: proc(id: u64) {
 
 calendar_ui_click :: proc(point: Point) -> bool {
 	flash.cancel(&calendar_ui.flash)
-	calendar_ui_clear_navigation_selection()
 	for index := len(calendar_ui.controls)-1; index >= 0; index -= 1 {
 		control := calendar_ui.controls[index]
 		if calendar_ui_contains(control.rect, point) {
@@ -1527,6 +1692,19 @@ calendar_on_scroll :: proc "c" (self: Id, command: Sel, event: Id) {
 	if calendar_ui.editor_open {return}
 	delta := msg_f64(event, sel_registerName("scrollingDeltaY"))
 	if delta == 0 {delta = msg_f64(event, sel_registerName("deltaY"))}
+	window_point := msg_point(event, sel_registerName("locationInWindow"))
+	point := calendar_msg_point_point_id(
+		self,
+		sel_registerName("convertPoint:fromView:"),
+		window_point,
+		nil,
+	)
+	if calendar_ui.navigation_active &&
+	   calendar_ui_contains(calendar_ui_details_rect(), point) {
+		calendar_ui.details_scroll = max(0, min(4096, calendar_ui.details_scroll-delta*2))
+		calendar_ui.needs_redraw = true
+		return
+	}
 	if delta > 0 {
 		calendar_ui.day_offset -= max(1, int(delta/12))
 	} else if delta < 0 {
@@ -1630,6 +1808,34 @@ calendar_on_key_down :: proc "c" (self: Id, command: Sel, event: Id) {
 				calendar_ui_activate_control(u64(result.target_id))
 			}
 		}
+		calendar_ui.needs_redraw = true
+		return
+	}
+	if calendar_ui.details_actions_active {
+		count := calendar_ui_details_action_count()
+		if count == 0 {
+			calendar_ui.details_actions_active = false
+		} else {
+			switch key_code {
+			case 53, 123:
+				calendar_ui.details_actions_active = false
+			case 125:
+				calendar_ui.details_action_index =
+					(calendar_ui.details_action_index+1)%count
+			case 126:
+				calendar_ui.details_action_index =
+					(calendar_ui.details_action_index+count-1)%count
+			case 36:
+				calendar_ui_activate_details_action()
+			}
+			calendar_ui.needs_redraw = true
+			return
+		}
+	}
+	if key_code == 124 && calendar_ui.navigation_active &&
+	   calendar_ui_details_action_count() > 0 {
+		calendar_ui.details_actions_active = true
+		calendar_ui.details_action_index = 0
 		calendar_ui.needs_redraw = true
 		return
 	}
@@ -1856,6 +2062,132 @@ calendar_holiday_definition_for_occurrence :: proc(
 	return country, &country.entries[occurrence.definition_index], true
 }
 
+calendar_detail_draw_field :: proc(
+	ctx, font: rawptr,
+	label, value: string,
+	panel: Calendar_UI_Rect,
+	cursor: ^f64,
+	label_color, value_color: [4]f64,
+) {
+	if len(value) == 0 {return}
+	calendar_draw_text(
+		ctx,
+		font,
+		label,
+		{panel.x+16, cursor^-16, panel.w-32, 16},
+		label_color,
+		0,
+	)
+	cursor^ -= 20
+	maximum := max(18, int((panel.w-32)/7))
+	line := ""
+	remaining := value
+	for word in strings.split_iterator(&remaining, " ") {
+		candidate := word if len(line) == 0 else fmt.tprintf("%s %s", line, word)
+		if len(candidate) > maximum && len(line) > 0 {
+			calendar_draw_text(
+				ctx,
+				font,
+				line,
+				{panel.x+16, cursor^-16, panel.w-32, 16},
+				value_color,
+				0,
+			)
+			cursor^ -= 18
+			line = word
+		} else {
+			line = candidate
+		}
+	}
+	if len(line) > 0 {
+		calendar_draw_text(
+			ctx,
+			font,
+			line,
+			{panel.x+16, cursor^-16, panel.w-32, 16},
+			value_color,
+			0,
+		)
+		cursor^ -= 18
+	}
+	cursor^ -= 8
+}
+
+calendar_draw_details :: proc(
+	ctx, font: rawptr,
+	ink, muted: [4]f64,
+) {
+	panel := calendar_ui_details_rect()
+	if !calendar_ui.navigation_active {
+		calendar_draw_text(
+			ctx,
+			font,
+			"FOCUSED DETAILS",
+			{panel.x+16, panel.y+panel.h-42, panel.w-32, 24},
+			ink,
+			0,
+		)
+		calendar_draw_text(
+			ctx,
+			font,
+			"SELECT AN EVENT OR HOLIDAY TO SHOW ITS DETAILS",
+			{panel.x+16, panel.y+panel.h-72, panel.w-32, 20},
+			muted,
+			0,
+		)
+		return
+	}
+	CGContextSaveGState(ctx)
+	CGContextClipToRect(
+		ctx,
+		{{panel.x*calendar_ui.scale, panel.y*calendar_ui.scale},
+		 {panel.w*calendar_ui.scale, panel.h*calendar_ui.scale}},
+	)
+	cursor := panel.y+panel.h-16+calendar_ui.details_scroll
+	if calendar_ui.navigation_kind == .Event &&
+	   calendar_ui.navigation_event_index >= 0 &&
+	   calendar_ui.navigation_event_index < len(calendar_ui.events) {
+		event := &calendar_ui.events[calendar_ui.navigation_event_index]
+		end := event.dtend
+		for occurrence in calendar_ui.occurrences {
+			if calendar_event_occurrence_is_navigation_selected(occurrence) {
+				end = ical_format_date_time(occurrence.end)
+				break
+			}
+		}
+		calendar_detail_draw_field(ctx, font, "EVENT", event.summary, panel, &cursor, muted, ink)
+		calendar_detail_draw_field(
+			ctx, font, "START", ical_format_date_time(
+				ical_date_time_from_stamp(calendar_ui.navigation_start_stamp),
+			), panel, &cursor, muted, ink,
+		)
+		calendar_detail_draw_field(ctx, font, "END", end, panel, &cursor, muted, ink)
+		calendar_detail_draw_field(ctx, font, "LOCATION", event.location, panel, &cursor, muted, ink)
+		calendar_detail_draw_field(ctx, font, "CATEGORIES", event.categories, panel, &cursor, muted, ink)
+		calendar_detail_draw_field(ctx, font, "IMPORTANCE", event.important ? "IMPORTANT" : "STANDARD", panel, &cursor, muted, ink)
+		calendar_detail_draw_field(ctx, font, "DESCRIPTION", event.description, panel, &cursor, muted, ink)
+		calendar_detail_draw_field(ctx, font, "RECURRENCE", event.rrule, panel, &cursor, muted, ink)
+		calendar_detail_draw_field(ctx, font, "URL", event.url, panel, &cursor, muted, ink)
+		calendar_detail_draw_field(ctx, font, "STATUS", event.status, panel, &cursor, muted, ink)
+	} else {
+		occurrence := Calendar_Holiday_Occurrence{
+			country_index = calendar_ui.navigation_holiday_country_index,
+			definition_index = calendar_ui.navigation_holiday_definition_index,
+			date = ical_date_time_from_stamp(calendar_ui.navigation_start_stamp, true),
+		}
+		country, definition, found := calendar_holiday_definition_for_occurrence(occurrence)
+		if found {
+			calendar_detail_draw_field(ctx, font, "HOLIDAY", definition.name, panel, &cursor, muted, ink)
+			calendar_detail_draw_field(ctx, font, "COUNTRY", country.country_name, panel, &cursor, muted, ink)
+			calendar_detail_draw_field(ctx, font, "CATEGORY", calendar_holiday_kind_label(calendar_holiday_kind(definition.kind)), panel, &cursor, muted, ink)
+			calendar_detail_draw_field(ctx, font, "DATE", ical_format_date_time(occurrence.date), panel, &cursor, muted, ink)
+			calendar_detail_draw_field(ctx, font, "SOURCE", country.source_title, panel, &cursor, muted, ink)
+			calendar_detail_draw_field(ctx, font, "SOURCE URL", country.source_url, panel, &cursor, muted, ink)
+		}
+	}
+	CGContextRestoreGState(ctx)
+}
+
 calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 	chassis := [4]f32{0.80, 0.78, 0.72, 1}
 	header := [4]f32{0.91, 0.89, 0.82, 1}
@@ -1879,6 +2211,7 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 	}
 	calendar_push_rect(vertices, {0, 0, calendar_ui.width, calendar_ui.height}, chassis)
 	calendar_push_rect(vertices, calendar_ui_header_rect(), header)
+	calendar_push_rect(vertices, calendar_ui_details_rect(), row_alt)
 	buttons := [4]Calendar_UI_Rect{
 		calendar_ui_theme_rect(),
 		calendar_ui_today_rect(),
@@ -1935,6 +2268,22 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 				if calendar_day_item_is_navigation_selected(item) {
 					calendar_push_border(vertices, event_rect, focus)
 				}
+				if !calendar_ui.editor_open {
+					calendar_ui_add_control(
+						fmt.tprintf(
+							"holiday:%d:%d:%d",
+							item.holiday.country_index,
+							item.holiday.definition_index,
+							ical_date_time_stamp(item.holiday.date),
+						),
+						"holiday",
+						event_rect,
+						.Focus_Holiday,
+						occurrence_stamp = ical_date_time_stamp(item.holiday.date),
+						holiday_country_index = item.holiday.country_index,
+						holiday_definition_index = item.holiday.definition_index,
+					)
+				}
 				continue
 			}
 			upper_categories := strings.to_upper(
@@ -1970,10 +2319,34 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 					),
 					"event",
 					event_rect,
-					.Open_Event,
+					.Focus_Event,
 					item.event.event_index,
+					ical_date_time_stamp(item.event.start),
 				)
 			}
+		}
+	}
+	for action_index in 0..<calendar_ui_details_action_count() {
+		action_rect := calendar_ui_details_action_rect(action_index)
+		calendar_push_rect(vertices, action_rect, button)
+		if calendar_ui.details_actions_active &&
+		   action_index == calendar_ui.details_action_index {
+			calendar_push_border(vertices, action_rect, focus)
+		}
+		if calendar_ui.navigation_kind == .Event && action_index == 0 {
+			calendar_ui_add_control(
+				"details edit",
+				"edit focused event",
+				action_rect,
+				.Detail_Edit,
+			)
+		} else {
+			calendar_ui_add_control(
+				"details open url",
+				"open focused details URL",
+				action_rect,
+				.Detail_Open_URL,
+			)
 		}
 	}
 	if command_palette.is_open(&calendar_ui.palette) {
@@ -2496,6 +2869,22 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 				0,
 			)
 		}
+	}
+	calendar_draw_details(ctx, font, ink, muted)
+	for action_index in 0..<calendar_ui_details_action_count() {
+		label := "OPEN URL"
+		if calendar_ui.navigation_kind == .Event && action_index == 0 {
+			label = "EDIT"
+		}
+		calendar_draw_text(
+			ctx,
+			font,
+			label,
+			calendar_ui_details_action_rect(action_index),
+			ink,
+			0,
+			.Center,
+		)
 	}
 	calendar_draw_flash_hints(ctx, font)
 	if command_palette.is_open(&calendar_ui.palette) {
@@ -3114,7 +3503,7 @@ calendar_gui_initialize :: proc(
 	calendar_ui.app = app
 	msg_void_i(app, sel_registerName("setActivationPolicy:"), 0)
 	msg_void_id(app, sel_registerName("setDelegate:"), calendar_ui.delegate)
-	frame := Rect{{120, 100}, {896, 760}}
+	frame := Rect{{120, 100}, {CALENDAR_DEFAULT_WINDOW_WIDTH, CALENDAR_DEFAULT_WINDOW_HEIGHT}}
 	calendar_ui.window = msg_id_rect_u_u_b(
 		msg_id(window_class, sel_registerName("alloc")),
 		sel_registerName("initWithContentRect:styleMask:backing:defer:"),

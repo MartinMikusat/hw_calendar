@@ -122,7 +122,7 @@ legacy_rebuild_and_launch() {
   printf '\n[hw_calendar] rebuilding %s...\n' "$MODE"
   if ! "$ROOT/build.sh" "$MODE"; then
     printf '[hw_calendar] build failed; keeping the current app running\n'
-    return
+    return 1
   fi
 
   stop_app
@@ -133,7 +133,7 @@ hot_rebuild_and_launch() {
   printf '\n[hw_calendar] rebuilding hot-reload %s host and module...\n' "$MODE"
   if ! "$ROOT/scripts/hot-reload-build.sh" "$MODE" all; then
     printf '[hw_calendar] build failed; keeping the current app running\n'
-    return
+    return 1
   fi
 
   stop_app
@@ -151,10 +151,10 @@ acquire_lock
 trap cleanup INT TERM EXIT
 
 if [ "$MODE" = "release" ]; then
-  legacy_rebuild_and_launch
+  legacy_rebuild_and_launch || exit 1
   LAST_FINGERPRINT=$(legacy_fingerprint)
 else
-  hot_rebuild_and_launch
+  hot_rebuild_and_launch || exit 1
   LAST_MODULE_FINGERPRINT=$(module_fingerprint)
   LAST_HOST_FINGERPRINT=$(hot_reload_fingerprint)
 fi
