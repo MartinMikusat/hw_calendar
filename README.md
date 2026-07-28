@@ -11,10 +11,13 @@ Models used:
 
 ## Current interface
 
-The application shows a continuous vertical day list. Event rows use orange
-for the `PERSONAL` category and cyan for the `WORK` category. An important
-event contains `X-HW-IMPORTANT:TRUE`, and every date touched by that event uses
-a warm background.
+The application shows a continuous vertical day list. Event rows use Ochre for
+the `PERSONAL` category and Forest for the `WORK` category. An important event
+contains `X-HW-IMPORTANT:TRUE`, and every date touched by that event uses a
+Coffee background.
+
+Use the `DARK` or `LIGHT` header control to switch the interface theme. The
+application stores the selected theme in its local database.
 
 Press `/` when no text field has focus to activate Flash labels. Press
 `Control-K` to open the command palette. Global event search ranks `SUMMARY`,

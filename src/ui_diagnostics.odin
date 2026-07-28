@@ -93,6 +93,7 @@ calendar_ui_diagnostic_action_name :: proc(action: Calendar_UI_Action) -> string
 	case .Window_Close: return "window-close"
 	case .Window_Minimize: return "window-minimize"
 	case .Window_Zoom: return "window-zoom"
+	case .Theme_Toggle: return "theme-toggle"
 	case .Today: return "today"
 	case .Search: return "search"
 	case .New_Event: return "new-event"

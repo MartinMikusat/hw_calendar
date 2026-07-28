@@ -168,9 +168,39 @@ calendar_database_create_schema :: proc() -> bool {
 		return false
 	}
 	return sqlite_execute(
-			calendar_database,
-			fmt.tprintf("PRAGMA user_version=%d;", CALENDAR_SCHEMA_VERSION),
-		)
+		calendar_database,
+		fmt.tprintf("PRAGMA user_version=%d;", CALENDAR_SCHEMA_VERSION),
+	)
+}
+
+calendar_meta_get :: proc(
+	key: string,
+	allocator := context.allocator,
+) -> (string, bool) {
+	if calendar_database == nil {return "", false}
+	statement, prepared := sqlite_prepare(
+		calendar_database,
+		"SELECT value FROM app_meta WHERE key = ?;",
+	)
+	if !prepared {return "", false}
+	defer sqlite3_finalize(statement)
+	if !sqlite_bind_text_value(statement, 1, key) {return "", false}
+	if sqlite3_step(statement) != SQLITE_ROW {return "", false}
+	return sqlite_column_string(statement, 0, allocator), true
+}
+
+calendar_meta_set :: proc(key, value: string) -> bool {
+	if calendar_database == nil {return false}
+	statement, prepared := sqlite_prepare(
+		calendar_database,
+		`INSERT INTO app_meta (key, value) VALUES (?, ?)
+		 ON CONFLICT(key) DO UPDATE SET value = excluded.value;`,
+	)
+	if !prepared {return false}
+	defer sqlite3_finalize(statement)
+	return sqlite_bind_text_value(statement, 1, key) &&
+	       sqlite_bind_text_value(statement, 2, value) &&
+	       sqlite3_step(statement) == SQLITE_DONE
 }
 
 calendar_component_string :: proc(

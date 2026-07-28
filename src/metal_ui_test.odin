@@ -54,6 +54,23 @@ calendar_window_controls_reach_top_edge_test :: proc(t: ^testing.T) {
 }
 
 @(test)
+calendar_theme_switch_uses_opposite_theme_label_test :: proc(t: ^testing.T) {
+	testing.expect_value(t, calendar_theme_toggle_label(false), "DARK")
+	testing.expect_value(t, calendar_theme_toggle_label(true), "LIGHT")
+	testing.expect(t, calendar_theme_is_dark("dark"))
+	testing.expect(t, !calendar_theme_is_dark("light"))
+}
+
+@(test)
+calendar_theme_switch_precedes_header_actions_test :: proc(t: ^testing.T) {
+	theme := calendar_ui_theme_rect_for_size(896, 760)
+	today := Calendar_UI_Rect{626, 729, 76, 30}
+	testing.expect_value(t, theme, Calendar_UI_Rect{554, 729, 64, 30})
+	testing.expect_value(t, today, Calendar_UI_Rect{626, 729, 76, 30})
+	testing.expect_value(t, today.x-(theme.x+theme.w), 8.0)
+}
+
+@(test)
 calendar_header_double_click_toggles_window_zoom_test :: proc(t: ^testing.T) {
 	testing.expect(t, !calendar_header_click_should_zoom(1))
 	testing.expect(t, calendar_header_click_should_zoom(2))

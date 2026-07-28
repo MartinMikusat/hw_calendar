@@ -108,6 +108,7 @@ Calendar_UI_Action :: enum {
 	Window_Close,
 	Window_Minimize,
 	Window_Zoom,
+	Theme_Toggle,
 	Today,
 	Search,
 	New_Event,
@@ -158,6 +159,7 @@ Calendar_UI_State :: struct {
 	frame_index: int,
 	notification_reconcile_stamp: i64,
 	day_offset: int,
+	dark_theme: bool,
 	events: [dynamic]Calendar_Event,
 	occurrences: [dynamic]Calendar_Occurrence,
 	controls: [dynamic]Calendar_UI_Control,
@@ -185,6 +187,22 @@ calendar_ui: Calendar_UI_State
 
 CALENDAR_HEADER_HEIGHT :: 40.0
 CALENDAR_HEADER_CONTROL_HEIGHT :: 30.0
+CALENDAR_COLOR_SAND_32 :: [4]f32{0.882353, 0.850980, 0.788235, 1}
+CALENDAR_COLOR_STONE_32 :: [4]f32{0.682353, 0.576471, 0.447059, 1}
+CALENDAR_COLOR_COFFEE_32 :: [4]f32{0.698039, 0.490196, 0.341176, 1}
+CALENDAR_COLOR_OCHRE_32 :: [4]f32{0.498039, 0.294118, 0.188235, 1}
+CALENDAR_COLOR_GUM_32 :: [4]f32{0.490196, 0.529412, 0.411765, 1}
+CALENDAR_COLOR_MOSS_32 :: [4]f32{0.258824, 0.298039, 0.129412, 1}
+CALENDAR_COLOR_FOREST_32 :: [4]f32{0.090196, 0.192157, 0.145098, 1}
+CALENDAR_COLOR_BASALT_32 :: [4]f32{0.129412, 0.180392, 0.250980, 1}
+CALENDAR_COLOR_SAND_64 :: [4]f64{0.882353, 0.850980, 0.788235, 1}
+CALENDAR_COLOR_STONE_64 :: [4]f64{0.682353, 0.576471, 0.447059, 1}
+CALENDAR_COLOR_COFFEE_64 :: [4]f64{0.698039, 0.490196, 0.341176, 1}
+CALENDAR_COLOR_OCHRE_64 :: [4]f64{0.498039, 0.294118, 0.188235, 1}
+CALENDAR_COLOR_GUM_64 :: [4]f64{0.490196, 0.529412, 0.411765, 1}
+CALENDAR_COLOR_MOSS_64 :: [4]f64{0.258824, 0.298039, 0.129412, 1}
+CALENDAR_COLOR_FOREST_64 :: [4]f64{0.090196, 0.192157, 0.145098, 1}
+CALENDAR_COLOR_BASALT_64 :: [4]f64{0.129412, 0.180392, 0.250980, 1}
 CALENDAR_DAY_ROW_HEIGHT :: 28.0
 CALENDAR_DAY_ROW_PITCH :: 30.0
 CALENDAR_DAY_TOP_GAP :: 4.0
@@ -356,6 +374,8 @@ calendar_ui_ax_label :: proc(control: ^Calendar_UI_Control) -> string {
 	case .Window_Close: return "Close window"
 	case .Window_Minimize: return "Minimize window"
 	case .Window_Zoom: return "Zoom window"
+	case .Theme_Toggle:
+		return calendar_ui.dark_theme ? "Switch to light theme" : "Switch to dark theme"
 	case .Today: return "Jump to today"
 	case .Search: return "Search events"
 	case .New_Event: return "New event"
@@ -564,6 +584,27 @@ calendar_ui_today_rect :: proc() -> Calendar_UI_Rect {
 		76,
 		CALENDAR_HEADER_CONTROL_HEIGHT,
 	}
+}
+
+calendar_ui_theme_rect_for_size :: proc(width, height: f64) -> Calendar_UI_Rect {
+	return {
+		width-342,
+		height-CALENDAR_HEADER_CONTROL_HEIGHT-1,
+		64,
+		CALENDAR_HEADER_CONTROL_HEIGHT,
+	}
+}
+
+calendar_ui_theme_rect :: proc() -> Calendar_UI_Rect {
+	return calendar_ui_theme_rect_for_size(calendar_ui.width, calendar_ui.height)
+}
+
+calendar_theme_is_dark :: proc(value: string) -> bool {
+	return value == "dark"
+}
+
+calendar_theme_toggle_label :: proc(dark_theme: bool) -> string {
+	return dark_theme ? "LIGHT" : "DARK"
 }
 
 calendar_ui_search_rect :: proc() -> Calendar_UI_Rect {
@@ -973,6 +1014,12 @@ calendar_ui_activate_control :: proc(id: u64) {
 			)
 		case .Window_Zoom:
 			calendar_toggle_window_zoom()
+		case .Theme_Toggle:
+			calendar_ui.dark_theme = !calendar_ui.dark_theme
+			value := calendar_ui.dark_theme ? "dark" : "light"
+			if !calendar_meta_set("interface_theme", value) {
+				fmt.eprintln("[hw_calendar] could not persist the interface theme")
+			}
 		case .Today:
 			calendar_ui.day_offset = 0
 			calendar_ui_reload_data()
@@ -1300,17 +1347,30 @@ calendar_occurrences_for_day :: proc(day: ICal_Date_Time) -> []Calendar_Occurren
 }
 
 calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
-	chassis := [4]f32{0.026, 0.028, 0.027, 1}
-	header := [4]f32{0.018, 0.020, 0.019, 1}
-	row := [4]f32{0.041, 0.044, 0.042, 1}
-	row_alt := [4]f32{0.052, 0.055, 0.052, 1}
-	important := [4]f32{0.15, 0.061, 0.032, 1}
-	button := [4]f32{0.052, 0.055, 0.052, 1}
-	orange := [4]f32{0.91, 0.31, 0.075, 1}
-	cyan := [4]f32{0.27, 0.72, 0.73, 1}
+	chassis := [4]f32{0.80, 0.78, 0.72, 1}
+	header := [4]f32{0.91, 0.89, 0.82, 1}
+	row := [4]f32{0.88, 0.86, 0.79, 1}
+	row_alt := [4]f32{0.85, 0.83, 0.76, 1}
+	important := CALENDAR_COLOR_COFFEE_32
+	button := [4]f32{0.83, 0.81, 0.74, 1}
+	ink := [4]f32{0.15, 0.145, 0.16, 1}
+	field := row_alt
+	focus := CALENDAR_COLOR_FOREST_32
+	if calendar_ui.dark_theme {
+		chassis = [4]f32{0.040, 0.043, 0.041, 1}
+		header = [4]f32{0.032, 0.034, 0.033, 1}
+		row = [4]f32{0.055, 0.059, 0.056, 1}
+		row_alt = [4]f32{0.067, 0.071, 0.067, 1}
+		important = CALENDAR_COLOR_OCHRE_32
+		button = [4]f32{0.067, 0.071, 0.067, 1}
+		ink = [4]f32{0.020, 0.022, 0.021, 1}
+		field = [4]f32{0.067, 0.072, 0.068, 1}
+		focus = CALENDAR_COLOR_GUM_32
+	}
 	calendar_push_rect(vertices, {0, 0, calendar_ui.width, calendar_ui.height}, chassis)
 	calendar_push_rect(vertices, calendar_ui_header_rect(), header)
-	buttons := [3]Calendar_UI_Rect{
+	buttons := [4]Calendar_UI_Rect{
+		calendar_ui_theme_rect(),
 		calendar_ui_today_rect(),
 		calendar_ui_search_rect(),
 		calendar_ui_new_rect(),
@@ -1336,31 +1396,34 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 		calendar_push_rect(vertices, rect, color)
 		if ical_days_from_civil(day.year, day.month, day.day) ==
 		   ical_days_from_civil(now.year, now.month, now.day) {
-			calendar_push_border(vertices, rect, orange)
+			calendar_push_border(vertices, rect, focus)
 		}
 		for occurrence, event_index in day_events {
 			if event_index >= 3 {break}
 			event_rect := calendar_ui_event_rect(rect, event_index)
-			event_color := [4]f32{0.075, 0.081, 0.076, 1}
+			event_color := [4]f32{0.20, 0.20, 0.21, 1}
+			if calendar_ui.dark_theme {
+				event_color = [4]f32{0.075, 0.081, 0.076, 1}
+			}
 			upper_categories := strings.to_upper(
 				occurrence.categories,
 				context.temp_allocator,
 			)
 			personal := strings.contains(upper_categories, "PERSONAL")
 			work := strings.contains(upper_categories, "WORK")
-			if personal {event_color = [4]f32{0.17, 0.070, 0.035, 1}}
-			if work {event_color = [4]f32{0.035, 0.12, 0.12, 1}}
+			if personal {event_color = CALENDAR_COLOR_OCHRE_32}
+			if work {event_color = CALENDAR_COLOR_FOREST_32}
 			calendar_push_rect(vertices, event_rect, event_color)
 			if personal && work {
 				calendar_push_rect(
 					vertices,
 					{event_rect.x, event_rect.y, 4, event_rect.h},
-					orange,
+					CALENDAR_COLOR_COFFEE_32,
 				)
 				calendar_push_rect(
 					vertices,
 					{event_rect.x+4, event_rect.y, 4, event_rect.h},
-					cyan,
+					CALENDAR_COLOR_GUM_32,
 				)
 			}
 			if !calendar_ui.editor_open {
@@ -1382,26 +1445,26 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 		calendar_push_rect(
 			vertices,
 			{calendar_ui.width*0.15, calendar_ui.height*0.2, calendar_ui.width*0.7, calendar_ui.height*0.65},
-			[4]f32{0.031, 0.034, 0.032, 1},
+			ink,
 		)
 	}
 	if calendar_ui.editor_open {
 		calendar_push_rect(
 			vertices,
 			{0, 0, calendar_ui.width, calendar_ui.height},
-			[4]f32{0.012, 0.013, 0.012, 1},
+			ink,
 		)
 		modal := calendar_ui_editor_rect()
-		calendar_push_rect(vertices, modal, [4]f32{0.025, 0.028, 0.026, 1})
+		calendar_push_rect(vertices, modal, header)
 		for field_index in 0..<7 {
 			field_rect := calendar_ui_editor_field_rect(field_index)
 			calendar_push_rect(
 				vertices,
 				field_rect,
-				[4]f32{0.052, 0.056, 0.052, 1},
+				field,
 			)
 			if field_index == calendar_ui.editor_field {
-				calendar_push_border(vertices, field_rect, cyan)
+				calendar_push_border(vertices, field_rect, focus)
 			}
 			calendar_ui_add_control(
 				fmt.tprintf("editor field %d", field_index),
@@ -1417,9 +1480,9 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 			190,
 			34,
 		}
-		important_color := [4]f32{0.052, 0.056, 0.052, 1}
+		important_color := row_alt
 		if calendar_ui.editor_important {
-			important_color = [4]f32{0.15, 0.061, 0.032, 1}
+			important_color = CALENDAR_COLOR_COFFEE_32
 		}
 		calendar_push_rect(
 			vertices,
@@ -1434,8 +1497,8 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 		)
 		save_rect := calendar_ui_editor_button_rect(0)
 		cancel_rect := calendar_ui_editor_button_rect(1)
-		calendar_push_rect(vertices, save_rect, [4]f32{0.035, 0.12, 0.12, 1})
-		calendar_push_rect(vertices, cancel_rect, [4]f32{0.052, 0.056, 0.052, 1})
+		calendar_push_rect(vertices, save_rect, CALENDAR_COLOR_MOSS_32)
+		calendar_push_rect(vertices, cancel_rect, button)
 		calendar_ui_add_control(
 			"editor save",
 			"save",
@@ -1453,7 +1516,7 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 			calendar_push_rect(
 				vertices,
 				delete_rect,
-				[4]f32{0.17, 0.070, 0.035, 1},
+				CALENDAR_COLOR_OCHRE_32,
 			)
 			calendar_ui_add_control(
 				"editor delete",
@@ -1738,9 +1801,16 @@ calendar_draw_icon_path :: proc(
 
 calendar_draw_window_controls :: proc(ctx: rawptr) {
 	colors := [3][4]f64{
-		{0.98, 0.35, 0.09, 1},
-		{0.47, 0.49, 0.46, 1},
-		{0.27, 0.72, 0.73, 1},
+		CALENDAR_COLOR_OCHRE_64,
+		CALENDAR_COLOR_GUM_64,
+		CALENDAR_COLOR_FOREST_64,
+	}
+	if calendar_ui.dark_theme {
+		colors = {
+			CALENDAR_COLOR_COFFEE_64,
+			CALENDAR_COLOR_STONE_64,
+			CALENDAR_COLOR_GUM_64,
+		}
 	}
 	xmark := calendar_icon_xmark_points()
 	calendar_draw_icon_path(
@@ -1793,21 +1863,42 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 	CFRelease(font_name)
 	if font == nil {return pixels}
 	defer CFRelease(font)
-	bright := [4]f64{0.97, 0.95, 0.88, 1}
-	muted := [4]f64{0.47, 0.49, 0.46, 1}
-	orange := [4]f64{0.98, 0.35, 0.09, 1}
-	cyan := [4]f64{0.27, 0.72, 0.73, 1}
+	ink := [4]f64{0.15, 0.145, 0.16, 1}
+	ink_soft := [4]f64{0.27, 0.26, 0.28, 1}
+	muted := [4]f64{0.48, 0.46, 0.42, 1}
+	inverse := [4]f64{0.91, 0.89, 0.82, 1}
+	if calendar_ui.dark_theme {
+		ink = [4]f64{0.89, 0.88, 0.82, 1}
+		ink_soft = [4]f64{0.68, 0.67, 0.62, 1}
+		muted = [4]f64{0.47, 0.49, 0.46, 1}
+		inverse = [4]f64{0.97, 0.95, 0.88, 1}
+	}
 	calendar_draw_text(
 		ctx,
 		font,
 		"HW CALENDAR / CONTINUOUS DAYS",
 		calendar_ui_title_rect(),
-		bright,
+		ink,
 		0,
 	)
-	calendar_draw_text(ctx, font, "TODAY", calendar_ui_today_rect(), muted, 14)
-	calendar_draw_text(ctx, font, "SEARCH", calendar_ui_search_rect(), cyan, 14)
-	calendar_draw_text(ctx, font, "NEW EVENT", calendar_ui_new_rect(), orange, 10)
+	theme_label := calendar_theme_toggle_label(calendar_ui.dark_theme)
+	calendar_draw_text(
+		ctx,
+		font,
+		theme_label,
+		calendar_ui_theme_rect(),
+		calendar_ui.dark_theme ? CALENDAR_COLOR_SAND_64 : CALENDAR_COLOR_BASALT_64,
+	)
+	today_color := CALENDAR_COLOR_COFFEE_64
+	search_color := CALENDAR_COLOR_FOREST_64
+	new_color := CALENDAR_COLOR_OCHRE_64
+	if calendar_ui.dark_theme {
+		search_color = CALENDAR_COLOR_GUM_64
+		new_color = CALENDAR_COLOR_STONE_64
+	}
+	calendar_draw_text(ctx, font, "TODAY", calendar_ui_today_rect(), today_color, 14)
+	calendar_draw_text(ctx, font, "SEARCH", calendar_ui_search_rect(), search_color, 14)
+	calendar_draw_text(ctx, font, "NEW EVENT", calendar_ui_new_rect(), new_color, 10)
 	now := ical_date_time_from_stamp(time.to_unix_seconds(time.now()), true)
 	anchor := ical_days_from_civil(now.year, now.month, now.day) +
 	          i64(calendar_ui.day_offset)
@@ -1839,7 +1930,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			} else {
 				time_text = fmt.tprintf("ALL DAY  %s", occurrence.summary)
 			}
-			calendar_draw_text(ctx, font, time_text, event_rect, bright)
+			calendar_draw_text(ctx, font, time_text, event_rect, inverse)
 		}
 		if len(day_events) > 3 {
 			calendar_draw_text(
@@ -1847,7 +1938,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 				font,
 				fmt.tprintf("+%d", len(day_events)-3),
 				{rect.x+rect.w-42, rect.y, 38, rect.h},
-				orange,
+				ink_soft,
 				0,
 			)
 		}
@@ -1860,11 +1951,13 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			calendar_ui.width*0.7,
 			calendar_ui.height*0.65,
 		}
-		calendar_draw_text(ctx, font, fmt.tprintf("> %s", calendar_ui.palette_query), {modal.x+16, modal.y+modal.h-48, modal.w-32, 34}, bright)
+		calendar_draw_text(ctx, font, fmt.tprintf("> %s", calendar_ui.palette_query), {modal.x+16, modal.y+modal.h-48, modal.w-32, 34}, inverse)
 		for result, index in command_palette.visible_results(&calendar_ui.palette) {
 			if index >= 10 {break}
-			color := muted
-			if index == command_palette.selected_index(&calendar_ui.palette) {color = orange}
+			color := [4]f64{0.66, 0.63, 0.57, 1}
+			if index == command_palette.selected_index(&calendar_ui.palette) {
+				color = inverse
+			}
 			calendar_draw_text(
 				ctx,
 				font,
@@ -1887,7 +1980,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			font,
 			title,
 			{modal.x+18, modal.y+modal.h-48, modal.w-36, 34},
-			bright,
+			ink,
 			0,
 		)
 		labels := [7]string{
@@ -1923,7 +2016,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 				font,
 				values[field_index],
 				field_rect,
-				bright,
+				ink,
 			)
 		}
 		important_rect := Calendar_UI_Rect{
@@ -1937,14 +2030,14 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			font,
 			calendar_ui.editor_important ? "IMPORTANT: YES" : "IMPORTANT: NO",
 			important_rect,
-			calendar_ui.editor_important ? orange : muted,
+			calendar_ui.editor_important ? CALENDAR_COLOR_COFFEE_64 : muted,
 		)
 		calendar_draw_text(
 			ctx,
 			font,
 			"SAVE",
 			calendar_ui_editor_button_rect(0),
-			cyan,
+			inverse,
 		)
 		calendar_draw_text(
 			ctx,
@@ -1959,7 +2052,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 				font,
 				"DELETE",
 				calendar_ui_editor_button_rect(2),
-				orange,
+				inverse,
 			)
 		}
 		if len(calendar_ui.editor_error) > 0 {
@@ -1968,7 +2061,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 				font,
 				calendar_ui.editor_error,
 				{modal.x+18, modal.y+60, modal.w-36, 28},
-				orange,
+				CALENDAR_COLOR_OCHRE_64,
 				0,
 			)
 		}
@@ -2106,10 +2199,14 @@ calendar_render_frame :: proc() {
 	msg_void_id(attachment, sel_registerName("setTexture:"), texture)
 	msg_void_u(attachment, sel_registerName("setLoadAction:"), 2)
 	msg_void_u(attachment, sel_registerName("setStoreAction:"), 1)
+	clear_color := Calendar_MTL_Clear_Color{0.80, 0.78, 0.72, 1}
+	if calendar_ui.dark_theme {
+		clear_color = {0.040, 0.043, 0.041, 1}
+	}
 	calendar_msg_void_clear_color(
 		attachment,
 		sel_registerName("setClearColor:"),
-		{0.026, 0.028, 0.027, 1},
+		clear_color,
 	)
 	encoder := msg_id_id(
 		command_buffer,
@@ -2142,6 +2239,12 @@ calendar_render_frame :: proc() {
 		)
 	}
 	if !calendar_ui.editor_open {
+		calendar_ui_add_control(
+			"theme toggle",
+			"toggle theme",
+			calendar_ui_theme_rect(),
+			.Theme_Toggle,
+		)
 		calendar_ui_add_control(
 			"today",
 			"today",
@@ -2417,6 +2520,10 @@ calendar_gui_initialize :: proc(
 	}
 	calendar_ui.scale = 1
 	calendar_ui.needs_redraw = true
+	if theme, found := calendar_meta_get("interface_theme", context.temp_allocator);
+	   found {
+		calendar_ui.dark_theme = calendar_theme_is_dark(theme)
+	}
 	calendar_ui.controls = make([dynamic]Calendar_UI_Control)
 	calendar_ui.palette_event_indices = make([dynamic]int)
 	calendar_ui.ax_bindings = make([dynamic]Calendar_UI_AX_Binding)
