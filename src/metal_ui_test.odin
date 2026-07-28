@@ -116,7 +116,11 @@ calendar_navigation_selects_adjacent_event_and_holiday_test :: proc(
 	items := []Calendar_Navigation_Item{
 		{
 			kind = .Event,
-			event = {event_index = 4, start = ical_date_time_from_stamp(day)},
+			event = {
+				event_index = 4,
+				uid = "imported-event",
+				start = ical_date_time_from_stamp(day, true),
+			},
 		},
 		{
 			kind = .Holiday,
@@ -139,7 +143,19 @@ calendar_navigation_selects_adjacent_event_and_holiday_test :: proc(
 	testing.expect_value(t, next.kind, Calendar_Navigation_Item_Kind.Event)
 	testing.expect_value(t, next.event.event_index, 4)
 
-	next, found = calendar_navigation_find(items, .Next, day, &items[0])
+	reconstructed_selection := Calendar_Navigation_Item{
+		kind = .Event,
+		event = {
+			event_index = 4,
+			start = ical_date_time_from_stamp(day, true),
+		},
+	}
+	next, found = calendar_navigation_find(
+		items,
+		.Next,
+		day,
+		&reconstructed_selection,
+	)
 	testing.expect(t, found)
 	testing.expect_value(t, next.kind, Calendar_Navigation_Item_Kind.Holiday)
 

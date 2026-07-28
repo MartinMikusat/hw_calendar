@@ -133,6 +133,7 @@ Calendar_UI_Control :: struct {
 	action: Calendar_UI_Action,
 	event_index: int,
 	occurrence_stamp: i64,
+	occurrence_is_date: bool,
 	holiday_country_index: int,
 	holiday_definition_index: int,
 }
@@ -214,6 +215,7 @@ Calendar_UI_State :: struct {
 	navigation_kind: Calendar_Navigation_Item_Kind,
 	navigation_event_index: int,
 	navigation_start_stamp: i64,
+	navigation_start_is_date: bool,
 	navigation_holiday_country_index: int,
 	navigation_holiday_definition_index: int,
 	details_scroll: f64,
@@ -382,6 +384,7 @@ calendar_ui_add_control :: proc(
 	action := Calendar_UI_Action.None,
 	event_index := -1,
 	occurrence_stamp := i64(0),
+	occurrence_is_date := false,
 	holiday_country_index := -1,
 	holiday_definition_index := -1,
 ) {
@@ -393,6 +396,7 @@ calendar_ui_add_control :: proc(
 		action = action,
 		event_index = event_index,
 		occurrence_stamp = occurrence_stamp,
+		occurrence_is_date = occurrence_is_date,
 		holiday_country_index = holiday_country_index,
 		holiday_definition_index = holiday_definition_index,
 	})
@@ -834,6 +838,7 @@ calendar_ui_clear_navigation_selection :: proc() {
 	calendar_ui.navigation_active = false
 	calendar_ui.navigation_event_index = -1
 	calendar_ui.navigation_start_stamp = 0
+	calendar_ui.navigation_start_is_date = false
 	calendar_ui.navigation_holiday_country_index = -1
 	calendar_ui.navigation_holiday_definition_index = -1
 	calendar_ui.details_scroll = 0
@@ -856,7 +861,9 @@ calendar_navigation_item_compare :: proc(
 	if a.kind < b.kind {return -1}
 	if a.kind > b.kind {return 1}
 	if a.kind == .Event {
-		return calendar_occurrence_compare(a.event, b.event)
+		if a.event.event_index < b.event.event_index {return -1}
+		if a.event.event_index > b.event.event_index {return 1}
+		return 0
 	}
 	return calendar_holiday_occurrence_compare(a.holiday, b.holiday)
 }
@@ -884,6 +891,8 @@ calendar_ui_set_navigation_selection :: proc(item: Calendar_Navigation_Item) {
 	calendar_ui.details_actions_active = false
 	calendar_ui.navigation_kind = item.kind
 	calendar_ui.navigation_start_stamp = calendar_navigation_item_stamp(item)
+	calendar_ui.navigation_start_is_date =
+		item.kind == .Holiday || item.event.start.is_date
 	if item.kind == .Event {
 		calendar_ui.navigation_event_index = item.event.event_index
 		calendar_ui.navigation_holiday_country_index = -1
@@ -895,13 +904,18 @@ calendar_ui_set_navigation_selection :: proc(item: Calendar_Navigation_Item) {
 	calendar_ui.navigation_holiday_definition_index = item.holiday.definition_index
 }
 
-calendar_ui_focus_event :: proc(event_index: int, start_stamp: i64) {
+calendar_ui_focus_event :: proc(
+	event_index: int,
+	start_stamp: i64,
+	start_is_date: bool,
+) {
 	if event_index < 0 || event_index >= len(calendar_ui.events) {return}
 	calendar_ui_clear_holiday_promotion()
 	calendar_ui.navigation_active = true
 	calendar_ui.navigation_kind = .Event
 	calendar_ui.navigation_event_index = event_index
 	calendar_ui.navigation_start_stamp = start_stamp
+	calendar_ui.navigation_start_is_date = start_is_date
 	calendar_ui.navigation_holiday_country_index = -1
 	calendar_ui.navigation_holiday_definition_index = -1
 	calendar_ui.details_scroll = 0
@@ -920,6 +934,7 @@ calendar_ui_focus_holiday :: proc(
 	calendar_ui.navigation_kind = .Holiday
 	calendar_ui.navigation_event_index = -1
 	calendar_ui.navigation_start_stamp = date_stamp
+	calendar_ui.navigation_start_is_date = true
 	calendar_ui.navigation_holiday_country_index = country_index
 	calendar_ui.navigation_holiday_definition_index = definition_index
 	calendar_ui.details_scroll = 0
@@ -993,6 +1008,7 @@ calendar_ui_navigation_selection_item :: proc() -> (
 		item.event.event_index = calendar_ui.navigation_event_index
 		item.event.start = ical_date_time_from_stamp(
 			calendar_ui.navigation_start_stamp,
+			calendar_ui.navigation_start_is_date,
 		)
 	} else {
 		item.holiday.country_index = calendar_ui.navigation_holiday_country_index
@@ -1536,6 +1552,7 @@ calendar_ui_activate_control :: proc(id: u64) {
 			calendar_ui_focus_event(
 				control.event_index,
 				control.occurrence_stamp,
+				control.occurrence_is_date,
 			)
 		case .Focus_Holiday:
 			calendar_ui_focus_holiday(
@@ -2322,6 +2339,7 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 					.Focus_Event,
 					item.event.event_index,
 					ical_date_time_stamp(item.event.start),
+					item.event.start.is_date,
 				)
 			}
 		}
