@@ -116,6 +116,7 @@ Calendar_CLI_Event_Output :: struct {
 	url: string `json:"url,omitempty"`,
 	categories: string `json:"categories,omitempty"`,
 	important: bool,
+	archived: bool,
 	status: string `json:"status,omitempty"`,
 	sequence: int,
 	start: string,
@@ -495,6 +496,7 @@ calendar_cli_event_output :: proc(
 		url = ical_clone(event.url),
 		categories = ical_clone(event.categories),
 		important = event.important,
+		archived = event.archived,
 		status = ical_clone(event.status),
 		sequence = event.sequence,
 		start = ical_clone(start_text),
@@ -632,7 +634,8 @@ calendar_cli_event_search :: proc(request: Calendar_CLI_Request) -> Calendar_CLI
 	defer delete(indices)
 	valid_total := 0
 	for event_index in indices {
-		if strings.equal_fold(events[event_index].status, "CANCELLED") {
+		if events[event_index].archived ||
+		   strings.equal_fold(events[event_index].status, "CANCELLED") {
 			continue
 		}
 		valid_total += 1
@@ -642,7 +645,9 @@ calendar_cli_event_search :: proc(request: Calendar_CLI_Request) -> Calendar_CLI
 	result_index := 0
 	for event_index in indices {
 		event := &events[event_index]
-		if strings.equal_fold(event.status, "CANCELLED") {continue}
+		if event.archived || strings.equal_fold(event.status, "CANCELLED") {
+			continue
+		}
 		start, _ := ical_parse_date_time(event.dtstart)
 		end, end_ok := ical_parse_date_time(event.dtend)
 		if !end_ok {end = start}

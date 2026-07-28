@@ -81,31 +81,45 @@ calendar_details_layout_splits_default_content_width_test :: proc(t: ^testing.T)
 	testing.expect_value(t, calendar.w, 624.0)
 	testing.expect_value(t, details.w, 624.0)
 	testing.expect_value(t, details.x-(calendar.x+calendar.w), 8.0)
-	testing.expect_value(t, calendar.h, 696.0)
+	testing.expect_value(t, calendar.h, 656.0)
 }
 
 @(test)
-calendar_details_actions_match_focused_item_test :: proc(t: ^testing.T) {
-	testing.expect_value(
-		t,
-		calendar_details_action_count(Calendar_Navigation_Item_Kind.Event, false),
-		1,
-	)
-	testing.expect_value(
-		t,
-		calendar_details_action_count(Calendar_Navigation_Item_Kind.Event, true),
-		2,
-	)
-	testing.expect_value(
-		t,
-		calendar_details_action_count(Calendar_Navigation_Item_Kind.Holiday, true),
-		1,
-	)
-	testing.expect_value(
-		t,
-		calendar_details_action_count(Calendar_Navigation_Item_Kind.Holiday, false),
-		0,
-	)
+calendar_action_bar_uses_three_fixed_slots_test :: proc(t: ^testing.T) {
+	first := calendar_ui_action_rect_for_width(0, 1280)
+	second := calendar_ui_action_rect_for_width(1, 1280)
+	third := calendar_ui_action_rect_for_width(2, 1280)
+	testing.expect_value(t, first.x, 12.0)
+	testing.expect_value(t, first.y, CALENDAR_ACTION_BAR_BOTTOM)
+	testing.expect_value(t, first.h, CALENDAR_ACTION_BAR_HEIGHT)
+	testing.expect_value(t, second.x-(first.x+first.w), CALENDAR_ACTION_BAR_GAP)
+	testing.expect_value(t, third.x-(second.x+second.w), CALENDAR_ACTION_BAR_GAP)
+	testing.expect_value(t, third.x+third.w, 1268.0)
+}
+
+@(test)
+calendar_action_bar_enables_actions_for_focused_item_test :: proc(t: ^testing.T) {
+	testing.expect(t, calendar_action_available(
+		.Action_Edit, true, .Event, true, false,
+	))
+	testing.expect(t, calendar_action_available(
+		.Action_Archive, true, .Event, true, false,
+	))
+	testing.expect(t, !calendar_action_available(
+		.Action_Open_URL, true, .Event, true, false,
+	))
+	testing.expect(t, !calendar_action_available(
+		.Action_Edit, true, .Holiday, false, true,
+	))
+	testing.expect(t, calendar_action_available(
+		.Action_Open_URL, true, .Holiday, false, true,
+	))
+	testing.expect(t, !calendar_action_available(
+		.Action_Archive, true, .Holiday, false, true,
+	))
+	testing.expect(t, !calendar_action_available(
+		.Action_Edit, false, .Event, true, true,
+	))
 }
 
 @(test)

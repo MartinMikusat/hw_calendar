@@ -373,6 +373,69 @@ recurrence_applies_this_and_future_override_test :: proc(t: ^testing.T) {
 }
 
 @(test)
+archived_series_emits_no_occurrences_test :: proc(t: ^testing.T) {
+	events := []Calendar_Event{{
+		uid = "archived-series",
+		archived = true,
+		dtstart = "20260727T090000",
+		dtend = "20260727T100000",
+		rrule = "FREQ=DAILY;COUNT=3",
+		raw_component =
+			"BEGIN:VEVENT\r\n" +
+			"UID:archived-series\r\n" +
+			"DTSTART:20260727T090000\r\n" +
+			"DTEND:20260727T100000\r\n" +
+			"RRULE:FREQ=DAILY;COUNT=3\r\n" +
+			"END:VEVENT\r\n",
+	}}
+	range_start, _ := ical_parse_date_time("20260727T000000")
+	range_end, _ := ical_parse_date_time("20260731T000000")
+	occurrences, _ := calendar_expand_events(events, range_start, range_end)
+	defer calendar_occurrences_destroy(&occurrences)
+	testing.expect_value(t, len(occurrences), 0)
+}
+
+@(test)
+archived_override_suppresses_one_occurrence_test :: proc(t: ^testing.T) {
+	events := []Calendar_Event{
+		{
+			uid = "partial-series",
+			dtstart = "20260727T090000",
+			dtend = "20260727T100000",
+			rrule = "FREQ=DAILY;COUNT=3",
+			raw_component =
+				"BEGIN:VEVENT\r\n" +
+				"UID:partial-series\r\n" +
+				"DTSTART:20260727T090000\r\n" +
+				"DTEND:20260727T100000\r\n" +
+				"RRULE:FREQ=DAILY;COUNT=3\r\n" +
+				"END:VEVENT\r\n",
+		},
+		{
+			uid = "partial-series",
+			recurrence_id = "20260728T090000",
+			archived = true,
+			dtstart = "20260728T090000",
+			dtend = "20260728T100000",
+			raw_component =
+				"BEGIN:VEVENT\r\n" +
+				"UID:partial-series\r\n" +
+				"RECURRENCE-ID:20260728T090000\r\n" +
+				"DTSTART:20260728T090000\r\n" +
+				"DTEND:20260728T100000\r\n" +
+				"END:VEVENT\r\n",
+		},
+	}
+	range_start, _ := ical_parse_date_time("20260727T000000")
+	range_end, _ := ical_parse_date_time("20260731T000000")
+	occurrences, _ := calendar_expand_events(events, range_start, range_end)
+	defer calendar_occurrences_destroy(&occurrences)
+	testing.expect_value(t, len(occurrences), 2)
+	testing.expect_value(t, occurrences[0].start.day, 27)
+	testing.expect_value(t, occurrences[1].start.day, 29)
+}
+
+@(test)
 rdate_period_preserves_occurrence_duration_test :: proc(t: ^testing.T) {
 	events := []Calendar_Event{
 		{
@@ -470,4 +533,33 @@ display_alarm_without_repeat_schedules_initial_delivery_test :: proc(t: ^testing
 		candidates[0].fire_stamp,
 		ical_date_time_stamp(occurrence.start)-15*60,
 	)
+}
+
+@(test)
+archived_event_does_not_schedule_notifications_test :: proc(t: ^testing.T) {
+	event := Calendar_Event{
+		uid = "archived-event",
+		archived = true,
+		dtstart = "20260728T090000",
+		raw_component =
+			"BEGIN:VEVENT\r\n" +
+			"UID:archived-event\r\n" +
+			"DTSTART:20260728T090000\r\n" +
+			"BEGIN:VALARM\r\n" +
+			"ACTION:DISPLAY\r\n" +
+			"TRIGGER:-PT15M\r\n" +
+			"END:VALARM\r\n" +
+			"END:VEVENT\r\n",
+	}
+	occurrence := Calendar_Occurrence{
+		event_index = 0,
+		start = ICal_Date_Time{year = 2026, month = 7, day = 28, hour = 9},
+	}
+	candidates := calendar_notification_collect(
+		[]Calendar_Event{event},
+		[]Calendar_Occurrence{occurrence},
+		ical_date_time_stamp(occurrence.start)-3600,
+	)
+	defer calendar_notification_candidates_destroy(&candidates)
+	testing.expect_value(t, len(candidates), 0)
 }

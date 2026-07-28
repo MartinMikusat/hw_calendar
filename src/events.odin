@@ -220,6 +220,7 @@ calendar_expand_events :: proc(
 	result := make([dynamic]Calendar_Occurrence, allocator)
 	for &event, event_index in events {
 		if len(event.recurrence_id) > 0 ||
+		   event.archived ||
 		   strings.equal_fold(event.status, "CANCELLED") {
 			continue
 		}
@@ -290,7 +291,8 @@ calendar_expand_events :: proc(
 				}
 			}
 			if override != nil {
-				if strings.equal_fold(override.status, "CANCELLED") {
+				if override.archived ||
+				   strings.equal_fold(override.status, "CANCELLED") {
 					delete(recurrence_id, context.temp_allocator)
 					continue
 				}
@@ -318,7 +320,8 @@ calendar_expand_events :: proc(
 				future, future_index, future_recurrence, has_future :=
 					calendar_future_override(events, event.uid, start)
 				if has_future {
-					if strings.equal_fold(future.status, "CANCELLED") {
+					if future.archived ||
+					   strings.equal_fold(future.status, "CANCELLED") {
 						delete(recurrence_id, context.temp_allocator)
 						continue
 					}

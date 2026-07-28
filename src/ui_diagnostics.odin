@@ -10,7 +10,7 @@ import "core:sys/posix"
 import "core:time"
 import command_palette "command_palette:."
 
-CALENDAR_UI_DIAGNOSTIC_SCHEMA_VERSION :: 1
+CALENDAR_UI_DIAGNOSTIC_SCHEMA_VERSION :: 2
 CALENDAR_UI_DIAGNOSTIC_RETENTION :: 20
 
 Calendar_UI_Diagnostic_Rect :: struct {
@@ -35,6 +35,7 @@ Calendar_UI_Diagnostic_Snapshot :: struct {
 	day_offset: int,
 	command_palette_open: bool,
 	editor_open: bool,
+	archive_modal_open: bool,
 	controls: []Calendar_UI_Diagnostic_Control,
 }
 
@@ -100,8 +101,12 @@ calendar_ui_diagnostic_action_name :: proc(action: Calendar_UI_Action) -> string
 	case .Open_Event: return "open-event"
 	case .Focus_Event: return "focus-event"
 	case .Focus_Holiday: return "focus-holiday"
-	case .Detail_Edit: return "detail-edit"
-	case .Detail_Open_URL: return "detail-open-url"
+	case .Action_Edit: return "action-edit"
+	case .Action_Open_URL: return "action-open-url"
+	case .Action_Archive: return "action-archive"
+	case .Archive_Cancel: return "archive-cancel"
+	case .Archive_Occurrence: return "archive-occurrence"
+	case .Archive_Series: return "archive-series"
 	case .Editor_Field: return "editor-field"
 	case .Editor_Important: return "editor-important"
 	case .Editor_Save: return "editor-save"
@@ -156,6 +161,7 @@ calendar_ui_diagnostic_snapshot :: proc(
 		day_offset = calendar_ui.day_offset,
 		command_palette_open = command_palette.is_open(&calendar_ui.palette),
 		editor_open = calendar_ui.editor_open,
+		archive_modal_open = calendar_ui.archive_modal_open,
 		controls = controls,
 	}, true
 }

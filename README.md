@@ -32,6 +32,10 @@ names and the stored event fields `SUMMARY`, `DESCRIPTION`, `LOCATION`, `URL`,
 Select an event or the New Event control to open the Metal event editor. The
 editor exposes the same controls to pointer input, Accessibility, and Flash.
 
+Focused items expose a numbered action bar for editing, opening their URL, or
+archiving. Archived events remain in local storage, but the calendar, search,
+navigation, and reminders exclude them.
+
 The application uses a square borderless window by product requirement. Its
 project-drawn close, minimize, and zoom controls call the corresponding AppKit
 operations and use the shared pointer, Accessibility, and Flash registry.

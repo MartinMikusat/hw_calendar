@@ -6,7 +6,7 @@ import os2 "core:os/os2"
 import "core:strings"
 import "core:time"
 
-CALENDAR_SCHEMA_VERSION :: 2
+CALENDAR_SCHEMA_VERSION :: 3
 
 calendar_database: ^SQLite_DB
 
@@ -21,6 +21,7 @@ Calendar_Event :: struct {
 	url: string,
 	categories: string,
 	important: bool,
+	archived: bool,
 	status: string,
 	dtstart: string,
 	dtend: string,
@@ -115,6 +116,7 @@ calendar_database_create_schema :: proc() -> bool {
 				url TEXT NOT NULL DEFAULT '',
 				categories TEXT NOT NULL DEFAULT '',
 				important INTEGER NOT NULL DEFAULT 0,
+				archived INTEGER NOT NULL DEFAULT 0,
 				status TEXT NOT NULL DEFAULT '',
 				dtstart TEXT NOT NULL DEFAULT '',
 				dtend TEXT NOT NULL DEFAULT '',
@@ -148,6 +150,7 @@ calendar_database_create_schema :: proc() -> bool {
 		return false
 	}
 	has_dtstamp := false
+	has_archived := false
 	statement, prepared := sqlite_prepare(
 		calendar_database,
 		"PRAGMA table_info(events);",
@@ -157,13 +160,21 @@ calendar_database_create_schema :: proc() -> bool {
 		name := sqlite3_column_text(statement, 1)
 		if name != nil && string(name) == "dtstamp" {
 			has_dtstamp = true
-			break
+		}
+		if name != nil && string(name) == "archived" {
+			has_archived = true
 		}
 	}
 	sqlite3_finalize(statement)
 	if !has_dtstamp && !sqlite_execute(
 		calendar_database,
 		"ALTER TABLE events ADD COLUMN dtstamp TEXT NOT NULL DEFAULT '';",
+	) {
+		return false
+	}
+	if !has_archived && !sqlite_execute(
+		calendar_database,
+		"ALTER TABLE events ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;",
 	) {
 		return false
 	}
@@ -352,8 +363,8 @@ calendar_events_load :: proc(
 	events := make([dynamic]Calendar_Event, allocator)
 	statement, prepared := sqlite_prepare(calendar_database, `
 		SELECT id, document_id, uid, recurrence_id, summary, description,
-		       location, url, categories, important, status, dtstart, dtend, rrule,
-		       raw_component, sequence, last_modified, dtstamp
+		       location, url, categories, important, archived, status, dtstart,
+		       dtend, rrule, raw_component, sequence, last_modified, dtstamp
 		FROM events
 		ORDER BY dtstart, uid, recurrence_id;
 	`)
@@ -377,17 +388,67 @@ calendar_events_load :: proc(
 			url = sqlite_column_string(statement, 7, allocator),
 			categories = sqlite_column_string(statement, 8, allocator),
 			important = sqlite3_column_int(statement, 9) != 0,
-			status = sqlite_column_string(statement, 10, allocator),
-			dtstart = sqlite_column_string(statement, 11, allocator),
-			dtend = sqlite_column_string(statement, 12, allocator),
-			rrule = sqlite_column_string(statement, 13, allocator),
-			raw_component = sqlite_column_string(statement, 14, allocator),
-			sequence = int(sqlite3_column_int(statement, 15)),
-			last_modified = sqlite_column_string(statement, 16, allocator),
-			dtstamp = sqlite_column_string(statement, 17, allocator),
+			archived = sqlite3_column_int(statement, 10) != 0,
+			status = sqlite_column_string(statement, 11, allocator),
+			dtstart = sqlite_column_string(statement, 12, allocator),
+			dtend = sqlite_column_string(statement, 13, allocator),
+			rrule = sqlite_column_string(statement, 14, allocator),
+			raw_component = sqlite_column_string(statement, 15, allocator),
+			sequence = int(sqlite3_column_int(statement, 16)),
+			last_modified = sqlite_column_string(statement, 17, allocator),
+			dtstamp = sqlite_column_string(statement, 18, allocator),
 		})
 	}
 	return events, true
+}
+
+calendar_event_set_archived :: proc(row_id: i64, archived: bool) -> bool {
+	statement, prepared := sqlite_prepare(
+		calendar_database,
+		"UPDATE events SET archived=? WHERE id=?;",
+	)
+	if !prepared {return false}
+	defer sqlite3_finalize(statement)
+	if sqlite3_bind_int(statement, 1, archived ? 1 : 0) != SQLITE_OK ||
+	   sqlite3_bind_int64(statement, 2, row_id) != SQLITE_OK {
+		return false
+	}
+	return sqlite3_step(statement) == SQLITE_DONE &&
+	       sqlite3_changes(calendar_database) == 1
+}
+
+calendar_event_series_set_archived :: proc(uid: string, archived: bool) -> bool {
+	statement, prepared := sqlite_prepare(
+		calendar_database,
+		"UPDATE events SET archived=? WHERE uid=?;",
+	)
+	if !prepared {return false}
+	defer sqlite3_finalize(statement)
+	if sqlite3_bind_int(statement, 1, archived ? 1 : 0) != SQLITE_OK ||
+	   !sqlite_bind_text_value(statement, 2, uid) {
+		return false
+	}
+	return sqlite3_step(statement) == SQLITE_DONE &&
+	       sqlite3_changes(calendar_database) > 0
+}
+
+calendar_event_identity_set_archived :: proc(
+	uid, recurrence_id: string,
+	archived: bool,
+) -> bool {
+	statement, prepared := sqlite_prepare(
+		calendar_database,
+		"UPDATE events SET archived=? WHERE uid=? AND recurrence_id=?;",
+	)
+	if !prepared {return false}
+	defer sqlite3_finalize(statement)
+	if sqlite3_bind_int(statement, 1, archived ? 1 : 0) != SQLITE_OK ||
+	   !sqlite_bind_text_value(statement, 2, uid) ||
+	   !sqlite_bind_text_value(statement, 3, recurrence_id) {
+		return false
+	}
+	return sqlite3_step(statement) == SQLITE_DONE &&
+	       sqlite3_changes(calendar_database) == 1
 }
 
 calendar_export_all :: proc(allocator := context.allocator) -> (string, bool) {

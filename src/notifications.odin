@@ -321,6 +321,7 @@ calendar_notification_collect :: proc(
 	for occurrence in occurrences {
 		if occurrence.event_index < 0 || occurrence.event_index >= len(events) {continue}
 		event := &events[occurrence.event_index]
+		if event.archived {continue}
 		document, component, parsed := calendar_event_component(
 			event,
 			context.temp_allocator,

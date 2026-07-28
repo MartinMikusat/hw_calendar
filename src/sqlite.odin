@@ -24,6 +24,7 @@ foreign sqlite {
 	sqlite3_column_int :: proc "c" (statement: ^SQLite_Statement, index: c.int) -> c.int ---
 	sqlite3_column_int64 :: proc "c" (statement: ^SQLite_Statement, index: c.int) -> i64 ---
 	sqlite3_last_insert_rowid :: proc "c" (database: ^SQLite_DB) -> i64 ---
+	sqlite3_changes :: proc "c" (database: ^SQLite_DB) -> c.int ---
 }
 SQLITE_OK :: 0
 SQLITE_ROW :: 100
