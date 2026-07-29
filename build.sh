@@ -9,7 +9,6 @@ COMPONENTS_ROOT="$ROOT/../hw_odin_ui_components"
 FONT_ROOT="$ROOT/resources/fonts"
 ICON_ROOT="$ROOT/resources/icons/iconoir"
 HOLIDAY_ROOT="$ROOT/resources/holidays"
-THEME_ROOT="$ROOT/resources/themes"
 
 "$ROOT/scripts/dependencies.sh" check
 
@@ -36,13 +35,12 @@ case "$MODE" in
     ;;
 esac
 
+rm -rf "$APP/Contents/Resources/Themes"
 mkdir -p \
   "$APP/Contents/MacOS" \
   "$APP/Contents/Resources/Fonts" \
   "$APP/Contents/Resources/Icons/Iconoir" \
-  "$APP/Contents/Resources/Holidays" \
-  "$APP/Contents/Resources/Themes/Gruvbox" \
-  "$APP/Contents/Resources/Themes/Catppuccin"
+  "$APP/Contents/Resources/Holidays"
 EXECUTABLE="$APP/Contents/MacOS/HWCalendar"
 TEMP="$ROOT/build/temp/$MODE"
 mkdir -p "$TEMP"
@@ -62,10 +60,6 @@ cp "$ICON_ROOT/maximize.svg" "$APP/Contents/Resources/Icons/Iconoir/maximize.svg
 cp "$ICON_ROOT/settings.svg" "$APP/Contents/Resources/Icons/Iconoir/settings.svg"
 cp "$ICON_ROOT/LICENSE" "$APP/Contents/Resources/Icons/Iconoir/LICENSE"
 cp "$HOLIDAY_ROOT/sk.json" "$APP/Contents/Resources/Holidays/sk.json"
-cp "$THEME_ROOT/gruvbox/palette.txt" "$APP/Contents/Resources/Themes/Gruvbox/palette.txt"
-cp "$THEME_ROOT/gruvbox/LICENSE" "$APP/Contents/Resources/Themes/Gruvbox/LICENSE"
-cp "$THEME_ROOT/catppuccin/palette.txt" "$APP/Contents/Resources/Themes/Catppuccin/palette.txt"
-cp "$THEME_ROOT/catppuccin/LICENSE" "$APP/Contents/Resources/Themes/Catppuccin/LICENSE"
 cp "$EXECUTABLE" "$CLI"
 codesign --force --deep --sign - "$APP"
 

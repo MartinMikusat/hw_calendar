@@ -17,19 +17,19 @@ calendar_settings_layout_contains_two_columns_at_minimum_size_test :: proc(
 @(test)
 calendar_settings_catalog_contains_every_theme_and_flash_test :: proc(t: ^testing.T) {
 	descriptors := calendar_settings_descriptors()
-	testing.expect_value(t, len(descriptors), 9)
+	testing.expect_value(t, len(descriptors), 3)
 	theme_count := 0
 	flash_count := 0
 	for descriptor in descriptors {
 		if descriptor.action.kind == .Set_Theme {theme_count += 1}
 		if descriptor.action.kind == .Configure_Flash {flash_count += 1}
 	}
-	testing.expect_value(t, theme_count, 8)
+	testing.expect_value(t, theme_count, 2)
 	testing.expect_value(t, flash_count, 1)
 }
 
 @(test)
-calendar_settings_search_ranks_gruvbox_and_flash_test :: proc(t: ^testing.T) {
+calendar_settings_search_ranks_theme_and_flash_test :: proc(t: ^testing.T) {
 	state: command_palette.State
 	testing.expect(t, command_palette.state_init(
 		&state,
@@ -45,16 +45,22 @@ calendar_settings_search_ranks_gruvbox_and_flash_test :: proc(t: ^testing.T) {
 	)
 	testing.expect_value(
 		t,
-		command_palette.set_query(&state, "Gruvbox"),
+		command_palette.set_query(&state, "dark"),
 		match_sorter.Search_Error.None,
 	)
-	testing.expect_value(t, len(command_palette.visible_results(&state)), 2)
+	results := command_palette.visible_results(&state)
+	testing.expect_value(t, len(results), 1)
+	testing.expect_value(
+		t,
+		results[0].entry.id,
+		command_palette.Entry_ID(int(Calendar_Theme_ID.HW_Dark)+1),
+	)
 	testing.expect_value(
 		t,
 		command_palette.set_query(&state, "leader"),
 		match_sorter.Search_Error.None,
 	)
-	results := command_palette.visible_results(&state)
+	results = command_palette.visible_results(&state)
 	testing.expect_value(t, len(results), 1)
 	testing.expect_value(t, results[0].entry.id, CALENDAR_SETTING_FLASH_ID)
 }

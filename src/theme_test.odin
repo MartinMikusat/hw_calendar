@@ -15,7 +15,7 @@ calendar_theme_registry_has_stable_unique_identifiers_test :: proc(t: ^testing.T
 		testing.expect_value(t, theme.canvas[3], f32(1))
 		testing.expect_value(t, theme.text[3], f32(1))
 	}
-	testing.expect_value(t, len(seen), 8)
+	testing.expect_value(t, len(seen), 2)
 }
 
 @(test)
@@ -26,9 +26,23 @@ calendar_theme_storage_migrates_legacy_values_test :: proc(t: ^testing.T) {
 	id, found = calendar_theme_from_storage("dark")
 	testing.expect(t, found)
 	testing.expect_value(t, id, Calendar_Theme_ID.HW_Dark)
-	id, found = calendar_theme_from_storage("catppuccin-mocha")
-	testing.expect(t, found)
-	testing.expect_value(t, id, Calendar_Theme_ID.Catppuccin_Mocha)
+	light_values := []string{"gruvbox-light", "catppuccin-latte"}
+	for value in light_values {
+		id, found = calendar_theme_from_storage(value)
+		testing.expect(t, found)
+		testing.expect_value(t, id, Calendar_Theme_ID.HW_Light)
+	}
+	dark_values := []string{
+		"gruvbox-dark",
+		"catppuccin-frappe",
+		"catppuccin-macchiato",
+		"catppuccin-mocha",
+	}
+	for value in dark_values {
+		id, found = calendar_theme_from_storage(value)
+		testing.expect(t, found)
+		testing.expect_value(t, id, Calendar_Theme_ID.HW_Dark)
+	}
 	id, found = calendar_theme_from_storage("unknown")
 	testing.expect(t, !found)
 	testing.expect_value(t, id, Calendar_Theme_ID.HW_Light)
@@ -43,12 +57,7 @@ calendar_theme_commands_use_direct_action_titles_test :: proc(t: ^testing.T) {
 	)
 	testing.expect_value(
 		t,
-		calendar_theme_command_title(.Gruvbox_Dark),
-		"Switch theme to Gruvbox Dark",
-	)
-	testing.expect_value(
-		t,
-		calendar_theme_command_title(.Catppuccin_Frappe),
-		"Switch theme to Catppuccin Frappé",
+		calendar_theme_command_title(.HW_Light),
+		"Switch theme to light mode",
 	)
 }

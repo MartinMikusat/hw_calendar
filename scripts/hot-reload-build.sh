@@ -9,7 +9,6 @@ COMPONENTS_ROOT="$ROOT/../hw_odin_ui_components"
 FONT_ROOT="$ROOT/resources/fonts"
 ICON_ROOT="$ROOT/resources/icons/iconoir"
 HOLIDAY_ROOT="$ROOT/resources/holidays"
-THEME_ROOT="$ROOT/resources/themes"
 
 MODE=${1:-debug}
 PART=${2:-all}
@@ -43,14 +42,13 @@ HOT_DIR="$ROOT/build/hot-reload/$MODE"
 MODULE="$HOT_DIR/calendar.dylib"
 MODULE_NEXT="$HOT_DIR/calendar.next.dylib"
 HOST="$APP/Contents/MacOS/HWCalendar"
+rm -rf "$APP/Contents/Resources/Themes"
 mkdir -p \
   "$HOT_DIR" \
   "$APP/Contents/MacOS" \
   "$APP/Contents/Resources/Fonts" \
   "$APP/Contents/Resources/Icons/Iconoir" \
-  "$APP/Contents/Resources/Holidays" \
-  "$APP/Contents/Resources/Themes/Gruvbox" \
-  "$APP/Contents/Resources/Themes/Catppuccin"
+  "$APP/Contents/Resources/Holidays"
 
 COMMON_COLLECTIONS="-collection:match_sorter=$MATCH_SORTER_ROOT -collection:flash=$UI_FLASH_ROOT -collection:command_palette=$COMMAND_PALETTE_ROOT -collection:components=$COMPONENTS_ROOT"
 APP_FRAMEWORKS="-framework AppKit -framework Foundation -framework Metal -framework QuartzCore -framework CoreText -framework CoreGraphics -framework UserNotifications"
@@ -75,10 +73,6 @@ build_host() {
   cp "$ICON_ROOT/settings.svg" "$APP/Contents/Resources/Icons/Iconoir/settings.svg"
   cp "$ICON_ROOT/LICENSE" "$APP/Contents/Resources/Icons/Iconoir/LICENSE"
   cp "$HOLIDAY_ROOT/sk.json" "$APP/Contents/Resources/Holidays/sk.json"
-  cp "$THEME_ROOT/gruvbox/palette.txt" "$APP/Contents/Resources/Themes/Gruvbox/palette.txt"
-  cp "$THEME_ROOT/gruvbox/LICENSE" "$APP/Contents/Resources/Themes/Gruvbox/LICENSE"
-  cp "$THEME_ROOT/catppuccin/palette.txt" "$APP/Contents/Resources/Themes/Catppuccin/palette.txt"
-  cp "$THEME_ROOT/catppuccin/LICENSE" "$APP/Contents/Resources/Themes/Catppuccin/LICENSE"
   xcrun dsymutil "$HOST" -o "$APP.dSYM"
   codesign --force --deep --sign - "$APP"
 }

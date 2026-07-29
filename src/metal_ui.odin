@@ -5174,6 +5174,10 @@ calendar_gui_initialize :: proc(
 	   found {
 		if id, valid := calendar_theme_from_storage(theme); valid {
 			calendar_ui.theme_id = id
+			canonical := calendar_theme(id).storage_id
+			if theme != canonical {
+				_ = calendar_meta_set("interface_theme", canonical)
+			}
 		}
 	}
 	calendar_ui.flash_leader = calendar_shortcut_clone(

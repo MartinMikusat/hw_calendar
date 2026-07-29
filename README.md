@@ -17,9 +17,8 @@ contains `X-HW-IMPORTANT:TRUE`, and every date touched by that event uses a
 Coffee background.
 
 Use the gear control or `Command-,` to open the two-column Settings modal.
-Search the modal or select `Styling` to choose HW Light, HW Dark, Gruvbox
-Light, Gruvbox Dark, or one of the four Catppuccin themes. The application
-stores the selected theme in its local database.
+Search the modal or select `Styling` to choose HW Light or HW Dark. The
+application stores the selected theme in its local database.
 
 Select `Shortcuts` to configure the Flash leader key. The recorder accepts a
 logical key with an exact combination of Control, Option, Shift, and Command.
@@ -156,24 +155,6 @@ Bundled icon provenance:
 - SHA-256 (`maximize.svg`): `3a3048cdc0e8e4aef5d68353b5434f0c0e074dc672b6c0abf25a5a64bc5cc8f4`
 - SHA-256 (`settings.svg`): `437c253a1c11ff214c490c766f2a3cdcf8547399fd0be48a7d222bf0703aefb5`
 - License: [MIT](resources/icons/iconoir/LICENSE)
-
-Bundled theme provenance:
-
-- Asset: Gruvbox 2.0.0 medium-contrast light and dark palettes
-- Commit: `7fde9c10ceff684529c1646bf759af3a25bb576c`
-- Source: <https://github.com/morhetz/gruvbox/blob/v2.0.0/colors/gruvbox.vim>
-- Source SHA-256: `5ec3ecbd5fb5e17fcf031aeeb44c854ccc0e25ce050c1e5a9f9baff97d00dfdb`
-- Local values: [resources/themes/gruvbox/palette.txt](resources/themes/gruvbox/palette.txt)
-- Bundled SHA-256: `d586b72a02d9ef391fa1628c1ca03a70350342b4282a69d721fbf9e2e0dfedb1`
-- License: [MIT](resources/themes/gruvbox/LICENSE)
-
-- Asset: Catppuccin Palette 1.8.0
-- Commit: `07d02aa110ef9eb7e7427afca5c73ba9cf7f8ebd`
-- Source: <https://github.com/catppuccin/palette/blob/v1.8.0/palette.json>
-- Source SHA-256: `4bc114bb6b3c9a9c9e156564aa84625aef32c5da514d9dd431cf1fcad433a05f`
-- Local values: [resources/themes/catppuccin/palette.txt](resources/themes/catppuccin/palette.txt)
-- Bundled SHA-256: `d7f47929d551d8370419718f7a4c653fd79b93f20286a04830a93fc27fe55951`
-- License: [MIT](resources/themes/catppuccin/LICENSE)
 
 Bundled holiday data:
 
