@@ -138,9 +138,74 @@ calendar_number_keys_map_to_action_slots_test :: proc(t: ^testing.T) {
 		slot, found := calendar_number_slot_for_key_code(key_code)
 		testing.expect(t, found)
 		testing.expect_value(t, slot, expected_slot)
+		digit, digit_found := calendar_number_digit_for_key_code(key_code)
+		testing.expect(t, digit_found)
+		testing.expect_value(t, digit, expected_slot+1)
 	}
 	_, found := calendar_number_slot_for_key_code(29)
 	testing.expect(t, !found)
+}
+
+@(test)
+calendar_main_action_codes_use_event_section_test :: proc(t: ^testing.T) {
+	testing.expect_value(
+		t,
+		calendar_main_action_for_code(1, 1),
+		Calendar_UI_Action.Action_Edit,
+	)
+	testing.expect_value(
+		t,
+		calendar_main_action_for_code(1, 2),
+		Calendar_UI_Action.Action_Open_URL,
+	)
+	testing.expect_value(
+		t,
+		calendar_main_action_for_code(1, 3),
+		Calendar_UI_Action.Action_Archive,
+	)
+	testing.expect_value(
+		t,
+		calendar_main_action_for_code(2, 1),
+		Calendar_UI_Action.None,
+	)
+}
+
+@(test)
+calendar_main_action_prefix_waits_expires_and_clears_test :: proc(
+	t: ^testing.T,
+) {
+	old_prefix := calendar_ui.number_prefix
+	old_deadline := calendar_ui.number_prefix_deadline_ms
+	old_redraw := calendar_ui.needs_redraw
+	defer {
+		calendar_ui.number_prefix = old_prefix
+		calendar_ui.number_prefix_deadline_ms = old_deadline
+		calendar_ui.needs_redraw = old_redraw
+	}
+	calendar_clear_number_prefix()
+	action, handled := calendar_consume_main_action_digit_at(1, 10_000)
+	testing.expect(t, handled)
+	testing.expect_value(t, action, Calendar_UI_Action.None)
+	testing.expect_value(t, calendar_ui.number_prefix, 1)
+
+	action, handled = calendar_consume_main_action_digit_at(2, 10_500)
+	testing.expect(t, handled)
+	testing.expect_value(t, action, Calendar_UI_Action.Action_Open_URL)
+	testing.expect_value(t, calendar_ui.number_prefix, 0)
+
+	action, handled = calendar_consume_main_action_digit_at(1, 20_000)
+	testing.expect(t, handled)
+	action, handled = calendar_consume_main_action_digit_at(3, 21_000)
+	testing.expect(t, !handled)
+	testing.expect_value(t, action, Calendar_UI_Action.None)
+	testing.expect_value(t, calendar_ui.number_prefix, 0)
+
+	action, handled = calendar_consume_main_action_digit_at(1, 30_000)
+	testing.expect(t, handled)
+	action, handled = calendar_consume_main_action_digit_at(9, 30_100)
+	testing.expect(t, handled)
+	testing.expect_value(t, action, Calendar_UI_Action.None)
+	testing.expect_value(t, calendar_ui.number_prefix, 0)
 }
 
 @(test)

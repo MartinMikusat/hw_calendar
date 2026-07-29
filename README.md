@@ -42,8 +42,10 @@ reason. Global search ranks bundled holiday names and the stored event fields
 Select an event or the New Event control to open the Metal event editor. The
 editor exposes the same controls to pointer input, Accessibility, and Flash.
 
-Focused items expose a numbered action bar for editing, opening their URL, or
-archiving. Archived events remain in local storage, but the calendar, search,
+Focused items expose a numbered action bar. Press `11` to edit, `12` to open
+the URL, or `13` to archive. The first digit remains active for one second.
+Escape or an invalid sequence clears it. Modal actions use one digit from left
+to right. Archived events remain in local storage, but the calendar, search,
 navigation, and reminders exclude them.
 
 The application uses a square borderless window by product requirement. Its

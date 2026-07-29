@@ -234,6 +234,8 @@ Calendar_UI_State :: struct {
 	frame_index: int,
 	notification_reconcile_stamp: i64,
 	day_offset: int,
+	number_prefix: int,
+	number_prefix_deadline_ms: i64,
 	theme_id: Calendar_Theme_ID,
 	flash_leader: Calendar_Shortcut,
 	events: [dynamic]Calendar_Event,
@@ -999,6 +1001,61 @@ calendar_number_slot_for_key_code :: proc(key_code: uint) -> (int, bool) {
 		if candidate == key_code {return index, true}
 	}
 	return -1, false
+}
+
+calendar_number_digit_for_key_code :: proc(key_code: uint) -> (int, bool) {
+	slot, found := calendar_number_slot_for_key_code(key_code)
+	if !found {return 0, false}
+	return slot+1, true
+}
+
+calendar_main_action_for_code :: proc(
+	section, action_digit: int,
+) -> Calendar_UI_Action {
+	if section != 1 {return .None}
+	switch action_digit {
+	case 1: return .Action_Edit
+	case 2: return .Action_Open_URL
+	case 3: return .Action_Archive
+	}
+	return .None
+}
+
+calendar_number_time_ms :: proc() -> i64 {
+	return time.to_unix_nanoseconds(time.now()) / 1_000_000
+}
+
+calendar_clear_number_prefix :: proc() {
+	calendar_ui.number_prefix = 0
+	calendar_ui.number_prefix_deadline_ms = 0
+}
+
+calendar_expire_number_prefix_at :: proc(now_ms: i64) -> bool {
+	if calendar_ui.number_prefix == 0 ||
+	   now_ms < calendar_ui.number_prefix_deadline_ms {
+		return false
+	}
+	calendar_clear_number_prefix()
+	calendar_ui.needs_redraw = true
+	return true
+}
+
+calendar_consume_main_action_digit_at :: proc(
+	digit: int,
+	now_ms: i64,
+) -> (Calendar_UI_Action, bool) {
+	_ = calendar_expire_number_prefix_at(now_ms)
+	if calendar_ui.number_prefix == 0 {
+		if digit != 1 {return .None, false}
+		calendar_ui.number_prefix = digit
+		calendar_ui.number_prefix_deadline_ms = now_ms+1_000
+		calendar_ui.needs_redraw = true
+		return .None, true
+	}
+	section := calendar_ui.number_prefix
+	calendar_clear_number_prefix()
+	calendar_ui.needs_redraw = true
+	return calendar_main_action_for_code(section, digit), true
 }
 
 calendar_archive_action_for_slot :: proc(
@@ -2139,6 +2196,7 @@ calendar_toggle_window_zoom :: proc() {
 }
 
 calendar_ui_execute_action :: proc(action: Calendar_App_Action) {
+	calendar_clear_number_prefix()
 	switch action.kind {
 	case .Window_Close:
 		msg_void(calendar_ui.window, sel_registerName("close"))
@@ -2731,26 +2789,21 @@ calendar_on_key_down :: proc "c" (self: Id, command: Sel, event: Id) {
 		calendar_ui_navigate(.Previous)
 		return
 	}
+	if key_code == 53 && calendar_ui.number_prefix != 0 {
+		calendar_clear_number_prefix()
+		calendar_ui.needs_redraw = true
+		return
+	}
 	if !command_down && !control_down && !shift_down && !option_down {
-		if slot, found := calendar_number_slot_for_key_code(key_code);
-		   found && slot < 3 {
-			actions := [3]Calendar_UI_Action{
-				.Action_Edit,
-				.Action_Open_URL,
-				.Action_Archive,
+		if digit, found := calendar_number_digit_for_key_code(key_code); found {
+			action, handled := calendar_consume_main_action_digit_at(
+				digit,
+				calendar_number_time_ms(),
+			)
+			if action != .None && calendar_ui_action_available(action) {
+				calendar_ui_execute_action({kind = action})
 			}
-			action := actions[slot]
-			if !calendar_ui_action_available(action) {return}
-			#partial switch action {
-			case .Action_Edit:
-				calendar_ui_editor_open(calendar_ui.navigation_event_index)
-			case .Action_Open_URL:
-				calendar_ui_open_url(calendar_ui_details_url())
-			case .Action_Archive:
-				calendar_ui_archive_modal_open()
-			case:
-			}
-			return
+			if handled {return}
 		}
 	}
 	if calendar_shortcut_matches_event(
@@ -3244,10 +3297,16 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 	}
 	action_names := [3]string{"action edit", "action open url", "action archive"}
 	action_labels := [3]string{"edit", "open url", "archive"}
+	number_prefix_active :=
+		calendar_ui.number_prefix == 1 &&
+		calendar_number_time_ms() < calendar_ui.number_prefix_deadline_ms
 	for action, action_index in action_kinds {
 		action_rect := calendar_ui_action_rect(action_index)
 		available := calendar_ui_action_available(action)
 		calendar_push_rect(vertices, action_rect, available ? button : field)
+		if number_prefix_active {
+			calendar_push_border(vertices, action_rect, focus)
+		}
 		if available && !calendar_ui.editor_open &&
 		   !calendar_ui.archive_modal_open && !calendar_ui.settings_open &&
 		   !calendar_ui.shortcut_open {
@@ -3649,14 +3708,14 @@ calendar_draw_text :: proc(
 calendar_draw_numbered_action :: proc(
 	ctx, font: rawptr,
 	label: string,
-	slot: int,
+	number: int,
 	rect: Calendar_UI_Rect,
 	label_color, number_color: [4]f64,
 ) {
 	calendar_draw_text(
 		ctx,
 		font,
-		fmt.tprintf("%02d", slot+1),
+		fmt.tprintf("%d", number),
 		{rect.x+8, rect.y, 28, rect.h},
 		number_color,
 		0,
@@ -4091,7 +4150,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			ctx,
 			font,
 			action_labels[action_index],
-			action_index,
+			11+action_index,
 			rect,
 			color,
 			muted,
@@ -4252,7 +4311,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 				ctx,
 				font,
 				"ARCHIVE OCCURRENCE",
-				0,
+				1,
 				calendar_ui_archive_button_rect(0, count),
 				ink,
 				muted,
@@ -4261,7 +4320,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 				ctx,
 				font,
 				"ARCHIVE SERIES",
-				1,
+				2,
 				calendar_ui_archive_button_rect(1, count),
 				inverse,
 				inverse,
@@ -4271,7 +4330,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 				ctx,
 				font,
 				"ARCHIVE",
-				0,
+				1,
 				calendar_ui_archive_button_rect(0, count),
 				inverse,
 				inverse,
@@ -4281,7 +4340,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			ctx,
 			font,
 			"CANCEL",
-			count-1,
+			count,
 			calendar_ui_archive_button_rect(count-1, count),
 			muted,
 			muted,
@@ -4485,7 +4544,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			ctx,
 			font,
 			"SAVE",
-			0,
+			1,
 			calendar_shortcut_action_rect(0),
 			save_color,
 			muted,
@@ -4494,7 +4553,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			ctx,
 			font,
 			"RESET DEFAULT",
-			1,
+			2,
 			calendar_shortcut_action_rect(1),
 			ink,
 			muted,
@@ -4503,7 +4562,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			ctx,
 			font,
 			"CANCEL",
-			2,
+			3,
 			calendar_shortcut_action_rect(2),
 			muted,
 			muted,
@@ -4837,6 +4896,7 @@ calendar_render_frame :: proc() {
 calendar_on_frame :: proc "c" (self: Id, command: Sel, timer: Id) {
 	context = runtime.default_context()
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	_ = calendar_expire_number_prefix_at(calendar_number_time_ms())
 	now_stamp := time.to_unix_seconds(time.now())
 	if calendar_ui.notification_reconcile_stamp == 0 ||
 	   now_stamp-calendar_ui.notification_reconcile_stamp >= 3600 {
