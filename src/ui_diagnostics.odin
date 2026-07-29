@@ -10,7 +10,7 @@ import "core:sys/posix"
 import "core:time"
 import command_palette "command_palette:."
 
-CALENDAR_UI_DIAGNOSTIC_SCHEMA_VERSION :: 2
+CALENDAR_UI_DIAGNOSTIC_SCHEMA_VERSION :: 3
 CALENDAR_UI_DIAGNOSTIC_RETENTION :: 20
 
 Calendar_UI_Diagnostic_Rect :: struct {
@@ -36,6 +36,17 @@ Calendar_UI_Diagnostic_Snapshot :: struct {
 	command_palette_open: bool,
 	editor_open: bool,
 	archive_modal_open: bool,
+	settings_open: bool,
+	settings_category: string,
+	settings_query: string,
+	shortcut_open: bool,
+	shortcut_listening: bool,
+	shortcut_candidate: string,
+	shortcut_collision: string,
+	shortcut_error: string,
+	settings_error: string,
+	theme_id: string,
+	flash_leader: string,
 	controls: []Calendar_UI_Diagnostic_Control,
 }
 
@@ -94,11 +105,24 @@ calendar_ui_diagnostic_action_name :: proc(action: Calendar_UI_Action) -> string
 	case .Window_Close: return "window-close"
 	case .Window_Minimize: return "window-minimize"
 	case .Window_Zoom: return "window-zoom"
-	case .Theme_Toggle: return "theme-toggle"
+	case .Open_Settings: return "open-settings"
+	case .Settings_Close: return "settings-close"
+	case .Settings_Category: return "settings-category"
+	case .Settings_Search: return "settings-search"
+	case .Command_Palette_Search: return "command-palette-search"
+	case .Set_Theme: return "set-theme"
+	case .Configure_Flash: return "configure-flash"
+	case .Shortcut_Record: return "shortcut-record"
+	case .Shortcut_Save: return "shortcut-save"
+	case .Shortcut_Reset: return "shortcut-reset"
+	case .Shortcut_Cancel: return "shortcut-cancel"
 	case .Today: return "today"
 	case .Search: return "search"
 	case .New_Event: return "new-event"
 	case .Open_Event: return "open-event"
+	case .Jump_Event: return "jump-event"
+	case .Toggle_Holiday_Country: return "toggle-holiday-country"
+	case .Jump_Holiday: return "jump-holiday"
 	case .Focus_Event: return "focus-event"
 	case .Focus_Holiday: return "focus-holiday"
 	case .Action_Edit: return "action-edit"
@@ -114,6 +138,17 @@ calendar_ui_diagnostic_action_name :: proc(action: Calendar_UI_Action) -> string
 	case .Editor_Cancel: return "editor-cancel"
 	}
 	return "unknown"
+}
+
+calendar_ui_diagnostic_role :: proc(action: Calendar_UI_Action) -> string {
+	if action == .Editor_Field || action == .Settings_Search ||
+	   action == .Command_Palette_Search {
+		return "AXTextField"
+	}
+	if action == .Set_Theme || action == .Settings_Category {
+		return "AXRadioButton"
+	}
+	return "AXButton"
 }
 
 calendar_ui_diagnostic_snapshot :: proc(
@@ -138,14 +173,14 @@ calendar_ui_diagnostic_snapshot :: proc(
 				allocator,
 			),
 			accessibility_role = strings.clone(
-				control.action == .Editor_Field ? "AXTextField" : "AXButton",
+				calendar_ui_diagnostic_role(control.action.kind),
 				allocator,
 			),
 			action = strings.clone(
-				calendar_ui_diagnostic_action_name(control.action),
+				calendar_ui_diagnostic_action_name(control.action.kind),
 				allocator,
 			),
-			event_index = control.event_index,
+			event_index = control.action.index,
 			rect = {
 				x = control.rect.x,
 				y = control.rect.y,
@@ -153,6 +188,11 @@ calendar_ui_diagnostic_snapshot :: proc(
 				h = control.rect.h,
 			},
 		}
+	}
+	shortcut_candidate := ""
+	if calendar_ui.shortcut_candidate_valid {
+		shortcut_candidate =
+			calendar_shortcut_display(calendar_ui.shortcut_candidate)
 	}
 	return {
 		schema_version = CALENDAR_UI_DIAGNOSTIC_SCHEMA_VERSION,
@@ -162,6 +202,35 @@ calendar_ui_diagnostic_snapshot :: proc(
 		command_palette_open = command_palette.is_open(&calendar_ui.palette),
 		editor_open = calendar_ui.editor_open,
 		archive_modal_open = calendar_ui.archive_modal_open,
+		settings_open = calendar_ui.settings_open,
+		settings_category = strings.clone(
+			calendar_settings_category_name(calendar_ui.settings_category),
+			allocator,
+		),
+		settings_query = strings.clone(calendar_ui.settings_query, allocator),
+		shortcut_open = calendar_ui.shortcut_open,
+		shortcut_listening = calendar_ui.shortcut_listening,
+		shortcut_candidate = strings.clone(shortcut_candidate, allocator),
+		shortcut_collision = strings.clone(
+			calendar_ui.shortcut_collision,
+			allocator,
+		),
+		shortcut_error = strings.clone(
+			calendar_ui.shortcut_error,
+			allocator,
+		),
+		settings_error = strings.clone(
+			calendar_ui.settings_error,
+			allocator,
+		),
+		theme_id = strings.clone(
+			calendar_theme(calendar_ui.theme_id).storage_id,
+			allocator,
+		),
+		flash_leader = strings.clone(
+			calendar_shortcut_display(calendar_ui.flash_leader),
+			allocator,
+		),
 		controls = controls,
 	}, true
 }

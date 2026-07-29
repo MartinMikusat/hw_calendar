@@ -5,9 +5,11 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 MATCH_SORTER_ROOT="$ROOT/../hw_odin_matchSorter"
 UI_FLASH_ROOT="$ROOT/../hw_odin_ui_flash"
 COMMAND_PALETTE_ROOT="$ROOT/../hw_odin_ui_commandPalette"
+COMPONENTS_ROOT="$ROOT/../hw_odin_ui_components"
 FONT_ROOT="$ROOT/resources/fonts"
 ICON_ROOT="$ROOT/resources/icons/iconoir"
 HOLIDAY_ROOT="$ROOT/resources/holidays"
+THEME_ROOT="$ROOT/resources/themes"
 
 MODE=${1:-debug}
 PART=${2:-all}
@@ -46,9 +48,11 @@ mkdir -p \
   "$APP/Contents/MacOS" \
   "$APP/Contents/Resources/Fonts" \
   "$APP/Contents/Resources/Icons/Iconoir" \
-  "$APP/Contents/Resources/Holidays"
+  "$APP/Contents/Resources/Holidays" \
+  "$APP/Contents/Resources/Themes/Gruvbox" \
+  "$APP/Contents/Resources/Themes/Catppuccin"
 
-COMMON_COLLECTIONS="-collection:match_sorter=$MATCH_SORTER_ROOT -collection:flash=$UI_FLASH_ROOT -collection:command_palette=$COMMAND_PALETTE_ROOT"
+COMMON_COLLECTIONS="-collection:match_sorter=$MATCH_SORTER_ROOT -collection:flash=$UI_FLASH_ROOT -collection:command_palette=$COMMAND_PALETTE_ROOT -collection:components=$COMPONENTS_ROOT"
 APP_FRAMEWORKS="-framework AppKit -framework Foundation -framework Metal -framework QuartzCore -framework CoreText -framework CoreGraphics -framework UserNotifications"
 HOST_FRAMEWORKS="-framework AppKit -framework Foundation -framework UserNotifications"
 
@@ -68,8 +72,13 @@ build_host() {
   cp "$ICON_ROOT/xmark.svg" "$APP/Contents/Resources/Icons/Iconoir/xmark.svg"
   cp "$ICON_ROOT/minus.svg" "$APP/Contents/Resources/Icons/Iconoir/minus.svg"
   cp "$ICON_ROOT/maximize.svg" "$APP/Contents/Resources/Icons/Iconoir/maximize.svg"
+  cp "$ICON_ROOT/settings.svg" "$APP/Contents/Resources/Icons/Iconoir/settings.svg"
   cp "$ICON_ROOT/LICENSE" "$APP/Contents/Resources/Icons/Iconoir/LICENSE"
   cp "$HOLIDAY_ROOT/sk.json" "$APP/Contents/Resources/Holidays/sk.json"
+  cp "$THEME_ROOT/gruvbox/palette.txt" "$APP/Contents/Resources/Themes/Gruvbox/palette.txt"
+  cp "$THEME_ROOT/gruvbox/LICENSE" "$APP/Contents/Resources/Themes/Gruvbox/LICENSE"
+  cp "$THEME_ROOT/catppuccin/palette.txt" "$APP/Contents/Resources/Themes/Catppuccin/palette.txt"
+  cp "$THEME_ROOT/catppuccin/LICENSE" "$APP/Contents/Resources/Themes/Catppuccin/LICENSE"
   xcrun dsymutil "$HOST" -o "$APP.dSYM"
   codesign --force --deep --sign - "$APP"
 }

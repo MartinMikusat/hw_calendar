@@ -199,6 +199,147 @@ host_key_down :: proc "c" (self: Id, command: Sel, event: Id) {
 	}
 }
 
+host_flags_changed :: proc "c" (self: Id, command: Sel, event: Id) {
+	if p := callback(.Flags_Changed); p != nil {
+		(transmute(proc "c" (Id, Sel, Id))p)(self, command, event)
+	}
+}
+
+host_text_void3 :: proc "c" (self: Id, command: Sel, value: Id) {
+	kind: hot_reload.Callback
+	switch command {
+	case sel_registerName("copy:"): kind = .Copy
+	case sel_registerName("cut:"): kind = .Cut
+	case sel_registerName("paste:"): kind = .Paste
+	case sel_registerName("selectAll:"): kind = .Select_All
+	case sel_registerName("insertText:"): kind = .Insert_Text_Simple
+	case sel_registerName("doCommandBySelector:"): kind = .Command
+	case: return
+	}
+	if p := callback(kind); p != nil {
+		(transmute(proc "c" (Id, Sel, Id))p)(self, command, value)
+	}
+}
+
+host_insert_text :: proc "c" (
+	self: Id,
+	command: Sel,
+	value: Id,
+	replacement: hot_reload.NS_Range,
+) {
+	if p := callback(.Insert_Text); p != nil {
+		(transmute(proc "c" (
+			Id,
+			Sel,
+			Id,
+			hot_reload.NS_Range,
+		))p)(self, command, value, replacement)
+	}
+}
+
+host_set_marked :: proc "c" (
+	self: Id,
+	command: Sel,
+	value: Id,
+	selected, replacement: hot_reload.NS_Range,
+) {
+	if p := callback(.Set_Marked); p != nil {
+		(transmute(proc "c" (
+			Id,
+			Sel,
+			Id,
+			hot_reload.NS_Range,
+			hot_reload.NS_Range,
+		))p)(self, command, value, selected, replacement)
+	}
+}
+
+host_unmark :: proc "c" (self: Id, command: Sel) {
+	if p := callback(.Unmark); p != nil {
+		(transmute(proc "c" (Id, Sel))p)(self, command)
+	}
+}
+
+host_has_marked :: proc "c" (self: Id, command: Sel) -> bool {
+	if p := callback(.Has_Marked); p != nil {
+		return (transmute(proc "c" (Id, Sel) -> bool)p)(self, command)
+	}
+	return false
+}
+
+host_text_range :: proc "c" (
+	self: Id,
+	command: Sel,
+) -> hot_reload.NS_Range {
+	kind := hot_reload.Callback.Marked_Range
+	if command == sel_registerName("selectedRange") {
+		kind = .Selected_Range
+	}
+	if p := callback(kind); p != nil {
+		return (transmute(proc "c" (
+			Id,
+			Sel,
+		) -> hot_reload.NS_Range)p)(self, command)
+	}
+	return {}
+}
+
+host_valid_attributes :: proc "c" (self: Id, command: Sel) -> Id {
+	if p := callback(.Valid_Attributes); p != nil {
+		return (transmute(proc "c" (Id, Sel) -> Id)p)(self, command)
+	}
+	return nil
+}
+
+host_attributed_substring :: proc "c" (
+	self: Id,
+	command: Sel,
+	range: hot_reload.NS_Range,
+	actual: ^hot_reload.NS_Range,
+) -> Id {
+	if p := callback(.Attributed_Substring); p != nil {
+		return (transmute(proc "c" (
+			Id,
+			Sel,
+			hot_reload.NS_Range,
+			^hot_reload.NS_Range,
+		) -> Id)p)(self, command, range, actual)
+	}
+	return nil
+}
+
+host_character_index :: proc "c" (
+	self: Id,
+	command: Sel,
+	point: hot_reload.Point,
+) -> uint {
+	if p := callback(.Character_Index); p != nil {
+		return (transmute(proc "c" (
+			Id,
+			Sel,
+			hot_reload.Point,
+		) -> uint)p)(self, command, point)
+	}
+	return 0
+}
+
+host_first_rect :: proc "c" (
+	self: Id,
+	command: Sel,
+	range: hot_reload.NS_Range,
+	actual: ^hot_reload.NS_Range,
+) -> hot_reload.Rect {
+	if p := callback(.First_Rect); p != nil {
+		return (transmute(proc "c" (
+			Id,
+			Sel,
+			hot_reload.NS_Range,
+			^hot_reload.NS_Range,
+		) -> hot_reload.Rect)p)(self, command, range, actual)
+	}
+	return {}
+}
+
 host_window_can_become_key :: proc "c" (self: Id, command: Sel) -> bool {
 	if p := callback(.Window_Can_Become_Key); p != nil {
 		return (transmute(proc "c" (Id, Sel) -> bool)p)(self, command)
@@ -245,12 +386,82 @@ register_classes :: proc() -> bool {
 		0,
 	)
 	if view_class == nil {return false}
+	if protocol := objc_getProtocol("NSTextInputClient"); protocol != nil {
+		class_addProtocol(view_class, protocol)
+	}
 	class_addMethod(view_class, sel_registerName("acceptsFirstResponder"), rawptr(host_accepts_first), "B@:")
 	class_addMethod(view_class, sel_registerName("mouseDown:"), rawptr(host_mouse_down), "v@:@")
 	class_addMethod(view_class, sel_registerName("mouseDragged:"), rawptr(host_mouse_dragged), "v@:@")
 	class_addMethod(view_class, sel_registerName("mouseUp:"), rawptr(host_mouse_up), "v@:@")
 	class_addMethod(view_class, sel_registerName("scrollWheel:"), rawptr(host_scroll), "v@:@")
 	class_addMethod(view_class, sel_registerName("keyDown:"), rawptr(host_key_down), "v@:@")
+	class_addMethod(view_class, sel_registerName("flagsChanged:"), rawptr(host_flags_changed), "v@:@")
+	text_selectors := [6]cstring{
+		"copy:",
+		"cut:",
+		"paste:",
+		"selectAll:",
+		"insertText:",
+		"doCommandBySelector:",
+	}
+	for selector in text_selectors {
+		class_addMethod(
+			view_class,
+			sel_registerName(selector),
+			rawptr(host_text_void3),
+			"v@:@",
+		)
+	}
+	class_addMethod(
+		view_class,
+		sel_registerName("insertText:replacementRange:"),
+		rawptr(host_insert_text),
+		"v@:@{_NSRange=QQ}",
+	)
+	class_addMethod(
+		view_class,
+		sel_registerName("setMarkedText:selectedRange:replacementRange:"),
+		rawptr(host_set_marked),
+		"v@:@{_NSRange=QQ}{_NSRange=QQ}",
+	)
+	class_addMethod(view_class, sel_registerName("unmarkText"), rawptr(host_unmark), "v@:")
+	class_addMethod(view_class, sel_registerName("hasMarkedText"), rawptr(host_has_marked), "B@:")
+	class_addMethod(
+		view_class,
+		sel_registerName("markedRange"),
+		rawptr(host_text_range),
+		"{_NSRange=QQ}@:",
+	)
+	class_addMethod(
+		view_class,
+		sel_registerName("selectedRange"),
+		rawptr(host_text_range),
+		"{_NSRange=QQ}@:",
+	)
+	class_addMethod(
+		view_class,
+		sel_registerName("validAttributesForMarkedText"),
+		rawptr(host_valid_attributes),
+		"@@:",
+	)
+	class_addMethod(
+		view_class,
+		sel_registerName("attributedSubstringForProposedRange:actualRange:"),
+		rawptr(host_attributed_substring),
+		"@@:{_NSRange=QQ}^{_NSRange=QQ}",
+	)
+	class_addMethod(
+		view_class,
+		sel_registerName("characterIndexForPoint:"),
+		rawptr(host_character_index),
+		"Q@:{CGPoint=dd}",
+	)
+	class_addMethod(
+		view_class,
+		sel_registerName("firstRectForCharacterRange:actualRange:"),
+		rawptr(host_first_rect),
+		"{CGRect={CGPoint=dd}{CGSize=dd}}@:{_NSRange=QQ}^{_NSRange=QQ}",
+	)
 	class_addMethod(view_class, sel_registerName("isAccessibilityElement"), rawptr(host_ax_is_element), "B@:")
 	class_addMethod(view_class, sel_registerName("accessibilityChildren"), rawptr(host_ax_children), "@@:")
 	objc_registerClassPair(view_class)

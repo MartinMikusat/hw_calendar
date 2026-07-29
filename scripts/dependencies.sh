@@ -32,6 +32,7 @@ check_one() {
 check_one hw_odin_matchSorter https://github.com/MartinMikusat/hw_odin_matchSorter.git 52bbe319503752881ebd777e0f3340fce027e017
 check_one hw_odin_ui_flash https://github.com/MartinMikusat/hw_odin_ui_flash.git d06e98a40640b13eea5b979319022aad0a470d72
 check_one hw_odin_ui_commandPalette https://github.com/MartinMikusat/hw_odin_ui_commandPalette.git 72312d2f67cfc3d2ebc6a62fdbb1ba5bbc4e335f
+check_one hw_odin_ui_components https://github.com/MartinMikusat/hw_odin_ui_components.git fddcea1b1a2dbccab7fdd7f130688d5af273a8d2
 
 if [ ! -f "$ROOT/resources/fonts/Iosevka-Regular.ttf" ]; then
   echo "[hw_calendar] missing bundled Iosevka font" >&2

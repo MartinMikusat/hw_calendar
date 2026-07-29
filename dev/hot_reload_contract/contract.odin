@@ -1,10 +1,15 @@
 package hot_reload_contract
 
-API_VERSION :: u32(2)
+API_VERSION :: u32(4)
 // Increment this value when a preserved state type changes without changing
 // the snapshot size or alignment.
-STATE_VERSION :: u32(1)
+STATE_VERSION :: u32(2)
 RESTART_EXIT_CODE :: 75
+
+Point :: struct {x, y: f64}
+Size :: struct {width, height: f64}
+Rect :: struct {origin: Point, size: Size}
+NS_Range :: struct {location, length: uint}
 
 Host_Services :: struct {
 	app:                 rawptr,
@@ -48,6 +53,23 @@ Callback :: enum int {
 	Mouse_Up,
 	Scroll,
 	Key_Down,
+	Flags_Changed,
+	Copy,
+	Cut,
+	Paste,
+	Select_All,
+	Insert_Text_Simple,
+	Insert_Text,
+	Command,
+	Set_Marked,
+	Unmark,
+	Has_Marked,
+	Marked_Range,
+	Selected_Range,
+	Valid_Attributes,
+	Attributed_Substring,
+	Character_Index,
+	First_Rect,
 	Window_Can_Become_Key,
 }
 

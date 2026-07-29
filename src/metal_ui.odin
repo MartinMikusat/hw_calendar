@@ -10,6 +10,7 @@ import "core:time"
 import CF "core:sys/darwin/CoreFoundation"
 import command_palette "command_palette:."
 import flash "flash:."
+import text_input "components:text_input"
 import hot_reload "../dev/hot_reload_contract"
 
 foreign import metal "system:Metal.framework"
@@ -44,6 +45,11 @@ foreign core_graphics {
 	CGContextBeginPath :: proc "c" (ctx: rawptr) ---
 	CGContextMoveToPoint :: proc "c" (ctx: rawptr, x, y: f64) ---
 	CGContextAddLineToPoint :: proc "c" (ctx: rawptr, x, y: f64) ---
+	CGContextAddCurveToPoint :: proc "c" (
+		ctx: rawptr,
+		cp1x, cp1y, cp2x, cp2y, x, y: f64,
+	) ---
+	CGContextClosePath :: proc "c" (ctx: rawptr) ---
 	CGContextStrokePath :: proc "c" (ctx: rawptr) ---
 	CGContextSetTextPosition :: proc "c" (ctx: rawptr, x, y: f64) ---
 	CGContextSaveGState :: proc "c" (ctx: rawptr) ---
@@ -63,6 +69,15 @@ foreign core_text {
 		line: rawptr,
 		ascent, descent, leading: ^f64,
 	) -> f64 ---
+	CTLineGetOffsetForStringIndex :: proc "c" (
+		line: rawptr,
+		index: int,
+		secondary_offset: ^f64,
+	) -> f64 ---
+	CTLineGetStringIndexForPosition :: proc "c" (
+		line: rawptr,
+		position: Point,
+	) -> int ---
 	CTLineDraw :: proc "c" (line, ctx: rawptr) ---
 	kCTFontAttributeName: rawptr
 	kCTForegroundColorFromContextAttributeName: rawptr
@@ -97,6 +112,7 @@ foreign calendar_core_foundation {
 }
 
 Calendar_UI_Rect :: struct {x, y, w, h: f64}
+Calendar_NS_Range :: struct {location, length: uint}
 Calendar_Solid_Vertex :: struct {x, y, r, g, b, a: f32}
 Calendar_Texture_Vertex :: struct {x, y, u, v, r, g, b, a: f32}
 Calendar_MTL_Clear_Color :: struct {red, green, blue, alpha: f64}
@@ -109,11 +125,24 @@ Calendar_UI_Action :: enum {
 	Window_Close,
 	Window_Minimize,
 	Window_Zoom,
-	Theme_Toggle,
+	Open_Settings,
+	Settings_Close,
+	Settings_Category,
+	Settings_Search,
+	Command_Palette_Search,
+	Set_Theme,
+	Configure_Flash,
+	Shortcut_Record,
+	Shortcut_Save,
+	Shortcut_Reset,
+	Shortcut_Cancel,
 	Today,
 	Search,
 	New_Event,
 	Open_Event,
+	Jump_Event,
+	Toggle_Holiday_Country,
+	Jump_Holiday,
 	Focus_Event,
 	Focus_Holiday,
 	Action_Edit,
@@ -129,35 +158,26 @@ Calendar_UI_Action :: enum {
 	Editor_Cancel,
 }
 
+Calendar_App_Action :: struct {
+	kind: Calendar_UI_Action,
+	index: int,
+	definition_index: int,
+	occurrence_stamp: i64,
+	occurrence_is_date: bool,
+	theme_id: Calendar_Theme_ID,
+}
+
 Calendar_UI_Control :: struct {
 	id: u64,
 	name: string,
 	label: string,
 	rect: Calendar_UI_Rect,
-	action: Calendar_UI_Action,
-	event_index: int,
-	occurrence_stamp: i64,
-	occurrence_is_date: bool,
-	holiday_country_index: int,
-	holiday_definition_index: int,
+	action: Calendar_App_Action,
 }
 
 Calendar_UI_AX_Binding :: struct {
 	element: Id,
 	control_id: u64,
-}
-
-Calendar_Palette_Action_Kind :: enum {
-	Today,
-	Open_Event,
-	Toggle_Holiday_Country,
-	Jump_Holiday,
-}
-
-Calendar_Palette_Action :: struct {
-	kind: Calendar_Palette_Action_Kind,
-	index: int,
-	definition_index: int,
 }
 
 Calendar_Navigation_Item_Kind :: enum {
@@ -174,6 +194,19 @@ Calendar_Navigation_Item :: struct {
 Calendar_Navigation_Direction :: enum {
 	Previous,
 	Next,
+}
+
+Calendar_Text_Field :: enum u64 {
+	None,
+	Command_Palette,
+	Settings_Search,
+	Editor_Summary,
+	Editor_Start,
+	Editor_End,
+	Editor_Location,
+	Editor_Categories,
+	Editor_Description,
+	Editor_RRule,
 }
 
 Calendar_UI_State :: struct {
@@ -201,7 +234,8 @@ Calendar_UI_State :: struct {
 	frame_index: int,
 	notification_reconcile_stamp: i64,
 	day_offset: int,
-	dark_theme: bool,
+	theme_id: Calendar_Theme_ID,
+	flash_leader: Calendar_Shortcut,
 	events: [dynamic]Calendar_Event,
 	occurrences: [dynamic]Calendar_Occurrence,
 	holiday_countries: [dynamic]Calendar_Holiday_Country,
@@ -210,7 +244,23 @@ Calendar_UI_State :: struct {
 	flash: flash.State,
 	palette: command_palette.State,
 	palette_query: string,
-	palette_actions: [dynamic]Calendar_Palette_Action,
+	palette_actions: [dynamic]Calendar_App_Action,
+	input_state: text_input.State,
+	text_previous_focus: text_input.Focus_Snapshot,
+	text_previous_focus_valid: bool,
+	settings_search: command_palette.State,
+	settings_open: bool,
+	settings_category: Calendar_Settings_Category,
+	settings_query: string,
+	settings_query_focused: bool,
+	settings_error: string,
+	shortcut_open: bool,
+	shortcut_listening: bool,
+	shortcut_candidate: Calendar_Shortcut,
+	shortcut_candidate_valid: bool,
+	shortcut_collision: string,
+	shortcut_error: string,
+	shortcut_live_modifiers: Calendar_Shortcut_Modifiers,
 	promoted_holiday_active: bool,
 	promoted_holiday_country_index: int,
 	promoted_holiday_definition_index: int,
@@ -250,29 +300,17 @@ CALENDAR_EVENT_MODIFIER_OPTION :: uint(1 << 19)
 CALENDAR_EVENT_MODIFIER_COMMAND :: uint(1 << 20)
 CALENDAR_DEFAULT_WINDOW_WIDTH :: 1280.0
 CALENDAR_DEFAULT_WINDOW_HEIGHT :: 760.0
-CALENDAR_COLOR_SAND_32 :: [4]f32{0.882353, 0.850980, 0.788235, 1}
-CALENDAR_COLOR_STONE_32 :: [4]f32{0.682353, 0.576471, 0.447059, 1}
-CALENDAR_COLOR_COFFEE_32 :: [4]f32{0.698039, 0.490196, 0.341176, 1}
-CALENDAR_COLOR_OCHRE_32 :: [4]f32{0.498039, 0.294118, 0.188235, 1}
-CALENDAR_COLOR_GUM_32 :: [4]f32{0.490196, 0.529412, 0.411765, 1}
-CALENDAR_COLOR_MOSS_32 :: [4]f32{0.258824, 0.298039, 0.129412, 1}
-CALENDAR_COLOR_FOREST_32 :: [4]f32{0.090196, 0.192157, 0.145098, 1}
-CALENDAR_COLOR_BASALT_32 :: [4]f32{0.129412, 0.180392, 0.250980, 1}
-CALENDAR_COLOR_SAND_64 :: [4]f64{0.882353, 0.850980, 0.788235, 1}
-CALENDAR_COLOR_STONE_64 :: [4]f64{0.682353, 0.576471, 0.447059, 1}
-CALENDAR_COLOR_COFFEE_64 :: [4]f64{0.698039, 0.490196, 0.341176, 1}
-CALENDAR_COLOR_OCHRE_64 :: [4]f64{0.498039, 0.294118, 0.188235, 1}
-CALENDAR_COLOR_GUM_64 :: [4]f64{0.490196, 0.529412, 0.411765, 1}
-CALENDAR_COLOR_MOSS_64 :: [4]f64{0.258824, 0.298039, 0.129412, 1}
-CALENDAR_COLOR_FOREST_64 :: [4]f64{0.090196, 0.192157, 0.145098, 1}
-CALENDAR_COLOR_BASALT_64 :: [4]f64{0.129412, 0.180392, 0.250980, 1}
 CALENDAR_DAY_ROW_HEIGHT :: 28.0
 CALENDAR_DAY_ROW_PITCH :: 30.0
-CALENDAR_DAY_TOP_GAP :: 4.0
+CALENDAR_LAYOUT_MARGIN :: 6.0
+CALENDAR_PANEL_GAP :: 4.0
+CALENDAR_DAY_TOP_GAP :: CALENDAR_LAYOUT_MARGIN
 CALENDAR_ACTION_BAR_HEIGHT :: 28.0
-CALENDAR_ACTION_BAR_BOTTOM :: 12.0
 CALENDAR_ACTION_BAR_GAP :: 6.0
-CALENDAR_CONTENT_BOTTOM :: 52.0
+CALENDAR_ACTION_BAR_BOTTOM :: CALENDAR_LAYOUT_MARGIN
+CALENDAR_CONTENT_BOTTOM :: CALENDAR_ACTION_BAR_BOTTOM+
+                           CALENDAR_ACTION_BAR_HEIGHT+
+                           CALENDAR_LAYOUT_MARGIN
 CALENDAR_WINDOW_STYLE :: uint(14)
 CALENDAR_WINDOW_MINIMIZE_STYLE :: uint(15)
 CALENDAR_WINDOW_RESIZE_INSET :: 6.0
@@ -330,6 +368,25 @@ calendar_msg_id_id_error_2 :: proc(
 calendar_msg_uint :: proc(receiver: Id, selector: Sel) -> uint {
 	p := transmute(proc "c" (Id, Sel) -> uint)objc_send_address
 	return p(receiver, selector)
+}
+
+calendar_msg_i64 :: proc(receiver: Id, selector: Sel) -> i64 {
+	p := transmute(proc "c" (Id, Sel) -> i64)objc_send_address
+	return p(receiver, selector)
+}
+
+calendar_msg_bool_sel :: proc(receiver: Id, selector, value: Sel) -> bool {
+	p := transmute(proc "c" (Id, Sel, Sel) -> bool)objc_send_address
+	return p(receiver, selector, value)
+}
+
+calendar_msg_bool_id_id :: proc(
+	receiver: Id,
+	selector: Sel,
+	a, b: Id,
+) -> bool {
+	p := transmute(proc "c" (Id, Sel, Id, Id) -> bool)objc_send_address
+	return p(receiver, selector, a, b)
 }
 
 calendar_msg_id_bool :: proc(receiver: Id, selector: Sel, value: bool) -> Id {
@@ -403,12 +460,31 @@ calendar_ui_add_control :: proc(
 		name = strings.clone(name),
 		label = strings.clone(label),
 		rect = rect,
+		action = {
+			kind = action,
+			index = event_index,
+			definition_index = holiday_definition_index,
+			occurrence_stamp = occurrence_stamp,
+			occurrence_is_date = occurrence_is_date,
+		},
+	})
+	if holiday_country_index >= 0 {
+		calendar_ui.controls[len(calendar_ui.controls)-1].action.index =
+			holiday_country_index
+	}
+}
+
+calendar_ui_add_action_control :: proc(
+	name, label: string,
+	rect: Calendar_UI_Rect,
+	action: Calendar_App_Action,
+) {
+	append(&calendar_ui.controls, Calendar_UI_Control{
+		id = calendar_control_id(name),
+		name = strings.clone(name),
+		label = strings.clone(label),
+		rect = rect,
 		action = action,
-		event_index = event_index,
-		occurrence_stamp = occurrence_stamp,
-		occurrence_is_date = occurrence_is_date,
-		holiday_country_index = holiday_country_index,
-		holiday_definition_index = holiday_definition_index,
 	})
 }
 
@@ -445,26 +521,45 @@ calendar_ui_ax_screen_rect :: proc(rect: Calendar_UI_Rect) -> Rect {
 
 calendar_ui_ax_label :: proc(control: ^Calendar_UI_Control) -> string {
 	if control == nil {return ""}
-	switch control.action {
+	switch control.action.kind {
 	case .Window_Close: return "Close window"
 	case .Window_Minimize: return "Minimize window"
 	case .Window_Zoom: return "Zoom window"
-	case .Theme_Toggle:
-		return calendar_ui.dark_theme ? "Switch to light theme" : "Switch to dark theme"
+	case .Open_Settings: return "Open Settings"
+	case .Settings_Close: return "Close Settings"
+	case .Settings_Category:
+		return fmt.tprintf(
+			"Show %s settings",
+			calendar_settings_category_name(
+				Calendar_Settings_Category(control.action.index),
+			),
+		)
+	case .Settings_Search: return "Search Settings"
+	case .Command_Palette_Search: return "Search commands"
+	case .Set_Theme:
+		return calendar_theme_command_title(control.action.theme_id)
+	case .Configure_Flash: return "Configure leader key for Flash"
+	case .Shortcut_Record: return "Record another Flash leader"
+	case .Shortcut_Save: return "Save Flash leader"
+	case .Shortcut_Reset: return "Reset Flash leader to slash"
+	case .Shortcut_Cancel: return "Cancel Flash leader configuration"
 	case .Today: return "Jump to today"
 	case .Search: return "Search calendar"
 	case .New_Event: return "New event"
 	case .Open_Event:
-		if control.event_index >= 0 &&
-		   control.event_index < len(calendar_ui.events) {
+		if control.action.index >= 0 &&
+		   control.action.index < len(calendar_ui.events) {
 			return fmt.tprintf(
 				"Open event %s",
-				calendar_ui.events[control.event_index].summary,
+				calendar_ui.events[control.action.index].summary,
 			)
 		}
 		return "Open event"
 	case .Focus_Event: return "Show event details"
 	case .Focus_Holiday: return "Show holiday details"
+	case .Jump_Event: return "Jump to event"
+	case .Toggle_Holiday_Country: return "Toggle holiday calendar"
+	case .Jump_Holiday: return "Jump to holiday"
 	case .Action_Edit: return "Edit focused event"
 	case .Action_Open_URL: return "Open focused details URL"
 	case .Action_Archive: return "Archive focused event"
@@ -491,8 +586,8 @@ calendar_ui_ax_label :: proc(control: ^Calendar_UI_Control) -> string {
 			"Event description",
 			"Event recurrence rule",
 		}
-		if control.event_index >= 0 && control.event_index < len(labels) {
-			return labels[control.event_index]
+		if control.action.index >= 0 && control.action.index < len(labels) {
+			return labels[control.action.index]
 		}
 	case .Editor_Important: return "Important event"
 	case .Editor_Save: return "Save event"
@@ -515,16 +610,39 @@ calendar_on_ax_value :: proc "c" (self: Id, command: Sel) -> Id {
 	context = runtime.default_context()
 	control := calendar_ui_ax_control(self)
 	if control == nil {return nil}
-	if control.action == .Editor_Field {
-		value := calendar_ui_editor_field_text(control.event_index)
+	if control.action.kind == .Editor_Field {
+		value := calendar_ui_editor_field_text(control.action.index)
 		if value != nil {return nsstring(value^)}
 	}
-	if control.action == .Editor_Important {
+	if control.action.kind == .Editor_Important {
 		return calendar_msg_id_bool(
 			objc_getClass("NSNumber"),
 			sel_registerName("numberWithBool:"),
 			calendar_ui.editor_important,
 		)
+	}
+	if control.action.kind == .Settings_Search {
+		return nsstring(calendar_ui.settings_query)
+	}
+	if control.action.kind == .Command_Palette_Search {
+		return nsstring(calendar_ui.palette_query)
+	}
+	if control.action.kind == .Set_Theme {
+		return calendar_msg_id_bool(
+			objc_getClass("NSNumber"),
+			sel_registerName("numberWithBool:"),
+			control.action.theme_id == calendar_ui.theme_id,
+		)
+	}
+	if control.action.kind == .Settings_Category {
+		return calendar_msg_id_bool(
+			objc_getClass("NSNumber"),
+			sel_registerName("numberWithBool:"),
+			control.action.index == int(calendar_ui.settings_category),
+		)
+	}
+	if control.action.kind == .Configure_Flash {
+		return nsstring(calendar_shortcut_display(calendar_ui.flash_leader))
 	}
 	return nil
 }
@@ -536,14 +654,35 @@ calendar_on_ax_set_value :: proc "c" (
 ) {
 	context = runtime.default_context()
 	control := calendar_ui_ax_control(self)
-	if control == nil || control.action != .Editor_Field {return}
-	text_value := calendar_ui_editor_field_text(control.event_index)
+	if control == nil {return}
+	if control.action.kind == .Settings_Search {
+		utf8 := calendar_msg_cstring(value, sel_registerName("UTF8String"))
+		if utf8 == nil {return}
+		replace := strings.clone(string(utf8))
+		delete(calendar_ui.settings_query)
+		calendar_ui.settings_query = replace
+		calendar_text_focus(.Settings_Search)
+		calendar_text_changed(.Settings_Search)
+		return
+	}
+	if control.action.kind == .Command_Palette_Search {
+		utf8 := calendar_msg_cstring(value, sel_registerName("UTF8String"))
+		if utf8 == nil {return}
+		replace := strings.clone(string(utf8))
+		delete(calendar_ui.palette_query)
+		calendar_ui.palette_query = replace
+		calendar_text_focus(.Command_Palette)
+		calendar_text_changed(.Command_Palette)
+		return
+	}
+	if control.action.kind != .Editor_Field {return}
+	text_value := calendar_ui_editor_field_text(control.action.index)
 	if text_value == nil {return}
 	utf8 := calendar_msg_cstring(value, sel_registerName("UTF8String"))
 	if utf8 == nil {return}
 	delete(text_value^)
 	text_value^ = strings.clone(string(utf8))
-	calendar_ui.editor_field = control.event_index
+	calendar_text_focus(calendar_text_editor_field(control.action.index))
 	calendar_ui.needs_redraw = true
 }
 
@@ -564,18 +703,49 @@ calendar_ui_rebuild_accessibility :: proc() {
 	calendar_ui.ax_children = msg_id(array, sel_registerName("retain"))
 	element_class := objc_getClass("HWCalendarAccessibilityElement")
 	for &control in calendar_ui.controls {
-		if calendar_ui.editor_open &&
-		   !calendar_ui_is_window_action(control.action) &&
-		   control.action != .Editor_Field &&
-		   control.action != .Editor_Important &&
-		   control.action != .Editor_Save &&
-		   control.action != .Editor_Delete &&
-		   control.action != .Editor_Cancel {
+		if calendar_ui.shortcut_open &&
+		   !calendar_ui_is_window_action(control.action.kind) &&
+		   control.action.kind != .Shortcut_Record &&
+		   control.action.kind != .Shortcut_Save &&
+		   control.action.kind != .Shortcut_Reset &&
+		   control.action.kind != .Shortcut_Cancel {
+			continue
+		} else if !calendar_ui.shortcut_open && calendar_ui.settings_open &&
+		          !calendar_ui_is_window_action(control.action.kind) &&
+		          control.action.kind != .Open_Settings &&
+		          control.action.kind != .Settings_Close &&
+		          control.action.kind != .Settings_Category &&
+		          control.action.kind != .Settings_Search &&
+		          control.action.kind != .Set_Theme &&
+		          control.action.kind != .Configure_Flash {
+			continue
+		} else if !calendar_ui.shortcut_open && !calendar_ui.settings_open &&
+		          calendar_ui.archive_modal_open &&
+		          !calendar_ui_is_window_action(control.action.kind) &&
+		          control.action.kind != .Archive_Cancel &&
+		          control.action.kind != .Archive_Occurrence &&
+		          control.action.kind != .Archive_Series {
+			continue
+		} else if !calendar_ui.shortcut_open && !calendar_ui.settings_open &&
+		          !calendar_ui.archive_modal_open && calendar_ui.editor_open &&
+		   !calendar_ui_is_window_action(control.action.kind) &&
+		   control.action.kind != .Editor_Field &&
+		   control.action.kind != .Editor_Important &&
+		   control.action.kind != .Editor_Save &&
+		   control.action.kind != .Editor_Delete &&
+		   control.action.kind != .Editor_Cancel {
 			continue
 		}
 		element := msg_id(element_class, sel_registerName("new"))
 		role := "AXButton"
-		if control.action == .Editor_Field {role = "AXTextField"}
+	if control.action.kind == .Editor_Field ||
+	   control.action.kind == .Settings_Search ||
+	   control.action.kind == .Command_Palette_Search {
+			role = "AXTextField"
+		} else if control.action.kind == .Set_Theme ||
+		          control.action.kind == .Settings_Category {
+			role = "AXRadioButton"
+		}
 		msg_void_id(
 			element,
 			sel_registerName("setAccessibilityParent:"),
@@ -601,8 +771,8 @@ calendar_ui_rebuild_accessibility :: proc() {
 			sel_registerName("setAccessibilityFrame:"),
 			calendar_ui_ax_screen_rect(control.rect),
 		)
-		if control.action == .Editor_Field {
-			if value := calendar_ui_editor_field_text(control.event_index);
+		if control.action.kind == .Editor_Field {
+			if value := calendar_ui_editor_field_text(control.action.index);
 			   value != nil {
 				msg_void_id(
 					element,
@@ -610,6 +780,38 @@ calendar_ui_rebuild_accessibility :: proc() {
 					nsstring(value^),
 				)
 			}
+		} else if control.action.kind == .Settings_Search {
+			msg_void_id(
+				element,
+				sel_registerName("setAccessibilityValue:"),
+				nsstring(calendar_ui.settings_query),
+			)
+		} else if control.action.kind == .Command_Palette_Search {
+			msg_void_id(
+				element,
+				sel_registerName("setAccessibilityValue:"),
+				nsstring(calendar_ui.palette_query),
+			)
+		} else if control.action.kind == .Set_Theme {
+			msg_void_id(
+				element,
+				sel_registerName("setAccessibilityValue:"),
+				calendar_msg_id_bool(
+					objc_getClass("NSNumber"),
+					sel_registerName("numberWithBool:"),
+					control.action.theme_id == calendar_ui.theme_id,
+				),
+			)
+		} else if control.action.kind == .Settings_Category {
+			msg_void_id(
+				element,
+				sel_registerName("setAccessibilityValue:"),
+				calendar_msg_id_bool(
+					objc_getClass("NSNumber"),
+					sel_registerName("numberWithBool:"),
+					control.action.index == int(calendar_ui.settings_category),
+				),
+			)
 		}
 		msg_void_id(array, sel_registerName("addObject:"), element)
 		append(&calendar_ui.ax_bindings, Calendar_UI_AX_Binding{
@@ -631,7 +833,7 @@ calendar_ui_header_rect :: proc() -> Calendar_UI_Rect {
 
 calendar_ui_title_rect :: proc() -> Calendar_UI_Rect {
 	return {
-		122,
+		160,
 		calendar_ui.height-CALENDAR_HEADER_CONTROL_HEIGHT-1,
 		360,
 		CALENDAR_HEADER_CONTROL_HEIGHT,
@@ -664,6 +866,15 @@ calendar_ui_window_icon_rect :: proc(index: int) -> Calendar_UI_Rect {
 	}
 }
 
+calendar_ui_settings_rect :: proc() -> Calendar_UI_Rect {
+	return calendar_ui_window_control_rect(3)
+}
+
+calendar_ui_settings_icon_rect :: proc() -> Calendar_UI_Rect {
+	control := calendar_ui_settings_rect()
+	return {control.x+6, control.y+6, 18, 18}
+}
+
 calendar_ui_is_window_action :: proc(action: Calendar_UI_Action) -> bool {
 	return action == .Window_Close ||
 	       action == .Window_Minimize ||
@@ -677,27 +888,6 @@ calendar_ui_today_rect :: proc() -> Calendar_UI_Rect {
 		76,
 		CALENDAR_HEADER_CONTROL_HEIGHT,
 	}
-}
-
-calendar_ui_theme_rect_for_size :: proc(width, height: f64) -> Calendar_UI_Rect {
-	return {
-		width-342,
-		height-CALENDAR_HEADER_CONTROL_HEIGHT-1,
-		64,
-		CALENDAR_HEADER_CONTROL_HEIGHT,
-	}
-}
-
-calendar_ui_theme_rect :: proc() -> Calendar_UI_Rect {
-	return calendar_ui_theme_rect_for_size(calendar_ui.width, calendar_ui.height)
-}
-
-calendar_theme_is_dark :: proc(value: string) -> bool {
-	return value == "dark"
-}
-
-calendar_theme_toggle_label :: proc(dark_theme: bool) -> string {
-	return dark_theme ? "LIGHT" : "DARK"
 }
 
 calendar_ui_search_rect :: proc() -> Calendar_UI_Rect {
@@ -718,26 +908,34 @@ calendar_ui_new_rect :: proc() -> Calendar_UI_Rect {
 	}
 }
 
-calendar_ui_visible_day_count :: proc() -> int {
-	available := calendar_ui.height-CALENDAR_HEADER_HEIGHT-CALENDAR_DAY_TOP_GAP-
+calendar_ui_visible_day_count_for_height :: proc(height: f64) -> int {
+	available := height-CALENDAR_HEADER_HEIGHT-CALENDAR_DAY_TOP_GAP-
 	             CALENDAR_CONTENT_BOTTOM
-	return max(1, int(available/CALENDAR_DAY_ROW_PITCH)+1)
+	return max(1, int(available/CALENDAR_DAY_ROW_PITCH))
+}
+
+calendar_ui_visible_day_count :: proc() -> int {
+	return calendar_ui_visible_day_count_for_height(calendar_ui.height)
 }
 
 calendar_ui_content_rects_for_size :: proc(
 	width, height: f64,
 ) -> (calendar, details: Calendar_UI_Rect) {
-	calendar_width := (width-32)/2
+	calendar_width := (
+		width-CALENDAR_LAYOUT_MARGIN*2-CALENDAR_PANEL_GAP
+	)/2
 	calendar = {
-		12,
+		CALENDAR_LAYOUT_MARGIN,
 		CALENDAR_CONTENT_BOTTOM,
 		calendar_width,
-		height-CALENDAR_HEADER_HEIGHT-CALENDAR_CONTENT_BOTTOM-12,
+		height-CALENDAR_HEADER_HEIGHT-CALENDAR_CONTENT_BOTTOM-
+		CALENDAR_LAYOUT_MARGIN,
 	}
 	details = {
-		calendar.x+calendar.w+8,
+		calendar.x+calendar.w+CALENDAR_PANEL_GAP,
 		CALENDAR_CONTENT_BOTTOM,
-		width-calendar.x-calendar.w-20,
+		width-calendar.x-calendar.w-CALENDAR_PANEL_GAP-
+		CALENDAR_LAYOUT_MARGIN,
 		calendar.h,
 	}
 	return
@@ -758,10 +956,10 @@ calendar_ui_details_rect :: proc() -> Calendar_UI_Rect {
 
 calendar_ui_action_rect_for_width :: proc(index: int, view_width: f64) -> Calendar_UI_Rect {
 	width := (
-		view_width-24-CALENDAR_ACTION_BAR_GAP*2
+		view_width-CALENDAR_LAYOUT_MARGIN*2-CALENDAR_ACTION_BAR_GAP*2
 	)/3
 	return {
-		12+f64(index)*(width+CALENDAR_ACTION_BAR_GAP),
+		CALENDAR_LAYOUT_MARGIN+f64(index)*(width+CALENDAR_ACTION_BAR_GAP),
 		CALENDAR_ACTION_BAR_BOTTOM,
 		width,
 		CALENDAR_ACTION_BAR_HEIGHT,
@@ -872,6 +1070,7 @@ calendar_ui_reload_data :: proc() {
 }
 
 calendar_ui_begin_flash :: proc() {
+	if calendar_ui.shortcut_open {return}
 	targets := make(
 		[dynamic]flash.Target,
 		0,
@@ -879,20 +1078,30 @@ calendar_ui_begin_flash :: proc() {
 		context.temp_allocator,
 	)
 	for control in calendar_ui.controls {
-		if calendar_ui.archive_modal_open &&
-		   !calendar_ui_is_window_action(control.action) &&
-		   control.action != .Archive_Cancel &&
-		   control.action != .Archive_Occurrence &&
-		   control.action != .Archive_Series {
+		if calendar_ui.settings_open &&
+		   !calendar_ui_is_window_action(control.action.kind) &&
+		   control.action.kind != .Open_Settings &&
+		   control.action.kind != .Settings_Close &&
+		   control.action.kind != .Settings_Category &&
+		   control.action.kind != .Settings_Search &&
+		   control.action.kind != .Set_Theme &&
+		   control.action.kind != .Configure_Flash {
+			continue
+		} else if !calendar_ui.settings_open &&
+		          calendar_ui.archive_modal_open &&
+		   !calendar_ui_is_window_action(control.action.kind) &&
+		   control.action.kind != .Archive_Cancel &&
+		   control.action.kind != .Archive_Occurrence &&
+		   control.action.kind != .Archive_Series {
 			continue
 		}
-		if calendar_ui.editor_open &&
-		   !calendar_ui_is_window_action(control.action) &&
-		   control.action != .Editor_Field &&
-		   control.action != .Editor_Important &&
-		   control.action != .Editor_Save &&
-		   control.action != .Editor_Delete &&
-		   control.action != .Editor_Cancel {
+		if !calendar_ui.settings_open && calendar_ui.editor_open &&
+		   !calendar_ui_is_window_action(control.action.kind) &&
+		   control.action.kind != .Editor_Field &&
+		   control.action.kind != .Editor_Important &&
+		   control.action.kind != .Editor_Save &&
+		   control.action.kind != .Editor_Delete &&
+		   control.action.kind != .Editor_Cancel {
 			continue
 		}
 		append(&targets, flash.Target{
@@ -1355,11 +1564,87 @@ calendar_ui_set_palette_query :: proc(value: string) -> bool {
 	return true
 }
 
+CALENDAR_PALETTE_FOCUSED_EVENT :: command_palette.Context_Mask(1 << 0)
+CALENDAR_PALETTE_FOCUSED_URL :: command_palette.Context_Mask(1 << 1)
+CALENDAR_PALETTE_EDITOR :: command_palette.Context_Mask(1 << 2)
+CALENDAR_PALETTE_EDITOR_EXISTING :: command_palette.Context_Mask(1 << 3)
+CALENDAR_PALETTE_ARCHIVE :: command_palette.Context_Mask(1 << 4)
+CALENDAR_PALETTE_ARCHIVE_RECURRING :: command_palette.Context_Mask(1 << 5)
+CALENDAR_PALETTE_SETTINGS :: command_palette.Context_Mask(1 << 6)
+CALENDAR_PALETTE_THEME_BASE :: 8
+
+calendar_palette_active_context :: proc() -> command_palette.Context_Mask {
+	bits := u64(0)
+	if calendar_ui.navigation_active &&
+	   calendar_ui.navigation_kind == .Event {
+		bits |= u64(CALENDAR_PALETTE_FOCUSED_EVENT)
+	}
+	if len(calendar_ui_details_url()) > 0 {
+		bits |= u64(CALENDAR_PALETTE_FOCUSED_URL)
+	}
+	if calendar_ui.editor_open {
+		bits |= u64(CALENDAR_PALETTE_EDITOR)
+		if calendar_ui.editor_event_index >= 0 {
+			bits |= u64(CALENDAR_PALETTE_EDITOR_EXISTING)
+		}
+	}
+	if calendar_ui.archive_modal_open {
+		bits |= u64(CALENDAR_PALETTE_ARCHIVE)
+		if calendar_ui.navigation_event_index >= 0 &&
+		   calendar_ui.navigation_event_index < len(calendar_ui.events) &&
+		   calendar_event_is_recurring(
+				&calendar_ui.events[calendar_ui.navigation_event_index],
+		   ) {
+			bits |= u64(CALENDAR_PALETTE_ARCHIVE_RECURRING)
+		}
+	}
+	if calendar_ui.settings_open {
+		bits |= u64(CALENDAR_PALETTE_SETTINGS)
+	}
+	bits |= u64(1) << uint(CALENDAR_PALETTE_THEME_BASE+int(calendar_ui.theme_id))
+	return command_palette.Context_Mask(bits)
+}
+
+calendar_palette_append :: proc(
+	entries: ^[dynamic]command_palette.Entry,
+	action: Calendar_App_Action,
+	title, subtitle, category: string,
+	keywords: []string = nil,
+	contexts := command_palette.Context_Condition{},
+	unavailable_reason := "",
+) {
+	append(&calendar_ui.palette_actions, action)
+	append(entries, command_palette.Entry{
+		id = command_palette.Entry_ID(len(calendar_ui.palette_actions)),
+		title = title,
+		subtitle = subtitle,
+		category = category,
+		keywords = keywords,
+		contexts = contexts,
+		unavailable_reason = unavailable_reason,
+	})
+}
+
 calendar_ui_open_palette :: proc() {
 	if command_palette.is_open(&calendar_ui.palette) {
 		command_palette.close(&calendar_ui.palette)
 		calendar_ui.palette_query = ""
 		clear(&calendar_ui.palette_actions)
+		if calendar_ui.text_previous_focus_valid {
+			target := calendar_text_target(
+				calendar_text_field(calendar_ui.text_previous_focus.field),
+			)
+			if target != nil {
+				text_input.restore_focus(
+					&calendar_ui.input_state,
+					calendar_ui.text_previous_focus,
+					target^,
+				)
+			}
+		} else if calendar_text_active_field() == .Command_Palette {
+			_ = calendar_text_blur()
+		}
+		calendar_ui.text_previous_focus_valid = false
 		calendar_ui.needs_redraw = true
 		return
 	}
@@ -1368,61 +1653,212 @@ calendar_ui_open_palette :: proc() {
 		context.temp_allocator,
 	)
 	clear(&calendar_ui.palette_actions)
-	append(&entries, command_palette.Entry{
-		id = 1,
-		title = "Today",
-		category = "Command",
-		keywords = []string{"jump", "current", "date"},
-	})
-	append(&calendar_ui.palette_actions, Calendar_Palette_Action{kind = .Today})
+	calendar_palette_append(
+		&entries,
+		{kind = .Today},
+		"Today",
+		"Jump to the current date",
+		"Command",
+		[]string{"jump", "current", "date"},
+	)
+	calendar_palette_append(
+		&entries,
+		{kind = .New_Event},
+		"New event",
+		"Open the event editor",
+		"Command",
+		[]string{"create", "calendar"},
+		{none = CALENDAR_PALETTE_EDITOR | CALENDAR_PALETTE_ARCHIVE},
+		"Close the active event dialog first",
+	)
+	calendar_palette_append(
+		&entries,
+		{kind = .Open_Settings},
+		"Open Settings",
+		"Search and configure application settings",
+		"Command",
+		[]string{"preferences", "configuration", "gear"},
+		{none = CALENDAR_PALETTE_SETTINGS},
+		"Settings is already open",
+	)
+	calendar_palette_append(
+		&entries,
+		{kind = .Configure_Flash},
+		"Configure leader key for Flash",
+		fmt.tprintf(
+			"Current shortcut: %s",
+			calendar_shortcut_display(calendar_ui.flash_leader),
+		),
+		"Shortcut",
+		[]string{"keyboard", "shortcut", "leader", "jump", "navigation"},
+	)
+	for id in calendar_theme_ids() {
+		theme := calendar_theme(id)
+		theme_bit := command_palette.Context_Mask(
+			u64(1) << uint(CALENDAR_PALETTE_THEME_BASE+int(id)),
+		)
+		calendar_palette_append(
+			&entries,
+			{kind = .Set_Theme, theme_id = id},
+			calendar_theme_command_title(id),
+			theme.dark ? "Dark interface theme" : "Light interface theme",
+			"Theme",
+			[]string{
+				"appearance",
+				"style",
+				theme.name,
+				theme.storage_id,
+				theme.dark ? "dark" : "light",
+			},
+			{none = theme_bit},
+			"Current theme",
+		)
+	}
+	calendar_palette_append(
+		&entries,
+		{kind = .Action_Edit},
+		"Edit focused event",
+		"Open the focused event in the editor",
+		"Event action",
+		[]string{"change", "update"},
+		{all = CALENDAR_PALETTE_FOCUSED_EVENT},
+		"Focus an event first",
+	)
+	calendar_palette_append(
+		&entries,
+		{kind = .Action_Open_URL},
+		"Open focused URL",
+		"Open the URL from the focused event or holiday",
+		"Event action",
+		[]string{"link", "browser"},
+		{all = CALENDAR_PALETTE_FOCUSED_URL},
+		"The focused item has no URL",
+	)
+	calendar_palette_append(
+		&entries,
+		{kind = .Action_Archive},
+		"Archive focused event",
+		"Hide the focused event from the calendar",
+		"Event action",
+		[]string{"remove", "hide"},
+		{all = CALENDAR_PALETTE_FOCUSED_EVENT},
+		"Focus an event first",
+	)
+	calendar_palette_append(
+		&entries,
+		{kind = .Editor_Save},
+		"Save event",
+		"Commit the active event editor",
+		"Dialog action",
+		nil,
+		{all = CALENDAR_PALETTE_EDITOR},
+		"Open the event editor first",
+	)
+	calendar_palette_append(
+		&entries,
+		{kind = .Editor_Delete},
+		"Delete event",
+		"Delete the event in the active editor",
+		"Dialog action",
+		nil,
+		{all = CALENDAR_PALETTE_EDITOR_EXISTING},
+		"Open an existing event in the editor first",
+	)
+	calendar_palette_append(
+		&entries,
+		{kind = .Editor_Cancel},
+		"Cancel event editor",
+		"Close the editor without saving",
+		"Dialog action",
+		nil,
+		{all = CALENDAR_PALETTE_EDITOR},
+		"Open the event editor first",
+	)
+	calendar_palette_append(
+		&entries,
+		{kind = .Archive_Occurrence},
+		"Archive event occurrence",
+		"Archive the selected occurrence",
+		"Dialog action",
+		nil,
+		{all = CALENDAR_PALETTE_ARCHIVE},
+		"Open the archive dialog first",
+	)
+	calendar_palette_append(
+		&entries,
+		{kind = .Archive_Series},
+		"Archive complete event series",
+		"Archive every occurrence in the recurring series",
+		"Dialog action",
+		nil,
+		{all = CALENDAR_PALETTE_ARCHIVE_RECURRING},
+		"Open the archive dialog for a recurring event first",
+	)
+	calendar_palette_append(
+		&entries,
+		{kind = .Archive_Cancel},
+		"Cancel event archive",
+		"Close the archive dialog",
+		"Dialog action",
+		nil,
+		{all = CALENDAR_PALETTE_ARCHIVE},
+		"Open the archive dialog first",
+	)
+	calendar_palette_append(
+		&entries,
+		{kind = .Settings_Close},
+		"Close Settings",
+		"Return to the calendar",
+		"Dialog action",
+		nil,
+		{all = CALENDAR_PALETTE_SETTINGS},
+		"Open Settings first",
+	)
 	for &country, country_index in calendar_ui.holiday_countries {
 		action := country.enabled ? "Disable" : "Enable"
-		append(&entries, command_palette.Entry{
-			id = command_palette.Entry_ID(len(entries)+1),
-			title = fmt.tprintf("%s holidays: %s", action, country.country_name),
-			subtitle = fmt.tprintf(
+		calendar_palette_append(
+			&entries,
+			{kind = .Toggle_Holiday_Country, index = country_index},
+			fmt.tprintf("%s holidays: %s", action, country.country_name),
+			fmt.tprintf(
 				"%s / %d bundled dates",
 				country.country_code,
 				len(country.entries),
 			),
-			category = "Command",
-			keywords = []string{
+			"Command",
+			[]string{
 				"holidays",
 				"memorial days",
 				country.country_code,
 				country.country_name,
 			},
-		})
-		append(&calendar_ui.palette_actions, Calendar_Palette_Action{
-			kind = .Toggle_Holiday_Country,
-			index = country_index,
-		})
+		)
 		if !country.enabled {continue}
 		for &definition, definition_index in country.entries {
 			kind_label := calendar_holiday_kind_label(
 				calendar_holiday_kind(definition.kind),
 			)
-			append(&entries, command_palette.Entry{
-				id = command_palette.Entry_ID(len(entries)+1),
-				title = definition.name,
-				subtitle = fmt.tprintf(
+			calendar_palette_append(
+				&entries,
+				{
+					kind = .Jump_Holiday,
+					index = country_index,
+					definition_index = definition_index,
+				},
+				definition.name,
+				fmt.tprintf(
 					"%s / %s",
 					country.country_code,
 					kind_label,
 				),
-				category = "Holiday",
-				keywords = []string{
+				"Holiday",
+				[]string{
 					country.country_code,
 					country.country_name,
 					kind_label,
 					definition.id,
 				},
-			})
-			append(&calendar_ui.palette_actions, Calendar_Palette_Action{
-				kind = .Jump_Holiday,
-				index = country_index,
-				definition_index = definition_index,
-			})
+			)
 		}
 	}
 	for &event, event_index in calendar_ui.events {
@@ -1431,19 +1867,20 @@ calendar_ui_open_palette :: proc() {
 		   strings.equal_fold(event.status, "CANCELLED") {
 			continue
 		}
-		append(&entries, command_palette.Entry{
-			id = command_palette.Entry_ID(len(entries)+1),
-			title = event.summary,
-			subtitle = event.location,
-			category = "Event",
-			keywords = []string{event.description, event.categories, event.uid, event.url},
-		})
-		append(&calendar_ui.palette_actions, Calendar_Palette_Action{
-			kind = .Open_Event,
-			index = event_index,
-		})
+		calendar_palette_append(
+			&entries,
+			{kind = .Jump_Event, index = event_index},
+			event.summary,
+			event.location,
+			"Event",
+			[]string{event.description, event.categories, event.uid, event.url},
+		)
 	}
-	search_error := command_palette.open(&calendar_ui.palette, entries[:], 0)
+	search_error := command_palette.open(
+		&calendar_ui.palette,
+		entries[:],
+		calendar_palette_active_context(),
+	)
 	if search_error != .None {
 		clear(&calendar_ui.palette_actions)
 		fmt.eprintln("[hw_calendar] command palette rejected invalid UTF-8")
@@ -1451,6 +1888,12 @@ calendar_ui_open_palette :: proc() {
 		return
 	}
 	calendar_ui.palette_query = ""
+	calendar_ui.text_previous_focus = text_input.snapshot_focus(
+		&calendar_ui.input_state,
+	)
+	calendar_ui.text_previous_focus_valid =
+		calendar_ui.text_previous_focus.field != text_input.NO_FIELD
+	calendar_text_focus(.Command_Palette)
 	calendar_ui.needs_redraw = true
 }
 
@@ -1460,69 +1903,25 @@ calendar_ui_activate_palette :: proc() {
 	index := int(id)-1
 	if index < 0 || index >= len(calendar_ui.palette_actions) {return}
 	action := calendar_ui.palette_actions[index]
-	now := ical_date_time_from_stamp(time.to_unix_seconds(time.now()), true)
-	now_days := ical_days_from_civil(now.year, now.month, now.day)
-	switch action.kind {
-	case .Today:
-		calendar_ui_clear_holiday_promotion()
-		calendar_ui_clear_navigation_selection()
-		calendar_ui.day_offset = 0
-	case .Open_Event:
-		calendar_ui_clear_holiday_promotion()
-		calendar_ui_clear_navigation_selection()
-		if action.index >= 0 && action.index < len(calendar_ui.events) {
-			start, ok := ical_parse_date_time(calendar_ui.events[action.index].dtstart)
-			if ok {
-				calendar_ui.day_offset = int(
-					ical_days_from_civil(start.year, start.month, start.day) -
-					now_days,
-				)
-			}
-		}
-	case .Toggle_Holiday_Country:
-		calendar_ui_clear_holiday_promotion()
-		calendar_ui_clear_navigation_selection()
-		if action.index >= 0 &&
-		   action.index < len(calendar_ui.holiday_countries) {
-			country := &calendar_ui.holiday_countries[action.index]
-			if !calendar_holiday_country_set_enabled(
-				country,
-				!country.enabled,
-			) {
-				fmt.eprintln("[hw_calendar] could not persist the holiday setting")
-			}
-		}
-	case .Jump_Holiday:
-		calendar_ui_clear_navigation_selection()
-		if action.index >= 0 &&
-		   action.index < len(calendar_ui.holiday_countries) {
-			country := &calendar_ui.holiday_countries[action.index]
-			if action.definition_index >= 0 &&
-			   action.definition_index < len(country.entries) {
-				date, found := calendar_holiday_next_date(
-					country,
-					&country.entries[action.definition_index],
-					now,
-				)
-				if found {
-					target_days := ical_days_from_civil(
-						date.year,
-						date.month,
-						date.day,
-					)
-					calendar_ui.day_offset = int(target_days-now_days)
-					calendar_ui.promoted_holiday_active = true
-					calendar_ui.promoted_holiday_country_index = action.index
-					calendar_ui.promoted_holiday_definition_index =
-						action.definition_index
-					calendar_ui.promoted_holiday_days = target_days
-				}
-			}
-		}
-	}
 	command_palette.close(&calendar_ui.palette)
 	calendar_ui.palette_query = ""
-	calendar_ui_reload_data()
+	clear(&calendar_ui.palette_actions)
+	if calendar_ui.text_previous_focus_valid {
+		target := calendar_text_target(
+			calendar_text_field(calendar_ui.text_previous_focus.field),
+		)
+		if target != nil {
+			text_input.restore_focus(
+				&calendar_ui.input_state,
+				calendar_ui.text_previous_focus,
+				target^,
+			)
+		}
+	} else {
+		_ = calendar_text_blur()
+	}
+	calendar_ui.text_previous_focus_valid = false
+	calendar_ui_execute_action(action)
 	calendar_ui.needs_redraw = true
 }
 
@@ -1536,6 +1935,15 @@ calendar_utf8_previous_boundary :: proc(value: string) -> int {
 	index := len(value)-1
 	for index > 0 && value[index]&0xc0 == 0x80 {index -= 1}
 	return index
+}
+
+calendar_ui_palette_rect :: proc() -> Calendar_UI_Rect {
+	return {
+		calendar_ui.width*0.15,
+		calendar_ui.height*0.2,
+		calendar_ui.width*0.7,
+		calendar_ui.height*0.65,
+	}
 }
 
 calendar_ui_editor_rect :: proc() -> Calendar_UI_Rect {
@@ -1608,12 +2016,17 @@ calendar_ui_editor_open :: proc(event_index := -1) {
 		calendar_ui.editor_end = ical_format_date_time(end)
 		calendar_ui.editor_important = false
 	}
+	calendar_text_focus(.Editor_Summary)
 	flash.cancel(&calendar_ui.flash)
 	command_palette.close(&calendar_ui.palette)
 	calendar_ui.needs_redraw = true
 }
 
 calendar_ui_editor_close :: proc() {
+	if field := calendar_text_active_field();
+	   field >= .Editor_Summary && field <= .Editor_RRule {
+		_ = calendar_text_blur()
+	}
 	calendar_ui_editor_clear()
 	calendar_ui.editor_open = false
 	calendar_ui.editor_event_index = -1
@@ -1725,98 +2138,236 @@ calendar_toggle_window_zoom :: proc() {
 	calendar_ui.needs_redraw = true
 }
 
+calendar_ui_execute_action :: proc(action: Calendar_App_Action) {
+	switch action.kind {
+	case .Window_Close:
+		msg_void(calendar_ui.window, sel_registerName("close"))
+	case .Window_Minimize:
+		msg_void_u(
+			calendar_ui.window,
+			sel_registerName("setStyleMask:"),
+			CALENDAR_WINDOW_MINIMIZE_STYLE,
+		)
+		msg_void_id(
+			calendar_ui.window,
+			sel_registerName("miniaturize:"),
+			nil,
+		)
+		msg_void_u(
+			calendar_ui.window,
+			sel_registerName("setStyleMask:"),
+			CALENDAR_WINDOW_STYLE,
+		)
+	case .Window_Zoom:
+		calendar_toggle_window_zoom()
+	case .Open_Settings:
+		if calendar_ui.settings_open {
+			calendar_settings_close()
+		} else {
+			_ = calendar_settings_open()
+		}
+	case .Settings_Close:
+		calendar_settings_close()
+	case .Settings_Category:
+		if action.index >= 0 &&
+		   action.index <= int(Calendar_Settings_Category.Shortcuts) {
+			calendar_ui.settings_category =
+				Calendar_Settings_Category(action.index)
+			_ = calendar_settings_set_query("")
+			calendar_ui.settings_query_focused = false
+		}
+	case .Settings_Search:
+		calendar_text_focus(.Settings_Search)
+	case .Command_Palette_Search:
+		calendar_text_focus(.Command_Palette)
+	case .Set_Theme:
+		_ = calendar_ui_apply_theme(action.theme_id)
+	case .Configure_Flash:
+		calendar_shortcut_recorder_open()
+	case .Shortcut_Record:
+		calendar_shortcut_destroy(&calendar_ui.shortcut_candidate)
+		calendar_ui.shortcut_candidate_valid = false
+		delete(calendar_ui.shortcut_collision)
+		calendar_ui.shortcut_collision = ""
+		delete(calendar_ui.shortcut_error)
+		calendar_ui.shortcut_error = ""
+		calendar_ui.shortcut_listening = true
+		calendar_ui.shortcut_live_modifiers = {}
+	case .Shortcut_Save:
+		_ = calendar_shortcut_recorder_save()
+	case .Shortcut_Reset:
+		_ = calendar_shortcut_recorder_reset()
+	case .Shortcut_Cancel:
+		calendar_shortcut_recorder_close()
+	case .Today:
+		calendar_ui_clear_holiday_promotion()
+		calendar_ui_clear_navigation_selection()
+		calendar_ui.day_offset = 0
+		calendar_ui_reload_data()
+	case .Search:
+		calendar_ui_open_palette()
+	case .New_Event:
+		if !calendar_ui.editor_open && !calendar_ui.archive_modal_open {
+			calendar_ui_editor_open()
+		}
+	case .Open_Event:
+		if action.index >= 0 && action.index < len(calendar_ui.events) {
+			calendar_ui_editor_open(action.index)
+		}
+	case .Jump_Event:
+		if action.index >= 0 && action.index < len(calendar_ui.events) {
+			now := ical_date_time_from_stamp(
+				time.to_unix_seconds(time.now()),
+				true,
+			)
+			start, ok := ical_parse_date_time(
+				calendar_ui.events[action.index].dtstart,
+			)
+			if ok {
+				calendar_ui_clear_holiday_promotion()
+				calendar_ui_clear_navigation_selection()
+				calendar_ui.day_offset = int(
+					ical_days_from_civil(start.year, start.month, start.day) -
+					ical_days_from_civil(now.year, now.month, now.day),
+				)
+				calendar_ui_reload_data()
+			}
+		}
+	case .Toggle_Holiday_Country:
+		if action.index >= 0 &&
+		   action.index < len(calendar_ui.holiday_countries) {
+			country := &calendar_ui.holiday_countries[action.index]
+			if calendar_holiday_country_set_enabled(country, !country.enabled) {
+				calendar_ui_clear_holiday_promotion()
+				calendar_ui_clear_navigation_selection()
+				calendar_ui_reload_data()
+			} else {
+				fmt.eprintln("[hw_calendar] could not persist the holiday setting")
+			}
+		}
+	case .Jump_Holiday:
+		if action.index >= 0 &&
+		   action.index < len(calendar_ui.holiday_countries) {
+			country := &calendar_ui.holiday_countries[action.index]
+			if action.definition_index >= 0 &&
+			   action.definition_index < len(country.entries) {
+				now := ical_date_time_from_stamp(
+					time.to_unix_seconds(time.now()),
+					true,
+				)
+				if date, found := calendar_holiday_next_date(
+					country,
+					&country.entries[action.definition_index],
+					now,
+				); found {
+					target_days := ical_days_from_civil(
+						date.year,
+						date.month,
+						date.day,
+					)
+					now_days := ical_days_from_civil(
+						now.year,
+						now.month,
+						now.day,
+					)
+					calendar_ui_clear_navigation_selection()
+					calendar_ui.day_offset = int(target_days-now_days)
+					calendar_ui.promoted_holiday_active = true
+					calendar_ui.promoted_holiday_country_index = action.index
+					calendar_ui.promoted_holiday_definition_index =
+						action.definition_index
+					calendar_ui.promoted_holiday_days = target_days
+					calendar_ui_reload_data()
+				}
+			}
+		}
+	case .Focus_Event:
+		calendar_ui_focus_event(
+			action.index,
+			action.occurrence_stamp,
+			action.occurrence_is_date,
+		)
+	case .Focus_Holiday:
+		calendar_ui_focus_holiday(
+			action.index,
+			action.definition_index,
+			action.occurrence_stamp,
+		)
+	case .Action_Edit:
+		if calendar_ui_action_available(.Action_Edit) {
+			calendar_ui_editor_open(calendar_ui.navigation_event_index)
+		}
+	case .Action_Open_URL:
+		calendar_ui_open_url(calendar_ui_details_url())
+	case .Action_Archive:
+		if calendar_ui_action_available(.Action_Archive) {
+			calendar_ui_archive_modal_open()
+		}
+	case .Archive_Cancel:
+		calendar_ui_archive_modal_close()
+	case .Archive_Occurrence:
+		if calendar_ui.archive_modal_open {
+			calendar_ui_archive_confirm(false)
+		}
+	case .Archive_Series:
+		if calendar_ui.archive_modal_open {
+			calendar_ui_archive_confirm(true)
+		}
+	case .Editor_Field:
+		calendar_text_focus(calendar_text_editor_field(action.index))
+	case .Editor_Important:
+		calendar_ui.editor_important = !calendar_ui.editor_important
+	case .Editor_Save:
+		if calendar_ui.editor_open {calendar_ui_editor_commit()}
+	case .Editor_Delete:
+		if calendar_ui.editor_open && calendar_ui.editor_event_index >= 0 {
+			calendar_ui_editor_commit(true)
+		}
+	case .Editor_Cancel:
+		if calendar_ui.editor_open {calendar_ui_editor_close()}
+	case .None:
+	}
+	calendar_ui.needs_redraw = true
+}
+
 calendar_ui_activate_control :: proc(id: u64) {
 	for control in calendar_ui.controls {
 		if control.id != id {continue}
-		switch control.action {
-		case .Window_Close:
-			msg_void(calendar_ui.window, sel_registerName("close"))
-		case .Window_Minimize:
-			msg_void_u(
-				calendar_ui.window,
-				sel_registerName("setStyleMask:"),
-				CALENDAR_WINDOW_MINIMIZE_STYLE,
-			)
-			msg_void_id(
-				calendar_ui.window,
-				sel_registerName("miniaturize:"),
-				nil,
-			)
-			msg_void_u(
-				calendar_ui.window,
-				sel_registerName("setStyleMask:"),
-				CALENDAR_WINDOW_STYLE,
-			)
-		case .Window_Zoom:
-			calendar_toggle_window_zoom()
-		case .Theme_Toggle:
-			calendar_ui.dark_theme = !calendar_ui.dark_theme
-			value := calendar_ui.dark_theme ? "dark" : "light"
-			if !calendar_meta_set("interface_theme", value) {
-				fmt.eprintln("[hw_calendar] could not persist the interface theme")
-			}
-		case .Today:
-			calendar_ui_clear_holiday_promotion()
-			calendar_ui_clear_navigation_selection()
-			calendar_ui.day_offset = 0
-			calendar_ui_reload_data()
-		case .Search:
-			calendar_ui_open_palette()
-		case .New_Event:
-			calendar_ui_editor_open()
-		case .Open_Event:
-			if control.event_index >= 0 &&
-			   control.event_index < len(calendar_ui.events) {
-				calendar_ui_editor_open(control.event_index)
-			}
-		case .Focus_Event:
-			calendar_ui_focus_event(
-				control.event_index,
-				control.occurrence_stamp,
-				control.occurrence_is_date,
-			)
-		case .Focus_Holiday:
-			calendar_ui_focus_holiday(
-				control.holiday_country_index,
-				control.holiday_definition_index,
-				control.occurrence_stamp,
-			)
-		case .Action_Edit:
-			if calendar_ui_action_available(.Action_Edit) {
-				calendar_ui_editor_open(calendar_ui.navigation_event_index)
-			}
-		case .Action_Open_URL:
-			calendar_ui_open_url(calendar_ui_details_url())
-		case .Action_Archive:
-			calendar_ui_archive_modal_open()
-		case .Archive_Cancel:
-			calendar_ui_archive_modal_close()
-		case .Archive_Occurrence:
-			calendar_ui_archive_confirm(false)
-		case .Archive_Series:
-			calendar_ui_archive_confirm(true)
-		case .Editor_Field:
-			calendar_ui.editor_field = control.event_index
-		case .Editor_Important:
-			calendar_ui.editor_important = !calendar_ui.editor_important
-		case .Editor_Save:
-			calendar_ui_editor_commit()
-		case .Editor_Delete:
-			calendar_ui_editor_commit(true)
-		case .Editor_Cancel:
-			calendar_ui_editor_close()
-		case .None:
-		}
+		calendar_ui_execute_action(control.action)
 		break
 	}
 	calendar_ui.needs_redraw = true
 }
 
-calendar_ui_click :: proc(point: Point) -> bool {
+calendar_ui_click :: proc(point: Point, click_count: uint = 1) -> bool {
 	flash.cancel(&calendar_ui.flash)
 	for index := len(calendar_ui.controls)-1; index >= 0; index -= 1 {
 		control := calendar_ui.controls[index]
 		if calendar_ui_contains(control.rect, point) {
+			#partial switch control.action.kind {
+			case .Settings_Search:
+				calendar_text_begin_pointer(
+					.Settings_Search,
+					point,
+					click_count,
+				)
+				return true
+			case .Command_Palette_Search:
+				calendar_text_begin_pointer(
+					.Command_Palette,
+					point,
+					click_count,
+				)
+				return true
+			case .Editor_Field:
+				calendar_text_begin_pointer(
+					calendar_text_editor_field(control.action.index),
+					point,
+					click_count,
+				)
+				return true
+			case:
+			}
 			calendar_ui_activate_control(control.id)
 			return true
 		}
@@ -1851,7 +2402,17 @@ calendar_ui_begin_resize :: proc(point: Point) -> bool {
 
 calendar_on_mouse_dragged :: proc "c" (self: Id, command: Sel, event: Id) {
 	context = runtime.default_context()
-	if calendar_ui.resize_edges == 0 {return}
+	if calendar_ui.resize_edges == 0 {
+		window_point := msg_point(event, sel_registerName("locationInWindow"))
+		point := calendar_msg_point_point_id(
+			self,
+			sel_registerName("convertPoint:fromView:"),
+			window_point,
+			nil,
+		)
+		_ = calendar_text_update_pointer(point)
+		return
+	}
 	mouse := msg_point(
 		objc_getClass("NSEvent"),
 		sel_registerName("mouseLocation"),
@@ -1898,6 +2459,7 @@ calendar_on_mouse_dragged :: proc "c" (self: Id, command: Sel, event: Id) {
 calendar_on_mouse_up :: proc "c" (self: Id, command: Sel, event: Id) {
 	context = runtime.default_context()
 	calendar_ui.resize_edges = 0
+	text_input.end_pointer_selection(&calendar_ui.input_state)
 }
 
 calendar_header_click_should_zoom :: proc(click_count: uint) -> bool {
@@ -1915,9 +2477,9 @@ calendar_on_mouse_down :: proc "c" (self: Id, command: Sel, event: Id) {
 		nil,
 	)
 	if calendar_ui_begin_resize(point) {return}
-	if calendar_ui_click(point) {return}
+	click_count := calendar_msg_uint(event, sel_registerName("clickCount"))
+	if calendar_ui_click(point, click_count) {return}
 	if calendar_ui_contains(calendar_ui_header_rect(), point) {
-		click_count := calendar_msg_uint(event, sel_registerName("clickCount"))
 		if calendar_header_click_should_zoom(click_count) {
 			calendar_toggle_window_zoom()
 		} else {
@@ -1934,7 +2496,11 @@ calendar_on_scroll :: proc "c" (self: Id, command: Sel, event: Id) {
 	context = runtime.default_context()
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 	flash.cancel(&calendar_ui.flash)
-	if calendar_ui.editor_open {return}
+	if calendar_ui.editor_open || calendar_ui.settings_open ||
+	   calendar_ui.shortcut_open ||
+	   command_palette.is_open(&calendar_ui.palette) {
+		return
+	}
 	delta := msg_f64(event, sel_registerName("scrollingDeltaY"))
 	if delta == 0 {delta = msg_f64(event, sel_registerName("deltaY"))}
 	window_point := msg_point(event, sel_registerName("locationInWindow"))
@@ -1974,10 +2540,145 @@ calendar_on_key_down :: proc "c" (self: Id, command: Sel, event: Id) {
 	shift_down := modifiers & CALENDAR_EVENT_MODIFIER_SHIFT != 0
 	option_down := modifiers & CALENDAR_EVENT_MODIFIER_OPTION != 0
 	command_down := modifiers & CALENDAR_EVENT_MODIFIER_COMMAND != 0
+	if calendar_ui.shortcut_open {
+		if key_code == 53 {
+			calendar_shortcut_recorder_close()
+			return
+		}
+		if calendar_ui.shortcut_listening {
+			_ = calendar_shortcut_recorder_capture(
+				key_code,
+				text,
+				modifiers,
+			)
+			return
+		}
+		if !command_down && !control_down && !shift_down && !option_down {
+			if slot, found := calendar_number_slot_for_key_code(key_code);
+			   found && slot < 3 {
+				actions := [3]Calendar_UI_Action{
+					.Shortcut_Save,
+					.Shortcut_Reset,
+					.Shortcut_Cancel,
+				}
+				calendar_ui_execute_action({kind = actions[slot]})
+			}
+		}
+		return
+	}
+	exact_settings_shortcut := command_down && !shift_down && !option_down &&
+	                           !control_down && text == ","
+	if exact_settings_shortcut {
+		if command_palette.is_open(&calendar_ui.palette) {
+			calendar_ui_open_palette()
+		}
+		_ = calendar_settings_open()
+		return
+	}
+	exact_palette_shortcut := control_down && !shift_down && !option_down &&
+	                          !command_down &&
+	                          (text == "k" || text == "K")
+	if exact_palette_shortcut {
+		calendar_ui_open_palette()
+		return
+	}
+	if command_palette.is_open(&calendar_ui.palette) {
+		switch key_code {
+		case 53:
+			calendar_ui_open_palette()
+			return
+		case 36:
+			calendar_ui_activate_palette()
+			return
+		case 125: command_palette.move_selection(&calendar_ui.palette, 1)
+		case 126: command_palette.move_selection(&calendar_ui.palette, -1)
+		case 48:
+			command_palette.move_selection(
+				&calendar_ui.palette,
+				shift_down ? -1 : 1,
+			)
+		case:
+			_ = calendar_text_handle_shortcut(
+				self,
+				event,
+				key_code,
+				modifiers,
+			)
+		}
+		calendar_ui.needs_redraw = true
+		return
+	}
+	if flash.is_active(&calendar_ui.flash) {
+		if key_code == 53 {
+			flash.cancel(&calendar_ui.flash)
+		} else if key_code == 48 {
+			flash.cycle_selection(
+				&calendar_ui.flash,
+				shift_down ? .Previous : .Next,
+			)
+		} else if key_code == 36 {
+			result := flash.activate_selection(&calendar_ui.flash)
+			if result.kind == .Activated {
+				calendar_ui_activate_control(u64(result.target_id))
+			}
+		} else if len(text) == 1 {
+			result := flash.consume(&calendar_ui.flash, text[0])
+			if result.kind == .Activated {
+				calendar_ui_activate_control(u64(result.target_id))
+			}
+		}
+		calendar_ui.needs_redraw = true
+		return
+	}
+	if calendar_ui.settings_open {
+		settings_focused :=
+			calendar_text_active_field() == .Settings_Search
+		if !settings_focused &&
+		   calendar_shortcut_matches_event(
+				calendar_ui.flash_leader,
+				key_code,
+				text,
+				modifiers,
+		   ) {
+			calendar_ui_begin_flash()
+			return
+		}
+		if settings_focused {
+			if key_code == 53 {
+				_ = calendar_text_blur()
+				return
+			}
+			_ = calendar_text_handle_shortcut(
+				self,
+				event,
+				key_code,
+				modifiers,
+			)
+			return
+		}
+		if key_code == 53 {
+			calendar_settings_close()
+		} else if key_code == 48 {
+			calendar_text_focus(.Settings_Search)
+		} else if key_code == 125 || key_code == 126 {
+			if key_code == 125 {
+				calendar_ui.settings_category = .Shortcuts
+			} else {
+				calendar_ui.settings_category = .Styling
+			}
+			calendar_ui.needs_redraw = true
+		}
+		return
+	}
 	if calendar_ui.archive_modal_open && !flash.is_active(&calendar_ui.flash) {
 		if key_code == 53 {
 			calendar_ui_archive_modal_close()
-		} else if text == "/" {
+		} else if calendar_shortcut_matches_event(
+			calendar_ui.flash_leader,
+			key_code,
+			text,
+			modifiers,
+		) {
 			calendar_ui_begin_flash()
 		} else if !command_down && !control_down &&
 		          !shift_down && !option_down {
@@ -2004,87 +2705,22 @@ calendar_on_key_down :: proc "c" (self: Id, command: Sel, event: Id) {
 		return
 	}
 	if calendar_ui.editor_open {
-		switch key_code {
-		case 53:
-			calendar_ui_editor_close()
-		case 48:
-			calendar_ui.editor_field = (calendar_ui.editor_field+1)%7
-		case 36:
-			calendar_ui_editor_commit()
-		case 51:
-			value := calendar_ui_editor_field_text(calendar_ui.editor_field)
-			if value != nil && len(value^) > 0 {
-				next := strings.clone(
-					value^[:calendar_utf8_previous_boundary(value^)],
-				)
-				delete(value^)
-				value^ = next
-			}
-		case:
-			if len(text) > 0 && text[0] >= 0x20 {
-				value := calendar_ui_editor_field_text(calendar_ui.editor_field)
-				if value != nil {
-					next := fmt.tprintf("%s%s", value^, text)
-					delete(value^)
-					value^ = strings.clone(next)
-				}
-			}
-		}
-		calendar_ui.needs_redraw = true
-		return
-	}
-	if control_down && (text == "k" || text == "K") {
-		calendar_ui_open_palette()
-		return
-	}
-	if command_palette.is_open(&calendar_ui.palette) {
-		switch key_code {
-		case 53:
-			command_palette.close(&calendar_ui.palette)
-			calendar_ui.palette_query = ""
-		case 36:
-			calendar_ui_activate_palette()
-			return
-		case 125: command_palette.move_selection(&calendar_ui.palette, 1)
-		case 126: command_palette.move_selection(&calendar_ui.palette, -1)
-		case 51:
-			if len(calendar_ui.palette_query) > 0 {
-				next := strings.clone(
-					calendar_ui.palette_query[
-						:calendar_utf8_previous_boundary(
-							calendar_ui.palette_query,
-						)
-					],
-				)
-				_ = calendar_ui_set_palette_query(next)
-				delete(next)
-			}
-		case:
-			if len(text) == 1 && text[0] >= 0x20 {
-				next := fmt.tprintf("%s%s", calendar_ui.palette_query, text)
-				_ = calendar_ui_set_palette_query(next)
-			}
-		}
-		calendar_ui.needs_redraw = true
-		return
-	}
-	if flash.is_active(&calendar_ui.flash) {
 		if key_code == 53 {
-			flash.cancel(&calendar_ui.flash)
-		} else if key_code == 48 {
-			flash.cycle_selection(&calendar_ui.flash, .Next)
-		} else if key_code == 36 {
-			result := flash.activate_selection(&calendar_ui.flash)
-			if result.kind == .Activated {
-				calendar_ui_activate_control(u64(result.target_id))
-			}
-		} else if len(text) == 1 {
-			result := flash.consume(&calendar_ui.flash, text[0])
-			if result.kind == .Activated {
-				calendar_ui_activate_control(u64(result.target_id))
-			}
+			calendar_ui_editor_close()
+			return
 		}
-		calendar_ui.needs_redraw = true
+		if calendar_text_active_field() < .Editor_Summary ||
+		   calendar_text_active_field() > .Editor_RRule {
+			calendar_text_focus(
+				calendar_text_editor_field(calendar_ui.editor_field),
+			)
+		}
+		_ = calendar_text_handle_shortcut(
+			self,
+			event,
+			key_code,
+			modifiers,
+		)
 		return
 	}
 	if command_down && key_code == 125 {
@@ -2117,7 +2753,12 @@ calendar_on_key_down :: proc "c" (self: Id, command: Sel, event: Id) {
 			return
 		}
 	}
-	if text == "/" {
+	if calendar_shortcut_matches_event(
+		calendar_ui.flash_leader,
+		key_code,
+		text,
+		modifiers,
+	) {
 		calendar_ui_begin_flash()
 	} else if key_code == 53 {
 		calendar_ui_clear_holiday_promotion()
@@ -2138,6 +2779,15 @@ calendar_on_key_down :: proc "c" (self: Id, command: Sel, event: Id) {
 		calendar_ui_reload_data()
 		calendar_ui.needs_redraw = true
 	}
+}
+
+calendar_on_flags_changed :: proc "c" (self: Id, command: Sel, event: Id) {
+	context = runtime.default_context()
+	if !calendar_ui.shortcut_open || !calendar_ui.shortcut_listening {return}
+	modifiers := calendar_msg_uint(event, sel_registerName("modifierFlags"))
+	calendar_ui.shortcut_live_modifiers =
+		calendar_shortcut_modifiers_from_event(modifiers)
+	calendar_ui.needs_redraw = true
 }
 
 calendar_on_accepts_first :: proc "c" (self: Id, command: Sel) -> bool {
@@ -2459,31 +3109,20 @@ calendar_draw_details :: proc(
 }
 
 calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
-	chassis := [4]f32{0.80, 0.78, 0.72, 1}
-	header := [4]f32{0.91, 0.89, 0.82, 1}
-	row := [4]f32{0.88, 0.86, 0.79, 1}
-	row_alt := [4]f32{0.85, 0.83, 0.76, 1}
-	important := CALENDAR_COLOR_COFFEE_32
-	button := [4]f32{0.83, 0.81, 0.74, 1}
-	ink := [4]f32{0.15, 0.145, 0.16, 1}
-	field := row_alt
-	focus := CALENDAR_COLOR_FOREST_32
-	if calendar_ui.dark_theme {
-		chassis = [4]f32{0.040, 0.043, 0.041, 1}
-		header = [4]f32{0.032, 0.034, 0.033, 1}
-		row = [4]f32{0.055, 0.059, 0.056, 1}
-		row_alt = [4]f32{0.067, 0.071, 0.067, 1}
-		important = CALENDAR_COLOR_OCHRE_32
-		button = [4]f32{0.067, 0.071, 0.067, 1}
-		ink = [4]f32{0.020, 0.022, 0.021, 1}
-		field = [4]f32{0.067, 0.072, 0.068, 1}
-		focus = CALENDAR_COLOR_GUM_32
-	}
+	theme := calendar_theme(calendar_ui.theme_id)
+	chassis := theme.canvas
+	header := theme.header
+	row := theme.surface
+	row_alt := theme.raised
+	important := theme.important
+	button := theme.control
+	ink := theme.overlay
+	field := theme.control
+	focus := theme.focus
 	calendar_push_rect(vertices, {0, 0, calendar_ui.width, calendar_ui.height}, chassis)
 	calendar_push_rect(vertices, calendar_ui_header_rect(), header)
 	calendar_push_rect(vertices, calendar_ui_details_rect(), row_alt)
-	buttons := [4]Calendar_UI_Rect{
-		calendar_ui_theme_rect(),
+	buttons := [3]Calendar_UI_Rect{
 		calendar_ui_today_rect(),
 		calendar_ui_search_rect(),
 		calendar_ui_new_rect(),
@@ -2517,17 +3156,14 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 			if item_index >= 3 {break}
 			event_rect := calendar_ui_event_rect(rect, item_index)
 			event_color := button
-			if calendar_ui.dark_theme {
-				event_color = [4]f32{0.075, 0.081, 0.076, 1}
-			}
 			if item.kind == .Holiday {
 				calendar_push_rect(vertices, event_rect, event_color)
 				_, definition, found :=
 					calendar_holiday_definition_for_occurrence(item.holiday)
 				if found {
-					accent := CALENDAR_COLOR_COFFEE_32
+					accent := theme.holiday
 					if calendar_holiday_kind(definition.kind) == .Memorial_Day {
-						accent = CALENDAR_COLOR_GUM_32
+						accent = theme.memorial
 					}
 					calendar_push_rect(
 						vertices,
@@ -2538,7 +3174,8 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 				if calendar_day_item_is_navigation_selected(item) {
 					calendar_push_border(vertices, event_rect, focus)
 				}
-				if !calendar_ui.editor_open && !calendar_ui.archive_modal_open {
+				if !calendar_ui.editor_open && !calendar_ui.archive_modal_open &&
+				   !calendar_ui.settings_open && !calendar_ui.shortcut_open {
 					calendar_ui_add_control(
 						fmt.tprintf(
 							"holiday:%d:%d:%d",
@@ -2562,30 +3199,33 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 			)
 			personal := strings.contains(upper_categories, "PERSONAL")
 			work := strings.contains(upper_categories, "WORK")
-			if personal {event_color = CALENDAR_COLOR_OCHRE_32}
-			if work {event_color = CALENDAR_COLOR_FOREST_32}
+			if personal {event_color = theme.personal}
+			if work {event_color = theme.work}
 			calendar_push_rect(vertices, event_rect, event_color)
 			if personal && work {
 				calendar_push_rect(
 					vertices,
 					{event_rect.x, event_rect.y, 4, event_rect.h},
-					CALENDAR_COLOR_COFFEE_32,
+					theme.warm,
 				)
 				calendar_push_rect(
 					vertices,
 					{event_rect.x+4, event_rect.y, 4, event_rect.h},
-					CALENDAR_COLOR_GUM_32,
+					theme.cool,
 				)
 			}
 			if calendar_day_item_is_navigation_selected(item) {
 				calendar_push_border(vertices, event_rect, focus)
 			}
-			if !calendar_ui.editor_open && !calendar_ui.archive_modal_open {
+			if !calendar_ui.editor_open && !calendar_ui.archive_modal_open &&
+			   !calendar_ui.settings_open && !calendar_ui.shortcut_open {
 				calendar_ui_add_control(
 					fmt.tprintf(
-						"event:%s:%s",
+						"event:%s:%s:%d:%d",
 						item.event.uid,
 						item.event.recurrence_id,
+						ical_date_time_stamp(item.event.start),
+						ical_date_time_stamp(day),
 					),
 					"event",
 					event_rect,
@@ -2609,7 +3249,8 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 		available := calendar_ui_action_available(action)
 		calendar_push_rect(vertices, action_rect, available ? button : field)
 		if available && !calendar_ui.editor_open &&
-		   !calendar_ui.archive_modal_open {
+		   !calendar_ui.archive_modal_open && !calendar_ui.settings_open &&
+		   !calendar_ui.shortcut_open {
 			calendar_ui_add_control(
 				action_names[action_index],
 				action_labels[action_index],
@@ -2618,14 +3259,8 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 			)
 		}
 	}
-	if command_palette.is_open(&calendar_ui.palette) {
-		calendar_push_rect(
-			vertices,
-			{calendar_ui.width*0.15, calendar_ui.height*0.2, calendar_ui.width*0.7, calendar_ui.height*0.65},
-			ink,
-		)
-	}
-	if calendar_ui.editor_open {
+	if calendar_ui.editor_open && !calendar_ui.settings_open &&
+	   !calendar_ui.shortcut_open {
 		calendar_push_rect(
 			vertices,
 			{0, 0, calendar_ui.width, calendar_ui.height},
@@ -2659,7 +3294,7 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 		}
 		important_color := row_alt
 		if calendar_ui.editor_important {
-			important_color = CALENDAR_COLOR_COFFEE_32
+			important_color = theme.important
 		}
 		calendar_push_rect(
 			vertices,
@@ -2674,7 +3309,7 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 		)
 		save_rect := calendar_ui_editor_button_rect(0)
 		cancel_rect := calendar_ui_editor_button_rect(1)
-		calendar_push_rect(vertices, save_rect, CALENDAR_COLOR_MOSS_32)
+		calendar_push_rect(vertices, save_rect, theme.positive)
 		calendar_push_rect(vertices, cancel_rect, button)
 		calendar_ui_add_control(
 			"editor save",
@@ -2693,7 +3328,7 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 			calendar_push_rect(
 				vertices,
 				delete_rect,
-				CALENDAR_COLOR_OCHRE_32,
+				theme.destructive,
 			)
 			calendar_ui_add_control(
 				"editor delete",
@@ -2703,7 +3338,8 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 			)
 		}
 	}
-	if calendar_ui.archive_modal_open {
+	if calendar_ui.archive_modal_open && !calendar_ui.settings_open &&
+	   !calendar_ui.shortcut_open {
 		modal := calendar_ui_archive_modal_rect()
 		calendar_push_rect(vertices, modal, row_alt)
 		event := &calendar_ui.events[calendar_ui.navigation_event_index]
@@ -2714,7 +3350,7 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 			occurrence_rect := calendar_ui_archive_button_rect(0, count)
 			series_rect := calendar_ui_archive_button_rect(1, count)
 			calendar_push_rect(vertices, occurrence_rect, button)
-			calendar_push_rect(vertices, series_rect, CALENDAR_COLOR_OCHRE_32)
+			calendar_push_rect(vertices, series_rect, theme.destructive)
 			calendar_ui_add_control(
 				"archive occurrence",
 				"archive occurrence",
@@ -2729,7 +3365,7 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 			)
 		} else {
 			archive_rect := calendar_ui_archive_button_rect(0, count)
-			calendar_push_rect(vertices, archive_rect, CALENDAR_COLOR_OCHRE_32)
+			calendar_push_rect(vertices, archive_rect, theme.destructive)
 			calendar_ui_add_control(
 				"archive event",
 				"archive event",
@@ -2746,7 +3382,135 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 			.Archive_Cancel,
 		)
 	}
-	for index in 0..<3 {
+	if calendar_ui.settings_open && !calendar_ui.shortcut_open {
+		calendar_push_rect(
+			vertices,
+			{0, 0, calendar_ui.width, calendar_ui.height},
+			theme.overlay,
+		)
+		modal := calendar_settings_rect()
+		calendar_push_rect(vertices, modal, theme.header)
+		search_rect := calendar_settings_search_rect()
+		calendar_push_rect(vertices, search_rect, theme.control)
+		if calendar_ui.settings_query_focused {
+			calendar_push_border(vertices, search_rect, theme.focus)
+		}
+		calendar_ui_add_action_control(
+			"settings search",
+			"search settings",
+			search_rect,
+			{kind = .Settings_Search},
+		)
+		close_rect := calendar_settings_close_rect()
+		calendar_push_rect(vertices, close_rect, theme.control)
+		calendar_ui_add_action_control(
+			"settings close",
+			"close settings",
+			close_rect,
+			{kind = .Settings_Close},
+		)
+		categories := [2]Calendar_Settings_Category{
+			.Styling,
+			.Shortcuts,
+		}
+		for category, index in categories {
+			rect := calendar_settings_category_rect(index)
+			calendar_push_rect(vertices, rect, theme.control)
+			if !calendar_settings_search_active() &&
+			   category == calendar_ui.settings_category {
+				calendar_push_border(vertices, rect, theme.focus)
+			}
+			calendar_ui_add_action_control(
+				fmt.tprintf("settings category %s", calendar_settings_category_name(category)),
+				fmt.tprintf("%s settings", calendar_settings_category_name(category)),
+				rect,
+				{kind = .Settings_Category, index = index},
+			)
+		}
+		for descriptor, index in calendar_settings_result_descriptors() {
+			if index >= 10 {break}
+			rect := calendar_settings_result_rect(index)
+			calendar_push_rect(vertices, rect, theme.raised)
+			if descriptor.action.kind == .Set_Theme &&
+			   descriptor.action.theme_id == calendar_ui.theme_id {
+				calendar_push_border(vertices, rect, theme.focus)
+			}
+			calendar_ui_add_action_control(
+				fmt.tprintf("setting:%d", descriptor.id),
+				strings.to_lower(descriptor.title, context.temp_allocator),
+				rect,
+				descriptor.action,
+			)
+		}
+	}
+	if calendar_ui.shortcut_open {
+		calendar_push_rect(
+			vertices,
+			{0, 0, calendar_ui.width, calendar_ui.height},
+			theme.overlay,
+		)
+		modal := calendar_shortcut_modal_rect()
+		calendar_push_rect(vertices, modal, theme.header)
+		record_rect := calendar_shortcut_record_rect()
+		calendar_push_rect(vertices, record_rect, theme.control)
+		if calendar_ui.shortcut_listening {
+			calendar_push_border(vertices, record_rect, theme.focus)
+		} else {
+			calendar_ui_add_action_control(
+				"shortcut record",
+				"record another shortcut",
+				record_rect,
+				{kind = .Shortcut_Record},
+			)
+		}
+		save_rect := calendar_shortcut_action_rect(0)
+		reset_rect := calendar_shortcut_action_rect(1)
+		cancel_rect := calendar_shortcut_action_rect(2)
+		save_enabled := calendar_ui.shortcut_candidate_valid &&
+		                len(calendar_ui.shortcut_collision) == 0
+		calendar_push_rect(
+			vertices,
+			save_rect,
+			save_enabled ? theme.positive : theme.control,
+		)
+		calendar_push_rect(vertices, reset_rect, theme.control)
+		calendar_push_rect(vertices, cancel_rect, theme.control)
+		if save_enabled {
+			calendar_ui_add_action_control(
+				"shortcut save",
+				"save shortcut",
+				save_rect,
+				{kind = .Shortcut_Save},
+			)
+		}
+		calendar_ui_add_action_control(
+			"shortcut reset",
+			"reset shortcut",
+			reset_rect,
+			{kind = .Shortcut_Reset},
+		)
+		calendar_ui_add_action_control(
+			"shortcut cancel",
+			"cancel shortcut",
+			cancel_rect,
+			{kind = .Shortcut_Cancel},
+		)
+	}
+	if command_palette.is_open(&calendar_ui.palette) {
+		modal := calendar_ui_palette_rect()
+		calendar_push_rect(
+			vertices,
+			modal,
+			theme.overlay,
+		)
+		calendar_ui_add_action_control(
+			"command palette search",
+			"search commands",
+			calendar_text_field_rect(.Command_Palette),
+			{kind = .Command_Palette_Search},
+		)
+	}
+	for index in 0..<4 {
 		calendar_push_rect(
 			vertices,
 			calendar_ui_window_control_rect(index),
@@ -3044,18 +3808,124 @@ calendar_draw_icon_path :: proc(
 	CGContextStrokePath(ctx)
 }
 
-calendar_draw_window_controls :: proc(ctx: rawptr) {
-	colors := [3][4]f64{
-		CALENDAR_COLOR_OCHRE_64,
-		CALENDAR_COLOR_GUM_64,
-		CALENDAR_COLOR_FOREST_64,
+calendar_icon_point :: proc(
+	rect: Calendar_UI_Rect,
+	x, y: f64,
+) -> Point {
+	return {
+		(rect.x+x*rect.w/24)*calendar_ui.scale,
+		(rect.y+(24-y)*rect.h/24)*calendar_ui.scale,
 	}
-	if calendar_ui.dark_theme {
-		colors = {
-			CALENDAR_COLOR_COFFEE_64,
-			CALENDAR_COLOR_STONE_64,
-			CALENDAR_COLOR_GUM_64,
-		}
+}
+
+calendar_draw_settings_icon :: proc(
+	ctx: rawptr,
+	rect: Calendar_UI_Rect,
+	color: [4]f64,
+) {
+	CGContextSaveGState(ctx)
+	defer CGContextRestoreGState(ctx)
+	CGContextClipToRect(
+		ctx,
+		{
+			{rect.x*calendar_ui.scale, rect.y*calendar_ui.scale},
+			{rect.w*calendar_ui.scale, rect.h*calendar_ui.scale},
+		},
+	)
+	CGContextSetRGBStrokeColor(
+		ctx,
+		color[0],
+		color[1],
+		color[2],
+		color[3],
+	)
+	CGContextSetLineWidth(
+		ctx,
+		1.5*calendar_ui.scale*min(rect.w, rect.h)/24,
+	)
+	CGContextSetLineCap(ctx, 1)
+	CGContextSetLineJoin(ctx, 1)
+	CGContextBeginPath(ctx)
+	p := calendar_icon_point(rect, 12, 15)
+	CGContextMoveToPoint(ctx, p.x, p.y)
+	c1 := calendar_icon_point(rect, 13.6569, 15)
+	c2 := calendar_icon_point(rect, 15, 13.6569)
+	p = calendar_icon_point(rect, 15, 12)
+	CGContextAddCurveToPoint(ctx, c1.x, c1.y, c2.x, c2.y, p.x, p.y)
+	c1 = calendar_icon_point(rect, 15, 10.3431)
+	c2 = calendar_icon_point(rect, 13.6569, 9)
+	p = calendar_icon_point(rect, 12, 9)
+	CGContextAddCurveToPoint(ctx, c1.x, c1.y, c2.x, c2.y, p.x, p.y)
+	c1 = calendar_icon_point(rect, 10.3431, 9)
+	c2 = calendar_icon_point(rect, 9, 10.3431)
+	p = calendar_icon_point(rect, 9, 12)
+	CGContextAddCurveToPoint(ctx, c1.x, c1.y, c2.x, c2.y, p.x, p.y)
+	c1 = calendar_icon_point(rect, 9, 13.6569)
+	c2 = calendar_icon_point(rect, 10.3431, 15)
+	p = calendar_icon_point(rect, 12, 15)
+	CGContextAddCurveToPoint(ctx, c1.x, c1.y, c2.x, c2.y, p.x, p.y)
+	CGContextClosePath(ctx)
+
+	gear := [30]Point{
+		{19.6224, 10.3954},
+		{18.5247, 7.7448},
+		{20, 6},
+		{18, 4},
+		{16.2647, 5.48295},
+		{13.5578, 4.36974},
+		{12.9353, 2},
+		{10.981, 2},
+		{10.3491, 4.40113},
+		{7.70441, 5.51596},
+		{6, 4},
+		{4, 6},
+		{5.45337, 7.78885},
+		{4.3725, 10.4463},
+		{2, 11},
+		{2, 13},
+		{4.40111, 13.6555},
+		{5.51575, 16.2997},
+		{4, 18},
+		{6, 20},
+		{7.79116, 18.5403},
+		{10.397, 19.6123},
+		{11, 22},
+		{13, 22},
+		{13.6045, 19.6132},
+		{16.2551, 18.5155},
+		{18.5159, 16.2494},
+		{19.6139, 13.598},
+		{21.9999, 12.9772},
+		{22, 11},
+	}
+	p = calendar_icon_point(rect, gear[0].x, gear[0].y)
+	CGContextMoveToPoint(ctx, p.x, p.y)
+	for index in 1..<26 {
+		p = calendar_icon_point(rect, gear[index].x, gear[index].y)
+		CGContextAddLineToPoint(ctx, p.x, p.y)
+	}
+	c1 = calendar_icon_point(rect, 16.6969, 18.8313)
+	c2 = calendar_icon_point(rect, 18, 20)
+	p = calendar_icon_point(rect, 18, 20)
+	CGContextAddCurveToPoint(ctx, c1.x, c1.y, c2.x, c2.y, p.x, p.y)
+	p = calendar_icon_point(rect, 20, 18)
+	CGContextAddLineToPoint(ctx, p.x, p.y)
+	for index in 26..<len(gear) {
+		p = calendar_icon_point(rect, gear[index].x, gear[index].y)
+		CGContextAddLineToPoint(ctx, p.x, p.y)
+	}
+	p = calendar_icon_point(rect, 19.6224, 10.3954)
+	CGContextAddLineToPoint(ctx, p.x, p.y)
+	CGContextClosePath(ctx)
+	CGContextStrokePath(ctx)
+}
+
+calendar_draw_window_controls :: proc(ctx: rawptr) {
+	theme := calendar_theme(calendar_ui.theme_id)
+	colors := [3][4]f64{
+		calendar_color64(theme.destructive),
+		calendar_color64(theme.warm),
+		calendar_color64(theme.cool),
 	}
 	xmark := calendar_icon_xmark_points()
 	calendar_draw_icon_path(
@@ -3077,6 +3947,11 @@ calendar_draw_window_controls :: proc(ctx: rawptr) {
 		calendar_ui_window_icon_rect(2),
 		colors[2],
 		maximize[:],
+	)
+	calendar_draw_settings_icon(
+		ctx,
+		calendar_ui_settings_icon_rect(),
+		calendar_color64(theme.text_soft),
 	)
 }
 
@@ -3108,16 +3983,11 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 	CFRelease(font_name)
 	if font == nil {return pixels}
 	defer CFRelease(font)
-	ink := [4]f64{0.15, 0.145, 0.16, 1}
-	ink_soft := [4]f64{0.27, 0.26, 0.28, 1}
-	muted := [4]f64{0.48, 0.46, 0.42, 1}
-	inverse := [4]f64{0.91, 0.89, 0.82, 1}
-	if calendar_ui.dark_theme {
-		ink = [4]f64{0.89, 0.88, 0.82, 1}
-		ink_soft = [4]f64{0.68, 0.67, 0.62, 1}
-		muted = [4]f64{0.47, 0.49, 0.46, 1}
-		inverse = [4]f64{0.97, 0.95, 0.88, 1}
-	}
+	theme := calendar_theme(calendar_ui.theme_id)
+	ink := calendar_color64(theme.text)
+	ink_soft := calendar_color64(theme.text_soft)
+	muted := calendar_color64(theme.muted)
+	inverse := calendar_color64(theme.inverse)
 	calendar_draw_text(
 		ctx,
 		font,
@@ -3126,21 +3996,9 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 		ink,
 		0,
 	)
-	theme_label := calendar_theme_toggle_label(calendar_ui.dark_theme)
-	calendar_draw_text(
-		ctx,
-		font,
-		theme_label,
-		calendar_ui_theme_rect(),
-		calendar_ui.dark_theme ? CALENDAR_COLOR_SAND_64 : CALENDAR_COLOR_BASALT_64,
-	)
-	today_color := CALENDAR_COLOR_COFFEE_64
-	search_color := CALENDAR_COLOR_FOREST_64
-	new_color := CALENDAR_COLOR_OCHRE_64
-	if calendar_ui.dark_theme {
-		search_color = CALENDAR_COLOR_GUM_64
-		new_color = CALENDAR_COLOR_STONE_64
-	}
+	today_color := calendar_color64(theme.warm)
+	search_color := calendar_color64(theme.cool)
+	new_color := calendar_color64(theme.warm_strong)
 	calendar_draw_text(ctx, font, "TODAY", calendar_ui_today_rect(), today_color, 14)
 	calendar_draw_text(ctx, font, "SEARCH", calendar_ui_search_rect(), search_color, 14)
 	calendar_draw_text(ctx, font, "NEW EVENT", calendar_ui_new_rect(), new_color, 10)
@@ -3202,7 +4060,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 				strings.contains(upper_categories, "PERSONAL") ||
 				strings.contains(upper_categories, "WORK")
 			text_color := ink
-			if calendar_ui.dark_theme || has_accent_fill {
+			if theme.dark || has_accent_fill {
 				text_color = inverse
 			}
 			calendar_draw_text(ctx, font, time_text, event_rect, text_color)
@@ -3238,29 +4096,6 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			color,
 			muted,
 		)
-	}
-	if command_palette.is_open(&calendar_ui.palette) {
-		modal := Calendar_UI_Rect{
-			calendar_ui.width*0.15,
-			calendar_ui.height*0.2,
-			calendar_ui.width*0.7,
-			calendar_ui.height*0.65,
-		}
-		calendar_draw_text(ctx, font, fmt.tprintf("> %s", calendar_ui.palette_query), {modal.x+16, modal.y+modal.h-48, modal.w-32, 34}, inverse)
-		for result, index in command_palette.visible_results(&calendar_ui.palette) {
-			if index >= 10 {break}
-			color := [4]f64{0.66, 0.63, 0.57, 1}
-			if index == command_palette.selected_index(&calendar_ui.palette) {
-				color = inverse
-			}
-			calendar_draw_text(
-				ctx,
-				font,
-				fmt.tprintf("%-10s  %s", result.entry.category, result.entry.title),
-				{modal.x+16, modal.y+modal.h-84-f64(index)*34, modal.w-32, 30},
-				color,
-			)
-		}
 	}
 	if calendar_ui.editor_open {
 		CGContextClearRect(
@@ -3306,12 +4141,16 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 				muted,
 				0,
 			)
-			calendar_draw_text(
+			calendar_draw_editable_text(
 				ctx,
 				font,
+				calendar_text_editor_field(field_index),
 				values[field_index],
+				"",
 				field_rect,
 				ink,
+				muted,
+				calendar_color64(theme.focus),
 			)
 		}
 		important_rect := Calendar_UI_Rect{
@@ -3325,7 +4164,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			font,
 			calendar_ui.editor_important ? "IMPORTANT: YES" : "IMPORTANT: NO",
 			important_rect,
-			calendar_ui.editor_important ? CALENDAR_COLOR_COFFEE_64 : muted,
+			calendar_ui.editor_important ? calendar_color64(theme.important) : muted,
 		)
 		calendar_draw_text(
 			ctx,
@@ -3356,16 +4195,14 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 				font,
 				calendar_ui.editor_error,
 				{modal.x+18, modal.y+60, modal.w-36, 28},
-				CALENDAR_COLOR_OCHRE_64,
+				calendar_color64(theme.destructive),
 				0,
 			)
 		}
 	}
 	if calendar_ui.archive_modal_open {
 		backdrop := [4]f64{0.02, 0.02, 0.02, 0.28}
-		if calendar_ui.dark_theme {
-			backdrop = [4]f64{0.0, 0.0, 0.0, 0.38}
-		}
+		if theme.dark {backdrop = [4]f64{0.0, 0.0, 0.0, 0.38}}
 		calendar_fill_overlay_rect(
 			ctx,
 			{0, 0, calendar_ui.width, calendar_ui.height},
@@ -3394,7 +4231,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			font,
 			event.summary,
 			{modal.x+24, modal.y+modal.h-92, modal.w-48, 28},
-			CALENDAR_COLOR_COFFEE_64,
+			calendar_color64(theme.warm),
 			0,
 		)
 		message := "ARCHIVED EVENTS ARE HIDDEN FROM THE CALENDAR AND REMINDERS"
@@ -3455,8 +4292,268 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 				font,
 				calendar_ui.archive_error,
 				{modal.x+24, modal.y+62, modal.w-48, 24},
-				CALENDAR_COLOR_OCHRE_64,
+				calendar_color64(theme.destructive),
 				0,
+			)
+		}
+	}
+	if calendar_ui.settings_open {
+		calendar_fill_overlay_rect(
+			ctx,
+			{0, 0, calendar_ui.width, calendar_ui.height},
+			calendar_color64(theme.overlay),
+		)
+		modal := calendar_settings_rect()
+		CGContextClearRect(
+			ctx,
+			{
+				{modal.x*calendar_ui.scale, modal.y*calendar_ui.scale},
+				{modal.w*calendar_ui.scale, modal.h*calendar_ui.scale},
+			},
+		)
+		calendar_draw_editable_text(
+			ctx,
+			font,
+			.Settings_Search,
+			calendar_ui.settings_query,
+			"SEARCH SETTINGS",
+			calendar_settings_search_rect(),
+			ink,
+			muted,
+			calendar_color64(theme.focus),
+		)
+		xmark := calendar_icon_xmark_points()
+		close_icon := calendar_settings_close_rect()
+		calendar_draw_icon_path(
+			ctx,
+			{close_icon.x+5, close_icon.y+8, 18, 18},
+			muted,
+			xmark[:],
+		)
+		categories := [2]Calendar_Settings_Category{
+			.Styling,
+			.Shortcuts,
+		}
+		for category, index in categories {
+			count := calendar_settings_category_match_count(category)
+			color := muted
+			if !calendar_settings_search_active() &&
+			   category == calendar_ui.settings_category {
+				color = ink
+			}
+			calendar_draw_text(
+				ctx,
+				font,
+				fmt.tprintf(
+					"%s  %02d",
+					calendar_settings_category_name(category),
+					count,
+				),
+				calendar_settings_category_rect(index),
+				color,
+			)
+		}
+		for descriptor, index in calendar_settings_result_descriptors() {
+			if index >= 10 {break}
+			rect := calendar_settings_result_rect(index)
+			color := ink
+			value := ""
+			if descriptor.action.kind == .Set_Theme &&
+			   descriptor.action.theme_id == calendar_ui.theme_id {
+				value = "CURRENT"
+			} else if descriptor.action.kind == .Configure_Flash {
+				value = calendar_shortcut_display(calendar_ui.flash_leader)
+			}
+			calendar_draw_text(
+				ctx,
+				font,
+				descriptor.title,
+				{rect.x+8, rect.y, rect.w*0.58, rect.h},
+				color,
+				0,
+			)
+			if len(value) > 0 {
+				value_color := muted
+				if descriptor.action.kind == .Set_Theme {
+					value_color = calendar_color64(theme.focus)
+				}
+				calendar_draw_text(
+					ctx,
+					font,
+					value,
+					{rect.x+rect.w*0.60, rect.y, rect.w*0.38-8, rect.h},
+					value_color,
+					0,
+					.End,
+				)
+			}
+		}
+		if len(calendar_ui.settings_error) > 0 {
+			content := calendar_settings_content_rect()
+			calendar_draw_text(
+				ctx,
+				font,
+				calendar_ui.settings_error,
+				{content.x, content.y, content.w, 24},
+				calendar_color64(theme.destructive),
+				0,
+			)
+		}
+	}
+	if calendar_ui.shortcut_open {
+		calendar_fill_overlay_rect(
+			ctx,
+			{0, 0, calendar_ui.width, calendar_ui.height},
+			calendar_color64(theme.overlay),
+		)
+		modal := calendar_shortcut_modal_rect()
+		CGContextClearRect(
+			ctx,
+			{
+				{modal.x*calendar_ui.scale, modal.y*calendar_ui.scale},
+				{modal.w*calendar_ui.scale, modal.h*calendar_ui.scale},
+			},
+		)
+		calendar_draw_text(
+			ctx,
+			font,
+			"CONFIGURE FLASH LEADER",
+			{modal.x+24, modal.y+modal.h-50, modal.w-48, 30},
+			ink,
+			0,
+		)
+		calendar_draw_text(
+			ctx,
+			font,
+			"PRESS ONE KEY WITH ANY COMMAND, CONTROL, OPTION, OR SHIFT MODIFIERS",
+			{modal.x+24, modal.y+modal.h-80, modal.w-48, 22},
+			muted,
+			0,
+		)
+		record_text := "PRESS A KEY…"
+		if calendar_ui.shortcut_candidate_valid {
+			record_text = calendar_shortcut_display(
+				calendar_ui.shortcut_candidate,
+			)
+		} else if calendar_ui.shortcut_listening &&
+		          calendar_ui.shortcut_live_modifiers != {} {
+			preview := Calendar_Shortcut{
+				kind = .Character,
+				key = "…",
+				modifiers = calendar_ui.shortcut_live_modifiers,
+			}
+			record_text = calendar_shortcut_display(preview)
+		}
+		calendar_draw_text(
+			ctx,
+			font,
+			record_text,
+			calendar_shortcut_record_rect(),
+			calendar_ui.shortcut_listening ? calendar_color64(theme.focus) : ink,
+			0,
+			.Center,
+		)
+		status := calendar_ui.shortcut_collision
+		if len(calendar_ui.shortcut_error) > 0 {
+			status = calendar_ui.shortcut_error
+		}
+		if len(status) > 0 {
+			calendar_draw_text(
+				ctx,
+				font,
+				status,
+				{modal.x+24, modal.y+64, modal.w-48, 20},
+				calendar_color64(theme.destructive),
+				0,
+			)
+		} else if calendar_ui.shortcut_candidate_valid {
+			calendar_draw_text(
+				ctx,
+				font,
+				"READY TO SAVE",
+				{modal.x+24, modal.y+64, modal.w-48, 20},
+				calendar_color64(theme.positive),
+				0,
+			)
+		}
+		save_color := muted
+		if calendar_ui.shortcut_candidate_valid &&
+		   len(calendar_ui.shortcut_collision) == 0 {
+			save_color = ink
+		}
+		calendar_draw_numbered_action(
+			ctx,
+			font,
+			"SAVE",
+			0,
+			calendar_shortcut_action_rect(0),
+			save_color,
+			muted,
+		)
+		calendar_draw_numbered_action(
+			ctx,
+			font,
+			"RESET DEFAULT",
+			1,
+			calendar_shortcut_action_rect(1),
+			ink,
+			muted,
+		)
+		calendar_draw_numbered_action(
+			ctx,
+			font,
+			"CANCEL",
+			2,
+			calendar_shortcut_action_rect(2),
+			muted,
+			muted,
+		)
+	}
+	if command_palette.is_open(&calendar_ui.palette) {
+		modal := calendar_ui_palette_rect()
+		CGContextClearRect(
+			ctx,
+			{
+				{modal.x*calendar_ui.scale, modal.y*calendar_ui.scale},
+				{modal.w*calendar_ui.scale, modal.h*calendar_ui.scale},
+			},
+		)
+		calendar_draw_editable_text(
+			ctx,
+			font,
+			.Command_Palette,
+			calendar_ui.palette_query,
+			"SEARCH COMMANDS",
+			calendar_text_field_rect(.Command_Palette),
+			inverse,
+			muted,
+			calendar_color64(theme.focus),
+		)
+		for result, index in command_palette.visible_results(&calendar_ui.palette) {
+			if index >= 10 {break}
+			color := muted
+			if result.available {color = ink_soft}
+			if index == command_palette.selected_index(&calendar_ui.palette) {
+				color = inverse
+			}
+			title := fmt.tprintf(
+				"%-12s  %s",
+				result.entry.category,
+				result.entry.title,
+			)
+			if !result.available && len(result.entry.unavailable_reason) > 0 {
+				title = fmt.tprintf(
+					"%s  —  %s",
+					title,
+					result.entry.unavailable_reason,
+				)
+			}
+			calendar_draw_text(
+				ctx,
+				font,
+				title,
+				{modal.x+16, modal.y+modal.h-84-f64(index)*34, modal.w-32, 30},
+				color,
 			)
 		}
 	}
@@ -3599,9 +4696,12 @@ calendar_render_frame :: proc() {
 	msg_void_id(attachment, sel_registerName("setTexture:"), texture)
 	msg_void_u(attachment, sel_registerName("setLoadAction:"), 2)
 	msg_void_u(attachment, sel_registerName("setStoreAction:"), 1)
-	clear_color := Calendar_MTL_Clear_Color{0.80, 0.78, 0.72, 1}
-	if calendar_ui.dark_theme {
-		clear_color = {0.040, 0.043, 0.041, 1}
+	active_theme := calendar_theme(calendar_ui.theme_id)
+	clear_color := Calendar_MTL_Clear_Color{
+		f64(active_theme.canvas[0]),
+		f64(active_theme.canvas[1]),
+		f64(active_theme.canvas[2]),
+		1,
 	}
 	calendar_msg_void_clear_color(
 		attachment,
@@ -3638,13 +4738,16 @@ calendar_render_frame :: proc() {
 			action,
 		)
 	}
-	if !calendar_ui.editor_open && !calendar_ui.archive_modal_open {
+	if !calendar_ui.shortcut_open {
 		calendar_ui_add_control(
-			"theme toggle",
-			"toggle theme",
-			calendar_ui_theme_rect(),
-			.Theme_Toggle,
+			"settings",
+			"settings",
+			calendar_ui_settings_rect(),
+			.Open_Settings,
 		)
+	}
+	if !calendar_ui.editor_open && !calendar_ui.archive_modal_open &&
+	   !calendar_ui.settings_open && !calendar_ui.shortcut_open {
 		calendar_ui_add_control(
 			"today",
 			"today",
@@ -3832,12 +4935,87 @@ calendar_register_classes :: proc() -> Id {
 		"HWCalendarMetalView",
 		0,
 	)
+	if protocol := objc_getProtocol("NSTextInputClient"); protocol != nil {
+		class_addProtocol(view_class, protocol)
+	}
 	class_addMethod(view_class, sel_registerName("acceptsFirstResponder"), rawptr(calendar_on_accepts_first), "B@:")
 	class_addMethod(view_class, sel_registerName("mouseDown:"), rawptr(calendar_on_mouse_down), "v@:@")
 	class_addMethod(view_class, sel_registerName("mouseDragged:"), rawptr(calendar_on_mouse_dragged), "v@:@")
 	class_addMethod(view_class, sel_registerName("mouseUp:"), rawptr(calendar_on_mouse_up), "v@:@")
 	class_addMethod(view_class, sel_registerName("scrollWheel:"), rawptr(calendar_on_scroll), "v@:@")
 	class_addMethod(view_class, sel_registerName("keyDown:"), rawptr(calendar_on_key_down), "v@:@")
+	class_addMethod(view_class, sel_registerName("flagsChanged:"), rawptr(calendar_on_flags_changed), "v@:@")
+	class_addMethod(view_class, sel_registerName("copy:"), rawptr(calendar_on_text_copy), "v@:@")
+	class_addMethod(view_class, sel_registerName("cut:"), rawptr(calendar_on_text_cut), "v@:@")
+	class_addMethod(view_class, sel_registerName("paste:"), rawptr(calendar_on_text_paste), "v@:@")
+	class_addMethod(
+		view_class,
+		sel_registerName("selectAll:"),
+		rawptr(calendar_on_text_select_all),
+		"v@:@",
+	)
+	class_addMethod(
+		view_class,
+		sel_registerName("insertText:"),
+		rawptr(calendar_on_text_insert_simple),
+		"v@:@",
+	)
+	class_addMethod(
+		view_class,
+		sel_registerName("insertText:replacementRange:"),
+		rawptr(calendar_on_text_insert),
+		"v@:@{_NSRange=QQ}",
+	)
+	class_addMethod(
+		view_class,
+		sel_registerName("doCommandBySelector:"),
+		rawptr(calendar_on_text_command),
+		"v@::",
+	)
+	class_addMethod(
+		view_class,
+		sel_registerName("setMarkedText:selectedRange:replacementRange:"),
+		rawptr(calendar_on_text_set_marked),
+		"v@:@{_NSRange=QQ}{_NSRange=QQ}",
+	)
+	class_addMethod(view_class, sel_registerName("unmarkText"), rawptr(calendar_on_text_unmark), "v@:")
+	class_addMethod(view_class, sel_registerName("hasMarkedText"), rawptr(calendar_on_text_has_marked), "B@:")
+	class_addMethod(
+		view_class,
+		sel_registerName("markedRange"),
+		rawptr(calendar_on_text_range),
+		"{_NSRange=QQ}@:",
+	)
+	class_addMethod(
+		view_class,
+		sel_registerName("selectedRange"),
+		rawptr(calendar_on_text_range),
+		"{_NSRange=QQ}@:",
+	)
+	class_addMethod(
+		view_class,
+		sel_registerName("validAttributesForMarkedText"),
+		rawptr(calendar_on_text_valid_attributes),
+		"@@:",
+	)
+	class_addMethod(
+		view_class,
+		sel_registerName("attributedSubstringForProposedRange:actualRange:"),
+		rawptr(calendar_on_text_attributed_substring),
+		"@@:{_NSRange=QQ}^{_NSRange=QQ}",
+	)
+	class_addMethod(
+		view_class,
+		sel_registerName("characterIndexForPoint:"),
+		rawptr(calendar_on_text_character_index),
+		"Q@:{CGPoint=dd}",
+	)
+	class_addMethod(
+		view_class,
+		sel_registerName("firstRectForCharacterRange:actualRange:"),
+		rawptr(calendar_on_text_first_rect),
+		"{CGRect={CGPoint=dd}{CGSize=dd}}@:{_NSRange=QQ}^{_NSRange=QQ}",
+	)
 	class_addMethod(
 		view_class,
 		sel_registerName("isAccessibilityElement"),
@@ -3886,6 +5064,13 @@ calendar_ui_destroy :: proc() {
 	delete(calendar_ui.palette_query)
 	delete(calendar_ui.palette_actions)
 	delete(calendar_ui.archive_error)
+	delete(calendar_ui.settings_query)
+	delete(calendar_ui.settings_error)
+	delete(calendar_ui.shortcut_collision)
+	delete(calendar_ui.shortcut_error)
+	calendar_shortcut_destroy(&calendar_ui.shortcut_candidate)
+	calendar_shortcut_destroy(&calendar_ui.flash_leader)
+	text_input.destroy(&calendar_ui.input_state)
 	calendar_ui_editor_clear()
 	if calendar_ui.ax_children != nil {
 		msg_void(calendar_ui.ax_children, sel_registerName("release"))
@@ -3893,6 +5078,7 @@ calendar_ui_destroy :: proc() {
 	delete(calendar_ui.ax_bindings)
 	flash.state_destroy(&calendar_ui.flash)
 	command_palette.state_destroy(&calendar_ui.palette)
+	command_palette.state_destroy(&calendar_ui.settings_search)
 	objects := [5]Id{
 		calendar_ui.text_texture,
 		calendar_ui.solid_pipeline,
@@ -3923,12 +5109,25 @@ calendar_gui_initialize :: proc(
 	}
 	calendar_ui.scale = 1
 	calendar_ui.needs_redraw = true
+	calendar_ui.theme_id = .HW_Light
 	if theme, found := calendar_meta_get("interface_theme", context.temp_allocator);
 	   found {
-		calendar_ui.dark_theme = calendar_theme_is_dark(theme)
+		if id, valid := calendar_theme_from_storage(theme); valid {
+			calendar_ui.theme_id = id
+		}
+	}
+	calendar_ui.flash_leader = calendar_shortcut_clone(
+		calendar_shortcut_default(),
+	)
+	if binding, found := calendar_meta_get("flash_leader", context.temp_allocator);
+	   found {
+		if decoded, valid := calendar_shortcut_deserialize(binding); valid {
+			calendar_shortcut_destroy(&calendar_ui.flash_leader)
+			calendar_ui.flash_leader = decoded
+		}
 	}
 	calendar_ui.controls = make([dynamic]Calendar_UI_Control)
-	calendar_ui.palette_actions = make([dynamic]Calendar_Palette_Action)
+	calendar_ui.palette_actions = make([dynamic]Calendar_App_Action)
 	calendar_ui.ax_bindings = make([dynamic]Calendar_UI_AX_Binding)
 	calendar_ui.promoted_holiday_country_index = -1
 	calendar_ui.promoted_holiday_definition_index = -1
@@ -3940,6 +5139,14 @@ calendar_gui_initialize :: proc(
 		search_commit_size = 64*1024,
 	); error != nil {
 		fmt.eprintln("HW Calendar could not initialize search.")
+		return false
+	}
+	if error := command_palette.state_init(
+		&calendar_ui.settings_search,
+		search_reserve_size = 8*1024*1024,
+		search_commit_size = 64*1024,
+	); error != nil {
+		fmt.eprintln("HW Calendar could not initialize Settings search.")
 		return false
 	}
 	calendar_ui.holiday_countries = calendar_holiday_countries_load()

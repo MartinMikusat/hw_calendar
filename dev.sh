@@ -46,6 +46,7 @@ legacy_fingerprint() {
   stat -f '%m:%z:%N' \
     src/*.odin ./*.sh scripts/*.sh Info.plist dependencies.lock \
     resources/fonts/* resources/icons/iconoir/* resources/holidays/* \
+    resources/themes/*/* \
     2>/dev/null | shasum | cut -d' ' -f1
 }
 
@@ -59,6 +60,7 @@ host_fingerprint() {
   stat -f '%m:%z:%N' \
     Info.plist scripts/hot-reload-build.sh \
     resources/fonts/* resources/icons/iconoir/* resources/holidays/* \
+    resources/themes/*/* \
     2>/dev/null
 }
 

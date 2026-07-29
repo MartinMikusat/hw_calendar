@@ -16,18 +16,28 @@ the `PERSONAL` category and Forest for the `WORK` category. An important event
 contains `X-HW-IMPORTANT:TRUE`, and every date touched by that event uses a
 Coffee background.
 
-Use the `DARK` or `LIGHT` header control to switch the interface theme. The
-application stores the selected theme in its local database.
+Use the gear control or `Command-,` to open the two-column Settings modal.
+Search the modal or select `Styling` to choose HW Light, HW Dark, Gruvbox
+Light, Gruvbox Dark, or one of the four Catppuccin themes. The application
+stores the selected theme in its local database.
+
+Select `Shortcuts` to configure the Flash leader key. The recorder accepts a
+logical key with an exact combination of Control, Option, Shift, and Command.
+It reports collisions before Save and provides explicit Save, Reset, and
+Cancel actions.
 
 The command palette can enable or disable each bundled country holiday
 calendar. Slovakia is enabled by default. Its read-only entries use official
 Slovak names and include state holidays, statutory holidays, and memorial days
 from 2026 onward. Holiday search results jump to the next matching date.
 
-Press `/` when no text field has focus to activate Flash labels. Press
-`Control-K` to open the command palette. Global search ranks bundled holiday
-names and the stored event fields `SUMMARY`, `DESCRIPTION`, `LOCATION`, `URL`,
-`CATEGORIES`, and `UID` through `hw_odin_matchSorter`.
+Press the configured Flash leader when no text field has focus to activate
+Flash labels. The default leader is `/`. Press `Control-K` to open the command
+palette. It executes direct application actions, including theme selection and
+Settings configuration. It keeps unavailable actions visible with their
+reason. Global search ranks bundled holiday names and the stored event fields
+`SUMMARY`, `DESCRIPTION`, `LOCATION`, `URL`, `CATEGORIES`, and `UID` through
+`hw_odin_matchSorter`.
 
 Select an event or the New Event control to open the Metal event editor. The
 editor exposes the same controls to pointer input, Accessibility, and Flash.
@@ -100,6 +110,11 @@ Install Odin and keep the sibling libraries beside this repository:
 ./scripts/libical-oracle.sh
 ```
 
+Editable fields use the `text_input` package from
+`hw_odin_ui_components`. The package owns editing state and mutations. The
+application owns strings, CoreText measurement, Metal drawing, AppKit event
+routing, and application actions.
+
 `./dev.sh` builds a stable AppKit host and loads the application from a
 generation-specific dylib. A source edit builds a new dylib. The host swaps it
 at a frame boundary and preserves the window, current view, editor state,
@@ -131,13 +146,32 @@ Bundled font provenance:
 
 Bundled icon provenance:
 
-- Assets: Iconoir regular `xmark`, `minus`, and `maximize`
+- Assets: Iconoir regular `xmark`, `minus`, `maximize`, and `settings`
 - Version: 7.11.1, commit `59e3d5d969c59b3fb652a556795e08c1b3371c5b`
 - Source files: <https://github.com/iconoir-icons/iconoir/tree/v7.11.1/icons/regular>
 - SHA-256 (`xmark.svg`): `61aa0a4913a440aaafcc45064a87e24fe8eb22ba4abc4c5ef020530928ed8daf`
 - SHA-256 (`minus.svg`): `babb05bca016bffdd38cbd1dcaeef6ccdf42fc8654124dee169a412eeed6d425`
 - SHA-256 (`maximize.svg`): `3a3048cdc0e8e4aef5d68353b5434f0c0e074dc672b6c0abf25a5a64bc5cc8f4`
+- SHA-256 (`settings.svg`): `437c253a1c11ff214c490c766f2a3cdcf8547399fd0be48a7d222bf0703aefb5`
 - License: [MIT](resources/icons/iconoir/LICENSE)
+
+Bundled theme provenance:
+
+- Asset: Gruvbox 2.0.0 medium-contrast light and dark palettes
+- Commit: `7fde9c10ceff684529c1646bf759af3a25bb576c`
+- Source: <https://github.com/morhetz/gruvbox/blob/v2.0.0/colors/gruvbox.vim>
+- Source SHA-256: `5ec3ecbd5fb5e17fcf031aeeb44c854ccc0e25ce050c1e5a9f9baff97d00dfdb`
+- Local values: [resources/themes/gruvbox/palette.txt](resources/themes/gruvbox/palette.txt)
+- Bundled SHA-256: `d586b72a02d9ef391fa1628c1ca03a70350342b4282a69d721fbf9e2e0dfedb1`
+- License: [MIT](resources/themes/gruvbox/LICENSE)
+
+- Asset: Catppuccin Palette 1.8.0
+- Commit: `07d02aa110ef9eb7e7427afca5c73ba9cf7f8ebd`
+- Source: <https://github.com/catppuccin/palette/blob/v1.8.0/palette.json>
+- Source SHA-256: `4bc114bb6b3c9a9c9e156564aa84625aef32c5da514d9dd431cf1fcad433a05f`
+- Local values: [resources/themes/catppuccin/palette.txt](resources/themes/catppuccin/palette.txt)
+- Bundled SHA-256: `d7f47929d551d8370419718f7a4c653fd79b93f20286a04830a93fc27fe55951`
+- License: [MIT](resources/themes/catppuccin/LICENSE)
 
 Bundled holiday data:
 

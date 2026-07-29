@@ -56,20 +56,11 @@ calendar_window_controls_reach_top_edge_test :: proc(t: ^testing.T) {
 }
 
 @(test)
-calendar_theme_switch_uses_opposite_theme_label_test :: proc(t: ^testing.T) {
-	testing.expect_value(t, calendar_theme_toggle_label(false), "DARK")
-	testing.expect_value(t, calendar_theme_toggle_label(true), "LIGHT")
-	testing.expect(t, calendar_theme_is_dark("dark"))
-	testing.expect(t, !calendar_theme_is_dark("light"))
-}
-
-@(test)
-calendar_theme_switch_precedes_header_actions_test :: proc(t: ^testing.T) {
-	theme := calendar_ui_theme_rect_for_size(896, 760)
-	today := Calendar_UI_Rect{626, 729, 76, 30}
-	testing.expect_value(t, theme, Calendar_UI_Rect{554, 729, 64, 30})
-	testing.expect_value(t, today, Calendar_UI_Rect{626, 729, 76, 30})
-	testing.expect_value(t, today.x-(theme.x+theme.w), 8.0)
+calendar_settings_control_precedes_title_without_overlap_test :: proc(t: ^testing.T) {
+	settings := calendar_ui_window_control_rect_for_height(3, 760)
+	title := Calendar_UI_Rect{160, 729, 360, 30}
+	testing.expect_value(t, settings, Calendar_UI_Rect{114, 730, 30, 30})
+	testing.expect_value(t, title.x-(settings.x+settings.w), 16.0)
 }
 
 @(test)
@@ -78,10 +69,16 @@ calendar_details_layout_splits_default_content_width_test :: proc(t: ^testing.T)
 		CALENDAR_DEFAULT_WINDOW_WIDTH,
 		CALENDAR_DEFAULT_WINDOW_HEIGHT,
 	)
-	testing.expect_value(t, calendar.w, 624.0)
-	testing.expect_value(t, details.w, 624.0)
-	testing.expect_value(t, details.x-(calendar.x+calendar.w), 8.0)
-	testing.expect_value(t, calendar.h, 656.0)
+	testing.expect_value(t, calendar.x, CALENDAR_LAYOUT_MARGIN)
+	testing.expect_value(t, calendar.w, 632.0)
+	testing.expect_value(t, details.w, 632.0)
+	testing.expect_value(
+		t,
+		details.x-(calendar.x+calendar.w),
+		CALENDAR_PANEL_GAP,
+	)
+	testing.expect_value(t, details.x+details.w, 1274.0)
+	testing.expect_value(t, calendar.h, 674.0)
 }
 
 @(test)
@@ -89,12 +86,24 @@ calendar_action_bar_uses_three_fixed_slots_test :: proc(t: ^testing.T) {
 	first := calendar_ui_action_rect_for_width(0, 1280)
 	second := calendar_ui_action_rect_for_width(1, 1280)
 	third := calendar_ui_action_rect_for_width(2, 1280)
-	testing.expect_value(t, first.x, 12.0)
+	testing.expect_value(t, first.x, CALENDAR_LAYOUT_MARGIN)
 	testing.expect_value(t, first.y, CALENDAR_ACTION_BAR_BOTTOM)
 	testing.expect_value(t, first.h, CALENDAR_ACTION_BAR_HEIGHT)
 	testing.expect_value(t, second.x-(first.x+first.w), CALENDAR_ACTION_BAR_GAP)
 	testing.expect_value(t, third.x-(second.x+second.w), CALENDAR_ACTION_BAR_GAP)
-	testing.expect_value(t, third.x+third.w, 1268.0)
+	testing.expect_value(t, third.x+third.w, 1274.0)
+}
+
+@(test)
+calendar_day_list_stops_above_action_bar_test :: proc(t: ^testing.T) {
+	count := calendar_ui_visible_day_count_for_height(
+		CALENDAR_DEFAULT_WINDOW_HEIGHT,
+	)
+	testing.expect_value(t, count, 22)
+	last_y := CALENDAR_DEFAULT_WINDOW_HEIGHT-CALENDAR_HEADER_HEIGHT-
+	          CALENDAR_DAY_TOP_GAP-
+	          CALENDAR_DAY_ROW_PITCH*f64(count-1)-CALENDAR_DAY_ROW_HEIGHT
+	testing.expect(t, last_y >= CALENDAR_CONTENT_BOTTOM)
 }
 
 @(test)

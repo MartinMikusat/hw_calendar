@@ -1,0 +1,8 @@
+Catppuccin Palette 1.8.0
+Commit: 07d02aa110ef9eb7e7427afca5c73ba9cf7f8ebd
+Source: https://github.com/catppuccin/palette/blob/v1.8.0/palette.json
+Source SHA-256: 4bc114bb6b3c9a9c9e156564aa84625aef32c5da514d9dd431cf1fcad433a05f
+
+The application uses the official base, mantle, crust, surface0, surface1,
+text, subtext1, overlay1, red, peach, green, teal, blue, mauve, and yellow
+values from the Latte, Frappé, Macchiato, and Mocha flavors.
