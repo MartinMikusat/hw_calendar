@@ -11,7 +11,6 @@ import CF "core:sys/darwin/CoreFoundation"
 import command_palette "command_palette:."
 import flash "flash:."
 import text_input "components:text_input"
-import hot_reload "../dev/hot_reload_contract"
 
 foreign import metal "system:Metal.framework"
 foreign metal {
@@ -5160,9 +5159,7 @@ calendar_launch_should_activate :: proc(
 	return !launch_in_background
 }
 
-calendar_gui_initialize :: proc(
-	services: ^hot_reload.Host_Services = nil,
-) -> bool {
+calendar_gui_initialize :: proc() -> bool {
 	if !objc_initialize() {
 		fmt.eprintln("HW Calendar could not initialize the Objective-C runtime.")
 		return false
@@ -5215,20 +5212,10 @@ calendar_gui_initialize :: proc(
 	}
 	calendar_ui.holiday_countries = calendar_holiday_countries_load()
 	calendar_ui_reload_data()
-	app := Id(nil)
-	view_class := Id(nil)
-	window_class := Id(nil)
-	if services == nil {
-		app = msg_id(objc_getClass("NSApplication"), sel_registerName("sharedApplication"))
-		calendar_register_accessibility_class()
-		view_class = calendar_register_classes()
-		window_class = calendar_register_window_class()
-	} else {
-		app = Id(services.app)
-		calendar_ui.delegate = Id(services.delegate)
-		view_class = Id(services.view_class)
-		window_class = Id(services.window_class)
-	}
+	app := msg_id(objc_getClass("NSApplication"), sel_registerName("sharedApplication"))
+	calendar_register_accessibility_class()
+	view_class := calendar_register_classes()
+	window_class := calendar_register_window_class()
 	calendar_ui.app = app
 	msg_void_i(app, sel_registerName("setActivationPolicy:"), 0)
 	msg_void_id(app, sel_registerName("setDelegate:"), calendar_ui.delegate)
@@ -5272,35 +5259,31 @@ calendar_gui_initialize :: proc(
 		fmt.eprintln("HW Calendar could not compile its Metal pipelines.")
 		return false
 	}
-	if services == nil {
-		timer_send := transmute(proc "c" (
-			Id, Sel, f64, Id, Sel, Id, bool,
-		) -> Id)objc_send_address
-		frame_timer := timer_send(
-			objc_getClass("NSTimer"),
-			sel_registerName("scheduledTimerWithTimeInterval:target:selector:userInfo:repeats:"),
-			1.0/60.0,
-			calendar_ui.delegate,
-			sel_registerName("calendarFrame:"),
-			nil,
-			true,
-		)
-		main_run_loop := msg_id(
-			objc_getClass("NSRunLoop"),
-			sel_registerName("mainRunLoop"),
-		)
-		msg_void_id_id(
-			main_run_loop,
-			sel_registerName("addTimer:forMode:"),
-			frame_timer,
-			nsstring("NSEventTrackingRunLoopMode"),
-		)
-	}
+	timer_send := transmute(proc "c" (
+		Id, Sel, f64, Id, Sel, Id, bool,
+	) -> Id)objc_send_address
+	frame_timer := timer_send(
+		objc_getClass("NSTimer"),
+		sel_registerName("scheduledTimerWithTimeInterval:target:selector:userInfo:repeats:"),
+		1.0/60.0,
+		calendar_ui.delegate,
+		sel_registerName("calendarFrame:"),
+		nil,
+		true,
+	)
+	main_run_loop := msg_id(
+		objc_getClass("NSRunLoop"),
+		sel_registerName("mainRunLoop"),
+	)
+	msg_void_id_id(
+		main_run_loop,
+		sel_registerName("addTimer:forMode:"),
+		frame_timer,
+		nsstring("NSEventTrackingRunLoopMode"),
+	)
 	msg_void_id(calendar_ui.window, sel_registerName("makeFirstResponder:"), calendar_ui.view)
-	launch_in_background := services != nil && services.launch_in_background
 	if calendar_launch_should_activate(
 		os.get_env("HW_CALENDAR_ACTIVATE_ON_LAUNCH"),
-		launch_in_background,
 	) {
 		msg_void_id(calendar_ui.window, sel_registerName("makeKeyAndOrderFront:"), nil)
 		msg_void_i(app, sel_registerName("activateIgnoringOtherApps:"), 1)

@@ -3,8 +3,6 @@ package main
 import "core:fmt"
 import "core:os"
 
-HOT_RELOAD_MODULE :: #config(HOT_RELOAD_MODULE, false)
-
 calendar_process_main :: proc(args := os.args) {
 	defer calendar_database_close()
 	defer calendar_cli_database_release()
@@ -52,8 +50,6 @@ calendar_process_main :: proc(args := os.args) {
 	run_calendar_gui()
 }
 
-when !HOT_RELOAD_MODULE {
-	main :: proc() {
-		calendar_process_main()
-	}
+main :: proc() {
+	calendar_process_main()
 }
