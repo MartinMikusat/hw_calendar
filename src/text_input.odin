@@ -507,17 +507,7 @@ calendar_text_offset_at_point :: proc(
 ) -> int {
 	target := calendar_text_target(field)
 	if target == nil || len(target^) == 0 {return 0}
-	font_text := "Iosevka"
-	font_name := CFStringCreateWithBytes(
-		nil,
-		raw_data(transmute([]u8)font_text),
-		CF.Index(len(font_text)),
-		CF.StringEncoding(0x08000100),
-		false,
-	)
-	if font_name == nil {return 0}
-	font := CTFontCreateWithName(font_name, 11*calendar_ui.scale, nil)
-	CFRelease(font_name)
+	font := calendar_system_monospaced_font(11*calendar_ui.scale)
 	if font == nil {return 0}
 	defer CFRelease(font)
 	run := calendar_text_run(font, target^)

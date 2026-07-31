@@ -58,11 +58,6 @@ foreign core_graphics {
 
 foreign import core_text "system:CoreText.framework"
 foreign core_text {
-	CTFontCreateWithName :: proc "c" (
-		name: rawptr,
-		size: f64,
-		transform: rawptr,
-	) -> rawptr ---
 	CTLineCreateWithAttributedString :: proc "c" (string: rawptr) -> rawptr ---
 	CTLineGetTypographicBounds :: proc "c" (
 		line: rawptr,
@@ -84,6 +79,7 @@ foreign core_text {
 
 foreign import calendar_core_foundation "system:CoreFoundation.framework"
 foreign calendar_core_foundation {
+	CFRetain :: proc "c" (value: rawptr) -> rawptr ---
 	CFStringCreateWithBytes :: proc "c" (
 		allocator: CF.TypeRef,
 		bytes: [^]u8,
@@ -317,6 +313,17 @@ CALENDAR_WINDOW_MINIMIZE_STYLE :: uint(15)
 CALENDAR_WINDOW_RESIZE_INSET :: 6.0
 CALENDAR_WINDOW_MIN_WIDTH :: 640.0
 CALENDAR_WINDOW_MIN_HEIGHT :: 480.0
+
+calendar_system_monospaced_font :: proc(size: f64) -> rawptr {
+	font := msg_id_f64_f64(
+		objc_getClass("NSFont"),
+		sel_registerName("monospacedSystemFontOfSize:weight:"),
+		size,
+		0,
+	)
+	if font == nil {return nil}
+	return CFRetain(font)
+}
 
 calendar_msg_void_size :: proc(receiver: Id, selector: Sel, size: Size) {
 	p := transmute(proc "c" (Id, Sel, Size))objc_send_address
@@ -4029,16 +4036,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 	if ctx == nil {return pixels}
 	defer CGContextRelease(ctx)
 	CGContextClearRect(ctx, {{0, 0}, {f64(width), f64(height)}})
-	font_text := "Iosevka"
-	font_name := CFStringCreateWithBytes(
-		nil,
-		raw_data(transmute([]u8)font_text),
-		CF.Index(len(font_text)),
-		CF.StringEncoding(0x08000100),
-		false,
-	)
-	font := CTFontCreateWithName(font_name, 11*calendar_ui.scale, nil)
-	CFRelease(font_name)
+	font := calendar_system_monospaced_font(11*calendar_ui.scale)
 	if font == nil {return pixels}
 	defer CFRelease(font)
 	theme := calendar_theme(calendar_ui.theme_id)

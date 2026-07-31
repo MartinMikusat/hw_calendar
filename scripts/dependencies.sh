@@ -34,11 +34,6 @@ check_one hw_odin_ui_flash https://github.com/MartinMikusat/hw_odin_ui_flash.git
 check_one hw_odin_ui_commandPalette https://github.com/MartinMikusat/hw_odin_ui_commandPalette.git 72312d2f67cfc3d2ebc6a62fdbb1ba5bbc4e335f
 check_one hw_odin_ui_components https://github.com/MartinMikusat/hw_odin_ui_components.git fddcea1b1a2dbccab7fdd7f130688d5af273a8d2
 
-if [ ! -f "$ROOT/resources/fonts/Iosevka-Regular.ttf" ]; then
-  echo "[hw_calendar] missing bundled Iosevka font" >&2
-  exit 1
-fi
-
 if [ ! -f "$ROOT/resources/holidays/sk.json" ]; then
   echo "[hw_calendar] missing bundled Slovak holiday data" >&2
   exit 1

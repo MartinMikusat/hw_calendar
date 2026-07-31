@@ -50,7 +50,6 @@ fingerprint() {
     "$ROOT"/scripts/*.sh \
     "$ROOT"/Info.plist \
     "$ROOT"/dependencies.lock \
-    "$ROOT"/resources/fonts/* \
     "$ROOT"/resources/icons/iconoir/* \
     "$ROOT"/resources/holidays/* \
     2>/dev/null | shasum | cut -d' ' -f1

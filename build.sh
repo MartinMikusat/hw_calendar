@@ -6,7 +6,6 @@ MATCH_SORTER_ROOT="$ROOT/../hw_odin_matchSorter"
 UI_FLASH_ROOT="$ROOT/../hw_odin_ui_flash"
 COMMAND_PALETTE_ROOT="$ROOT/../hw_odin_ui_commandPalette"
 COMPONENTS_ROOT="$ROOT/../hw_odin_ui_components"
-FONT_ROOT="$ROOT/resources/fonts"
 ICON_ROOT="$ROOT/resources/icons/iconoir"
 HOLIDAY_ROOT="$ROOT/resources/holidays"
 
@@ -35,10 +34,9 @@ case "$MODE" in
     ;;
 esac
 
-rm -rf "$APP/Contents/Resources/Themes"
+rm -rf "$APP/Contents/Resources/Themes" "$APP/Contents/Resources/Fonts"
 mkdir -p \
   "$APP/Contents/MacOS" \
-  "$APP/Contents/Resources/Fonts" \
   "$APP/Contents/Resources/Icons/Iconoir" \
   "$APP/Contents/Resources/Holidays"
 EXECUTABLE="$APP/Contents/MacOS/HWCalendar"
@@ -52,8 +50,6 @@ odin build "$ROOT/src" -out:"$EXECUTABLE" "$@" \
   -collection:components="$COMPONENTS_ROOT" \
   -extra-linker-flags:"-framework AppKit -framework Foundation -framework Metal -framework QuartzCore -framework CoreText -framework CoreGraphics -framework UserNotifications"
 cp "$ROOT/Info.plist" "$APP/Contents/Info.plist"
-cp "$FONT_ROOT/Iosevka-Regular.ttf" "$APP/Contents/Resources/Fonts/Iosevka-Regular.ttf"
-cp "$FONT_ROOT/IOSEVKA-LICENSE.md" "$APP/Contents/Resources/Fonts/IOSEVKA-LICENSE.md"
 cp "$ICON_ROOT/xmark.svg" "$APP/Contents/Resources/Icons/Iconoir/xmark.svg"
 cp "$ICON_ROOT/minus.svg" "$APP/Contents/Resources/Icons/Iconoir/minus.svg"
 cp "$ICON_ROOT/maximize.svg" "$APP/Contents/Resources/Icons/Iconoir/maximize.svg"
