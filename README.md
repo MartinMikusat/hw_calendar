@@ -9,6 +9,16 @@ Models used:
 
 - **gpt-5.6-sol**
 
+## Future product direction
+
+The future product direction is a local personal agenda rather than a general
+calendar client. It will store one unstructured stream of personal entries and
+let a local agent infer what matters when the user asks for a daily or weekly
+summary. See [`../notes/hw-calendar-personal-agenda-direction.md`](../notes/hw-calendar-personal-agenda-direction.md).
+
+The current EventKit, iCalendar, and calendar-client behavior remains observed
+implementation. It is not the target of the next product refactor.
+
 ## Current interface
 
 The application shows a continuous vertical day list. Event rows use Ochre for
