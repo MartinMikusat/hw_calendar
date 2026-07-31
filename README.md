@@ -1,7 +1,8 @@
-# HW Calendar
+# HW Agenda
 
-An Apple Silicon macOS calendar that renders a continuous list of days through
-Metal and stores local calendar data as RFC 5545 iCalendar components.
+HW Agenda is a local personal agenda for Apple Silicon macOS. It stores one
+unstructured stream of entries and renders confirmed dates in a Metal period
+view.
 
 ## AI-assisted development disclosure
 
@@ -9,183 +10,104 @@ Models used:
 
 - **gpt-5.6-sol**
 
-## Future product direction
+## Product contract
 
-The future product direction is a local personal agenda rather than a general
-calendar client. It will store one unstructured stream of personal entries and
-let a local agent infer what matters when the user asks for a daily or weekly
-summary. See [`../notes/hw-calendar-personal-agenda-direction.md`](../notes/hw-calendar-personal-agenda-direction.md).
+The original entry text is authoritative. An entry can also contain confirmed
+start, end, due, location, source URL, reminder, and recurrence values. These
+values support deterministic display and scheduling. They do not create
+user-facing entry types.
 
-The current EventKit, iCalendar, and calendar-client behavior remains observed
-implementation. It is not the target of the next product refactor.
+An external local agent can list entries and submit an interpretation proposal.
+The proposal cannot change the entry. A person must confirm the proposal before
+the application stores its temporal fields or schedules its reminder.
 
-## Current interface
+The application has no calendar-account integration. It does not implement
+EventKit synchronization, CalDAV, iCalendar import, iCalendar export, or
+invitation transport. Automatic discovery of city events is also outside the
+current product boundary.
 
-The application shows a continuous vertical day list. Event rows use Ochre for
-the `PERSONAL` category and Forest for the `WORK` category. An important event
-contains `X-HW-IMPORTANT:TRUE`, and every date touched by that event uses a
-Coffee background.
+## Interface
 
-Use the gear control or `Command-,` to open the two-column Settings modal.
-Search the modal or select `Styling` to choose HW Light or HW Dark. The
-application stores the selected theme in its local database.
+The main interface shows a chronological period. Dated entries, due recurring
+work, and enabled holidays share this view. An entry without a confirmed date
+remains available through search and the structured command interface.
 
-Select `Shortcuts` to configure the Flash leader key. The recorder accepts a
-logical key with an exact combination of Control, Option, Shift, and Command.
-It reports collisions before Save and provides explicit Save, Reset, and
-Cancel actions.
+The entry editor keeps natural-language text as its primary field. The shared
+control registry routes pointer, numbered keyboard, Accessibility, Flash, and
+command-menu activation through typed application actions.
 
-The command palette can enable or disable each bundled country holiday
-calendar. Slovakia is enabled by default. Its read-only entries use official
-Slovak names and include state holidays, statutory holidays, and memorial days
-from 2026 onward. Holiday search results jump to the next matching date.
+Use the gear control or `Command-,` to open Settings. Settings contains theme
+and Flash shortcut configuration. The application stores these preferences in
+its local database.
 
-Press the configured Flash leader when no text field has focus to activate
-Flash labels. The default leader is `/`. Press `Control-K` to open the command
-palette. It executes direct application actions, including theme selection and
-Settings configuration. It keeps unavailable actions visible with their
-reason. Global search ranks bundled holiday names and the stored event fields
-`SUMMARY`, `DESCRIPTION`, `LOCATION`, `URL`, `CATEGORIES`, and `UID` through
-`hw_odin_matchSorter`.
+## Structured commands
 
-Select an event or the New Event control to open the Metal event editor. The
-editor exposes the same controls to pointer input, Accessibility, and Flash.
-
-Focused items expose a numbered action bar. Press `11` to edit, `12` to open
-the URL, or `13` to archive. The first digit remains active for one second.
-Escape or an invalid sequence clears it. Modal actions use one digit from left
-to right. Archived events remain in local storage, but the calendar, search,
-navigation, and reminders exclude them.
-
-The application uses a square borderless window by product requirement. Its
-project-drawn close, minimize, and zoom controls call the corresponding AppKit
-operations and use the shared pointer, Accessibility, and Flash registry.
-
-## RFC 5545 data
-
-The iCalendar engine parses the complete RFC 5545 component tree. It preserves
-unknown IANA and `X-` properties, parameters, property order, and original
-content lines for unchanged data. Edited content serializes in canonical
-iCalendar form with CRLF line endings and 75-octet folding.
-
-The recurrence engine accepts the complete `RECUR` grammar, including all
-frequencies, all `BY*` rules, `BYSETPOS`, `WKST`, `RDATE`, `EXDATE`,
-`RECURRENCE-ID`, and `RANGE=THISANDFUTURE`.
-
-The GUI edits `VEVENT` components. Raw validate, import, and export commands
-accept every component type. Dedicated JSON create, update, delete, list, and
-search commands operate on `VEVENT`. Version one does not implement CalDAV or
-invitation transport.
-
-## Command-line control
-
-Each command returns one JSON object on standard output. Write operations read
-one versioned JSON document from standard input.
+Each command writes one JSON result to standard output. A mutation reads one
+versioned JSON document from standard input.
 
 ```sh
-build/hw-calendar event list --from 2026-07-01 --to 2026-08-01
-build/hw-calendar event search --query review
-build/hw-calendar recurrence expand --rule 'FREQ=WEEKLY;BYDAY=MO' \
-  --start 20260727T090000 --from 2026-07-01 --to 2026-09-01
-build/hw-calendar ical validate < calendar.ics
-build/hw-calendar ical import < calendar.ics
-build/hw-calendar ical export --all --output calendar.ics
+build/hw-calendar entry create < entry.json
+build/hw-calendar entry get --id 1
+build/hw-calendar entry list
+build/hw-calendar entry search --query bathroom
+build/hw-calendar entry update --id 1 --if-revision 2 < entry.json
+build/hw-calendar entry complete --id 1 --if-revision 2
+build/hw-calendar entry reopen --id 1 --if-revision 3
+build/hw-calendar entry dismiss --id 1 --if-revision 3
+build/hw-calendar entry restore --id 1 --if-revision 4
+build/hw-calendar agenda query --from 1767225600 --to 1767830400
+build/hw-calendar proposal submit < proposal.json
+build/hw-calendar proposal get --id 1
+build/hw-calendar proposal confirm --id 1
+build/hw-calendar proposal reject --id 1
 build/hw-calendar reminder status
 build/hw-calendar ui snapshot
 build/hw-calendar ui check --baseline /path/to/snapshot.json
 ```
 
-The GUI owns the SQLite database while it runs. CLI requests use the GUI's
-private local socket. When the GUI is closed, the CLI locks and updates the
-database directly.
+Every entry mutation uses an expected revision. A proposal also records its
+source revision. The application rejects stale mutations and stale proposals.
 
-## Native reminders
+The GUI owns the SQLite database while it runs. Commands use the GUI's private
+local socket in that state. When the GUI is closed, a command locks and opens
+the database directly.
 
-The application executes RFC `VALARM` components with `ACTION:DISPLAY` through
-macOS User Notifications. It preserves `AUDIO` and `EMAIL` alarms without
-executing them. Clicking a reminder opens its exact occurrence. The Snooze
-action schedules another native reminder ten minutes later.
-
-The application schedules the next 48 reminders at launch, after each calendar
-mutation, and once per hour while it runs. macOS can deliver those requests
-while the application is not running.
+The agenda uses `agenda.sqlite3`. On the first agenda launch, the application
+renames an unused `calendar.sqlite3` file to `calendar-unused.sqlite3`. It does
+not read or migrate records from that file.
 
 ## Development
 
-Install Odin and keep the sibling libraries beside this repository:
+Install Odin and keep the pinned sibling libraries beside this repository.
 
 ```sh
 ./test.sh
 ./build.sh
 ./dev.sh
-./scripts/libical-oracle.sh
+./dev.sh asan
 ```
 
-Editable fields use the `text_input` package from
-`hw_odin_ui_components`. The package owns editing state and mutations. The
-application owns strings, CoreText measurement, Metal drawing, AppKit event
-routing, and application actions.
+The development watcher rebuilds the complete executable. It replaces the
+running process only after a successful build and leaves the application behind
+active windows.
 
-`./dev.sh` builds a stable AppKit host and loads the application from a
-generation-specific dylib. A source edit builds a new dylib. The host swaps it
-at a frame boundary and preserves the window, current view, editor state,
-database connection, and UI allocations. It defers the swap while CLI or
-notification work is active.
+The interface requests AppKit's system monospaced font. It does not hard-code
+or bundle the concrete font family.
 
-Changes to the host contract, application metadata, or bundled resources
-rebuild and restart the host. An incompatible state layout also requests a
-controlled restart with exit status 75. A failed module build leaves the
-current generation active. `./dev.sh asan` uses the same reload path with
-AddressSanitizer instrumentation. Release mode keeps the full rebuild path.
-Every `./dev.sh` launch orders the window behind active applications. Launch
-the app directly when it must activate and move to the front.
-A watcher lock prevents a second `./dev.sh` invocation from opening another
-application instance.
+Bundled icons:
 
-The build pins every sibling origin and commit in
-[`dependencies.lock`](dependencies.lock). The test-only differential oracle is
-libical 4.0.5 at commit
-`0a1a1d81304ae63ffe24e43b8d1fb1e9b03c635c`. It is not linked into the
-application.
-
-Bundled font provenance:
-
-- Asset: Iosevka Regular 34.7.0
-- Source: <https://github.com/be5invis/Iosevka/releases/download/v34.7.0/PkgTTF-Iosevka-34.7.0.zip>
-- SHA-256: `2fe6f742431e66f218b713ecca986370612bc27594a96a8ab45a41e9ebbaf5e3`
-- License: [SIL Open Font License, Version 1.1](resources/fonts/IOSEVKA-LICENSE.md)
-
-Bundled icon provenance:
-
-- Assets: Iconoir regular `xmark`, `minus`, `maximize`, and `settings`
-- Version: 7.11.1, commit `59e3d5d969c59b3fb652a556795e08c1b3371c5b`
-- Source files: <https://github.com/iconoir-icons/iconoir/tree/v7.11.1/icons/regular>
-- SHA-256 (`xmark.svg`): `61aa0a4913a440aaafcc45064a87e24fe8eb22ba4abc4c5ef020530928ed8daf`
-- SHA-256 (`minus.svg`): `babb05bca016bffdd38cbd1dcaeef6ccdf42fc8654124dee169a412eeed6d425`
-- SHA-256 (`maximize.svg`): `3a3048cdc0e8e4aef5d68353b5434f0c0e074dc672b6c0abf25a5a64bc5cc8f4`
-- SHA-256 (`settings.svg`): `437c253a1c11ff214c490c766f2a3cdcf8547399fd0be48a7d222bf0703aefb5`
+- Iconoir Regular 7.11.1 at commit `59e3d5d969c59b3fb652a556795e08c1b3371c5b`
+- Source: <https://github.com/iconoir-icons/iconoir/tree/v7.11.1/icons/regular>
 - License: [MIT](resources/icons/iconoir/LICENSE)
 
 Bundled holiday data:
 
-- Asset: Slovak state holidays, statutory holidays, and memorial days
-- Effective range: Current definitions from 2026 onward
-- Source: [Act 241/1993, effective November 1, 2025](https://static.slov-lex.sk/static/SK/ZZ/1993/241/20251101.print.html)
-- Retrieved: July 28, 2026
+- Slovak holidays from 2026 onward
+- Source: <https://static.slov-lex.sk/static/SK/ZZ/1993/241/20251101.print.html>
 - SHA-256: `3555b57422a8bc6aa11d7f861fdfca106bc5eb1c423148a13b5a2f7574c5452f`
-- Local data: [resources/holidays/sk.json](resources/holidays/sk.json)
-
-The JSON is a project-authored transcription. The application does not bundle
-a third-party holiday data file.
-
-Test-only oracle provenance:
-
-- Asset: libical 4.0.5 source
-- Source: <https://github.com/libical/libical/tree/0a1a1d81304ae63ffe24e43b8d1fb1e9b03c635c>
-- License: MPL-2.0 or LGPL-2.1
-- License location when fetched: `build/test-deps/libical/LICENSE.txt`
+- Data: [resources/holidays/sk.json](resources/holidays/sk.json)
 
 ## Release TODO
 
-Produce a Developer ID-signed and notarized application bundle. Verify native
-notification delivery from the signed bundle while the application is closed.
+Produce a Developer ID-signed and notarized build. Verify confirmed native
+reminder delivery while the application is closed.

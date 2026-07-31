@@ -111,6 +111,9 @@ calendar_ui_diagnostic_action_name :: proc(action: Calendar_UI_Action) -> string
 	case .Settings_Search: return "settings-search"
 	case .Command_Palette_Search: return "command-palette-search"
 	case .Set_Theme: return "set-theme"
+	case .Request_Calendar_Access: return "request-calendar-access"
+	case .Toggle_Connected_Calendar: return "toggle-connected-calendar"
+	case .Set_Default_Connected_Calendar: return "set-default-connected-calendar"
 	case .Configure_Flash: return "configure-flash"
 	case .Shortcut_Record: return "shortcut-record"
 	case .Shortcut_Save: return "shortcut-save"
@@ -118,21 +121,28 @@ calendar_ui_diagnostic_action_name :: proc(action: Calendar_UI_Action) -> string
 	case .Shortcut_Cancel: return "shortcut-cancel"
 	case .Today: return "today"
 	case .Search: return "search"
-	case .New_Event: return "new-event"
-	case .Open_Event: return "open-event"
-	case .Jump_Event: return "jump-event"
+	case .New_Event: return "new-entry"
+	case .Open_Event: return "open-entry"
+	case .Jump_Event: return "jump-entry"
 	case .Toggle_Holiday_Country: return "toggle-holiday-country"
 	case .Jump_Holiday: return "jump-holiday"
-	case .Focus_Event: return "focus-event"
+	case .Focus_Event: return "focus-entry"
 	case .Focus_Holiday: return "focus-holiday"
 	case .Action_Edit: return "action-edit"
 	case .Action_Open_URL: return "action-open-url"
-	case .Action_Archive: return "action-archive"
+	case .Action_Archive: return "action-dismiss"
+	case .Action_Complete: return "action-complete"
+	case .Action_Confirm_Proposal: return "action-confirm-proposal"
+	case .Action_Reject_Proposal: return "action-reject-proposal"
+	case .Action_Copy_To_Connected: return "action-copy-to-connected"
+	case .Action_Open_In_Apple_Calendar: return "action-open-in-apple-calendar"
 	case .Archive_Cancel: return "archive-cancel"
 	case .Archive_Occurrence: return "archive-occurrence"
 	case .Archive_Series: return "archive-series"
 	case .Editor_Field: return "editor-field"
 	case .Editor_Important: return "editor-important"
+	case .Editor_All_Day: return "editor-all-day"
+	case .Editor_Calendar: return "editor-calendar"
 	case .Editor_Save: return "editor-save"
 	case .Editor_Delete: return "editor-delete"
 	case .Editor_Cancel: return "editor-cancel"
@@ -145,9 +155,11 @@ calendar_ui_diagnostic_role :: proc(action: Calendar_UI_Action) -> string {
 	   action == .Command_Palette_Search {
 		return "AXTextField"
 	}
-	if action == .Set_Theme || action == .Settings_Category {
+	if action == .Set_Theme || action == .Settings_Category ||
+	   action == .Set_Default_Connected_Calendar {
 		return "AXRadioButton"
 	}
+	if action == .Toggle_Connected_Calendar {return "AXCheckBox"}
 	return "AXButton"
 }
 

@@ -15,7 +15,7 @@ calendar_text_field :: proc(id: text_input.Field_ID) -> Calendar_Text_Field {
 }
 
 calendar_text_editor_field :: proc(index: int) -> Calendar_Text_Field {
-	if index < 0 || index >= 7 {return .None}
+	if index < 0 || index >= 10 {return .None}
 	return Calendar_Text_Field(int(Calendar_Text_Field.Editor_Summary)+index)
 }
 
@@ -27,8 +27,11 @@ calendar_text_target :: proc(field: Calendar_Text_Field) -> ^string {
 	case .Editor_Start: return &calendar_ui.editor_start
 	case .Editor_End: return &calendar_ui.editor_end
 	case .Editor_Location: return &calendar_ui.editor_location
+	case .Editor_URL: return &calendar_ui.editor_url
 	case .Editor_Categories: return &calendar_ui.editor_categories
 	case .Editor_Description: return &calendar_ui.editor_description
+	case .Editor_Time_Zone: return &calendar_ui.editor_time_zone
+	case .Editor_Alarms: return &calendar_ui.editor_alarms
 	case .Editor_RRule: return &calendar_ui.editor_rrule
 	case .None:
 	}
@@ -51,7 +54,8 @@ calendar_text_field_rect :: proc(field: Calendar_Text_Field) -> Calendar_UI_Rect
 	case .Settings_Search:
 		return calendar_settings_search_rect()
 	case .Editor_Summary, .Editor_Start, .Editor_End, .Editor_Location,
-	     .Editor_Categories, .Editor_Description, .Editor_RRule:
+	     .Editor_URL, .Editor_Categories, .Editor_Description,
+	     .Editor_Time_Zone, .Editor_Alarms, .Editor_RRule:
 		return calendar_ui_editor_field_rect(
 			int(field)-int(Calendar_Text_Field.Editor_Summary),
 		)
@@ -118,7 +122,8 @@ calendar_text_changed :: proc(field: Calendar_Text_Field) {
 			calendar_ui.settings_query = replace
 		}
 	case .None, .Editor_Summary, .Editor_Start, .Editor_End,
-	     .Editor_Location, .Editor_Categories, .Editor_Description,
+	     .Editor_Location, .Editor_URL, .Editor_Categories,
+	     .Editor_Description, .Editor_Time_Zone, .Editor_Alarms,
 	     .Editor_RRule:
 	}
 	calendar_ui.needs_redraw = true

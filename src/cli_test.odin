@@ -1,0 +1,43 @@
+package main
+
+import "core:strings"
+import "core:testing"
+
+@(test)
+calendar_cli_parses_agenda_commands_test :: proc(t: ^testing.T) {
+	request, result, parsed := calendar_cli_parse([]string{
+		"entry", "update", "--id", "7", "--if-revision", "3",
+	})
+	defer delete(result.output)
+	testing.expect(t, parsed)
+	testing.expect_value(t, request.command, Calendar_CLI_Command.Entry_Update)
+	testing.expect_value(t, request.id, "7")
+	testing.expect_value(t, request.if_revision, 3)
+	testing.expect(t, calendar_cli_command_mutates_database(request.command))
+}
+
+@(test)
+calendar_cli_rejects_removed_calendar_commands_test :: proc(t: ^testing.T) {
+	removed := [4][]string{
+		{"ical", "import"},
+		{"event", "list"},
+		{"calendar", "list"},
+		{"recurrence", "expand"},
+	}
+	for command in removed {
+		_, result, parsed := calendar_cli_parse(command)
+		testing.expect(t, !parsed)
+		testing.expect(t, strings.contains(result.output, "Unknown command"))
+		delete(result.output)
+	}
+}
+
+@(test)
+calendar_cli_requires_positive_revision_test :: proc(t: ^testing.T) {
+	_, result, parsed := calendar_cli_parse([]string{
+		"entry", "complete", "--id", "1", "--if-revision", "0",
+	})
+	defer delete(result.output)
+	testing.expect(t, !parsed)
+	testing.expect(t, strings.contains(result.output, "positive integer"))
+}

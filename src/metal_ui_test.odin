@@ -3,6 +3,35 @@ package main
 import "core:testing"
 import flash "flash:."
 
+@(test)
+calendar_editor_all_day_conversion_uses_exclusive_end_date_test :: proc(
+	t: ^testing.T,
+) {
+	start, _ := ical_parse_date_time("20260730T090000")
+	end, _ := ical_parse_date_time("20260730T100000")
+	all_day_start, all_day_end := calendar_editor_toggle_all_day_dates(
+		start,
+		end,
+		true,
+	)
+	testing.expect(t, all_day_start.is_date)
+	testing.expect(t, all_day_end.is_date)
+	testing.expect_value(t, all_day_start.day, 30)
+	testing.expect_value(t, all_day_end.day, 31)
+
+	timed_start, timed_end := calendar_editor_toggle_all_day_dates(
+		all_day_start,
+		all_day_end,
+		false,
+	)
+	testing.expect(t, !timed_start.is_date)
+	testing.expect(t, !timed_end.is_date)
+	testing.expect_value(t, timed_start.day, 30)
+	testing.expect_value(t, timed_start.hour, 9)
+	testing.expect_value(t, timed_end.day, 30)
+	testing.expect_value(t, timed_end.hour, 10)
+}
+
 CALENDAR_SLOVAK_HOLIDAY_TEST_DATA :: #load("../resources/holidays/sk.json")
 
 @(test)
@@ -82,16 +111,31 @@ calendar_details_layout_splits_default_content_width_test :: proc(t: ^testing.T)
 }
 
 @(test)
-calendar_action_bar_uses_three_fixed_slots_test :: proc(t: ^testing.T) {
+calendar_action_bar_uses_five_fixed_slots_test :: proc(t: ^testing.T) {
 	first := calendar_ui_action_rect_for_width(0, 1280)
 	second := calendar_ui_action_rect_for_width(1, 1280)
 	third := calendar_ui_action_rect_for_width(2, 1280)
+	fourth := calendar_ui_action_rect_for_width(3, 1280)
+	fifth := calendar_ui_action_rect_for_width(4, 1280)
+	sixth := calendar_ui_action_rect_for_width(5, 1280)
 	testing.expect_value(t, first.x, CALENDAR_LAYOUT_MARGIN)
 	testing.expect_value(t, first.y, CALENDAR_ACTION_BAR_BOTTOM)
 	testing.expect_value(t, first.h, CALENDAR_ACTION_BAR_HEIGHT)
 	testing.expect_value(t, second.x-(first.x+first.w), CALENDAR_ACTION_BAR_GAP)
 	testing.expect_value(t, third.x-(second.x+second.w), CALENDAR_ACTION_BAR_GAP)
-	testing.expect_value(t, third.x+third.w, 1274.0)
+	testing.expect_value(t, fourth.x-(third.x+third.w), CALENDAR_ACTION_BAR_GAP)
+	testing.expect_value(t, fifth.x-(fourth.x+fourth.w), CALENDAR_ACTION_BAR_GAP)
+	testing.expect_value(t, sixth.x-(fifth.x+fifth.w), CALENDAR_ACTION_BAR_GAP)
+	testing.expect_value(t, sixth.x+sixth.w, 1274.0)
+}
+
+@(test)
+calendar_action_bar_maps_complete_code_test :: proc(t: ^testing.T) {
+	testing.expect_value(
+		t,
+		calendar_main_action_for_code(1, 4),
+		Calendar_UI_Action.Action_Complete,
+	)
 }
 
 @(test)

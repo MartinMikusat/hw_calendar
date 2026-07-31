@@ -4,6 +4,7 @@ import "base:intrinsics"
 import "base:runtime"
 import "core:fmt"
 import "core:sort"
+import "core:strconv"
 import "core:strings"
 import "core:time"
 
@@ -481,16 +482,27 @@ calendar_notification_reconcile :: proc() {
 	if calendar_notification_center == nil || calendar_database == nil {return}
 	calendar_ui.notification_reconcile_stamp =
 		time.to_unix_seconds(time.now())
-	events, loaded := calendar_events_load()
-	if !loaded {return}
-	defer calendar_events_destroy(&events)
 	now_stamp := time.to_unix_seconds(time.now())
-	start := ical_date_time_from_stamp(now_stamp)
-	end := ical_date_time_from_stamp(now_stamp+366*86400)
-	occurrences, _ := calendar_expand_events(events[:], start, end, 2_000)
-	defer calendar_occurrences_destroy(&occurrences)
-	candidates := calendar_notification_collect(events[:], occurrences[:], now_stamp)
+	entries := agenda_entries_list("", "", "")
+	defer agenda_entries_destroy(&entries)
+	candidates := make([dynamic]Calendar_Notification_Candidate)
 	defer calendar_notification_candidates_destroy(&candidates)
+	for &entry in entries {
+		if entry.state != "active" || len(entry.reminder_at) == 0 {continue}
+		fire_stamp, parsed := strconv.parse_i64(entry.reminder_at)
+		if !parsed || fire_stamp <= now_stamp {continue}
+		start_value := entry.start_at
+		if len(start_value) == 0 {start_value = entry.due_at}
+		append(&candidates, Calendar_Notification_Candidate{
+			identifier = fmt.tprintf("hw-agenda/%d/%d", entry.id, fire_stamp),
+			uid = fmt.tprintf("agenda-%d", entry.id),
+			start_value = strings.clone(start_value),
+			title = strings.clone(entry.original_text),
+			body = strings.clone("Confirmed agenda reminder"),
+			fire_stamp = fire_stamp,
+		})
+	}
+	sort.merge_sort_proc(candidates[:], calendar_notification_candidate_compare)
 	msg_void(
 		calendar_notification_center,
 		sel_registerName("removeAllPendingNotificationRequests"),

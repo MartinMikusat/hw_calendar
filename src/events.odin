@@ -219,6 +219,30 @@ calendar_expand_events :: proc(
 ) -> ([dynamic]Calendar_Occurrence, bool) {
 	result := make([dynamic]Calendar_Occurrence, allocator)
 	for &event, event_index in events {
+		if event.source == .EventKit {
+			if strings.equal_fold(event.status, "CANCELLED") {continue}
+			start, start_ok := ical_parse_date_time(event.dtstart)
+			if !start_ok {continue}
+			end := start
+			if parsed_end, end_ok := ical_parse_date_time(event.dtend); end_ok {
+				end = parsed_end
+			}
+			if ical_date_time_compare(start, range_end) >= 0 ||
+			   (ical_date_time_compare(start, range_start) < 0 &&
+			    ical_date_time_compare(end, range_start) <= 0) {
+				continue
+			}
+			calendar_append_occurrence(
+				&result,
+				&event,
+				event_index,
+				start,
+				end,
+				event.recurrence_id,
+				allocator,
+			)
+			continue
+		}
 		if len(event.recurrence_id) > 0 ||
 		   event.archived ||
 		   strings.equal_fold(event.status, "CANCELLED") {

@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:hash"
 import "core:os"
 import "core:sort"
+import "core:strconv"
 import "core:strings"
 import "core:time"
 import CF "core:sys/darwin/CoreFoundation"
@@ -126,6 +127,9 @@ Calendar_UI_Action :: enum {
 	Settings_Search,
 	Command_Palette_Search,
 	Set_Theme,
+	Request_Calendar_Access,
+	Toggle_Connected_Calendar,
+	Set_Default_Connected_Calendar,
 	Configure_Flash,
 	Shortcut_Record,
 	Shortcut_Save,
@@ -143,11 +147,18 @@ Calendar_UI_Action :: enum {
 	Action_Edit,
 	Action_Open_URL,
 	Action_Archive,
+	Action_Complete,
+	Action_Confirm_Proposal,
+	Action_Reject_Proposal,
+	Action_Copy_To_Connected,
+	Action_Open_In_Apple_Calendar,
 	Archive_Cancel,
 	Archive_Occurrence,
 	Archive_Series,
 	Editor_Field,
 	Editor_Important,
+	Editor_All_Day,
+	Editor_Calendar,
 	Editor_Save,
 	Editor_Delete,
 	Editor_Cancel,
@@ -199,8 +210,11 @@ Calendar_Text_Field :: enum u64 {
 	Editor_Start,
 	Editor_End,
 	Editor_Location,
+	Editor_URL,
 	Editor_Categories,
 	Editor_Description,
+	Editor_Time_Zone,
+	Editor_Alarms,
 	Editor_RRule,
 }
 
@@ -275,15 +289,20 @@ Calendar_UI_State :: struct {
 	editor_open: bool,
 	editor_event_index: int,
 	editor_field: int,
+	editor_calendar_identifier: string,
 	editor_summary: string,
 	editor_start: string,
 	editor_end: string,
 	editor_location: string,
+	editor_url: string,
 	editor_categories: string,
 	editor_description: string,
+	editor_time_zone: string,
+	editor_alarms: string,
 	editor_rrule: string,
 	editor_error: string,
 	editor_important: bool,
+	editor_all_day: bool,
 	ax_children: Id,
 	ax_bindings: [dynamic]Calendar_UI_AX_Binding,
 }
@@ -546,6 +565,25 @@ calendar_ui_ax_label :: proc(control: ^Calendar_UI_Control) -> string {
 	case .Command_Palette_Search: return "Search commands"
 	case .Set_Theme:
 		return calendar_theme_command_title(control.action.theme_id)
+	case .Request_Calendar_Access: return "Request calendar access"
+	case .Toggle_Connected_Calendar:
+		if control.action.index >= 0 &&
+		   control.action.index < len(calendar_eventkit_calendars) {
+			return fmt.tprintf(
+				"Show calendar %s",
+				calendar_eventkit_calendars[control.action.index].title,
+			)
+		}
+		return "Show connected calendar"
+	case .Set_Default_Connected_Calendar:
+		if control.action.index >= 0 &&
+		   control.action.index < len(calendar_eventkit_calendars) {
+			return fmt.tprintf(
+				"Use %s as the default calendar",
+				calendar_eventkit_calendars[control.action.index].title,
+			)
+		}
+		return "Set the default connected calendar"
 	case .Configure_Flash: return "Configure leader key for Flash"
 	case .Shortcut_Record: return "Record another Flash leader"
 	case .Shortcut_Save: return "Save Flash leader"
@@ -553,7 +591,7 @@ calendar_ui_ax_label :: proc(control: ^Calendar_UI_Control) -> string {
 	case .Shortcut_Cancel: return "Cancel Flash leader configuration"
 	case .Today: return "Jump to today"
 	case .Search: return "Search calendar"
-	case .New_Event: return "New event"
+	case .New_Event: return "New agenda entry"
 	case .Open_Event:
 		if control.action.index >= 0 &&
 		   control.action.index < len(calendar_ui.events) {
@@ -570,9 +608,36 @@ calendar_ui_ax_label :: proc(control: ^Calendar_UI_Control) -> string {
 	case .Jump_Holiday: return "Jump to holiday"
 	case .Action_Edit: return "Edit focused event"
 	case .Action_Open_URL: return "Open focused details URL"
-	case .Action_Archive: return "Archive focused event"
-	case .Archive_Cancel: return "Cancel event archive"
+	case .Action_Archive:
+		if calendar_ui.navigation_event_index >= 0 &&
+		   calendar_ui.navigation_event_index < len(calendar_ui.events) &&
+		   calendar_ui.events[calendar_ui.navigation_event_index].source ==
+				.EventKit {
+			return "Delete focused connected event"
+		}
+		return "Archive focused event"
+	case .Action_Complete: return "Complete focused entry"
+	case .Action_Confirm_Proposal: return "Confirm proposed entry fields"
+	case .Action_Reject_Proposal: return "Reject proposed entry fields"
+	case .Action_Copy_To_Connected:
+		return "Copy focused event to the default connected calendar"
+	case .Action_Open_In_Apple_Calendar:
+		return "Open Apple Calendar for the focused invitation"
+	case .Archive_Cancel:
+		if calendar_ui.navigation_event_index >= 0 &&
+		   calendar_ui.navigation_event_index < len(calendar_ui.events) &&
+		   calendar_ui.events[calendar_ui.navigation_event_index].source ==
+				.EventKit {
+			return "Cancel connected event delete"
+		}
+		return "Cancel event archive"
 	case .Archive_Occurrence:
+		if calendar_ui.navigation_event_index >= 0 &&
+		   calendar_ui.navigation_event_index < len(calendar_ui.events) &&
+		   calendar_ui.events[calendar_ui.navigation_event_index].source ==
+				.EventKit {
+			return "Delete this connected event occurrence"
+		}
 		if calendar_ui.navigation_active &&
 		   calendar_ui.navigation_kind == .Event &&
 		   calendar_ui.navigation_event_index >= 0 &&
@@ -583,22 +648,34 @@ calendar_ui_ax_label :: proc(control: ^Calendar_UI_Control) -> string {
 			return "Archive this occurrence"
 		}
 		return "Archive event"
-	case .Archive_Series: return "Archive the complete series"
+	case .Archive_Series:
+		if calendar_ui.navigation_event_index >= 0 &&
+		   calendar_ui.navigation_event_index < len(calendar_ui.events) &&
+		   calendar_ui.events[calendar_ui.navigation_event_index].source ==
+				.EventKit {
+			return "Delete this and future connected event occurrences"
+		}
+		return "Archive the complete series"
 	case .Editor_Field:
-		labels := [7]string{
+		labels := [10]string{
 			"Event summary",
 			"Event start",
 			"Event end",
 			"Event location",
+			"Event URL",
 			"Event categories",
 			"Event description",
+			"Event time zone",
+			"Event alarms",
 			"Event recurrence rule",
 		}
 		if control.action.index >= 0 && control.action.index < len(labels) {
 			return labels[control.action.index]
 		}
 	case .Editor_Important: return "Important event"
-	case .Editor_Save: return "Save event"
+	case .Editor_All_Day: return "All-day event"
+	case .Editor_Calendar: return "Select the next event calendar"
+	case .Editor_Save: return "Save agenda entry"
 	case .Editor_Delete: return "Delete event"
 	case .Editor_Cancel: return "Cancel event editor"
 	case .None:
@@ -629,6 +706,13 @@ calendar_on_ax_value :: proc "c" (self: Id, command: Sel) -> Id {
 			calendar_ui.editor_important,
 		)
 	}
+	if control.action.kind == .Editor_All_Day {
+		return calendar_msg_id_bool(
+			objc_getClass("NSNumber"),
+			sel_registerName("numberWithBool:"),
+			calendar_ui.editor_all_day,
+		)
+	}
 	if control.action.kind == .Settings_Search {
 		return nsstring(calendar_ui.settings_query)
 	}
@@ -640,6 +724,30 @@ calendar_on_ax_value :: proc "c" (self: Id, command: Sel) -> Id {
 			objc_getClass("NSNumber"),
 			sel_registerName("numberWithBool:"),
 			control.action.theme_id == calendar_ui.theme_id,
+		)
+	}
+	if control.action.kind == .Toggle_Connected_Calendar &&
+	   control.action.index >= 0 &&
+	   control.action.index < len(calendar_eventkit_calendars) {
+		return calendar_msg_id_bool(
+			objc_getClass("NSNumber"),
+			sel_registerName("numberWithBool:"),
+			calendar_connected_calendar_visible(
+				calendar_eventkit_calendars[control.action.index].identifier,
+			),
+		)
+	}
+	if control.action.kind == .Set_Default_Connected_Calendar &&
+	   control.action.index >= 0 &&
+	   control.action.index < len(calendar_eventkit_calendars) {
+		default_identifier, _ := calendar_connected_default_calendar(
+			context.temp_allocator,
+		)
+		return calendar_msg_id_bool(
+			objc_getClass("NSNumber"),
+			sel_registerName("numberWithBool:"),
+			default_identifier ==
+				calendar_eventkit_calendars[control.action.index].identifier,
 		)
 	}
 	if control.action.kind == .Settings_Category {
@@ -725,6 +833,9 @@ calendar_ui_rebuild_accessibility :: proc() {
 		          control.action.kind != .Settings_Category &&
 		          control.action.kind != .Settings_Search &&
 		          control.action.kind != .Set_Theme &&
+		          control.action.kind != .Request_Calendar_Access &&
+		          control.action.kind != .Toggle_Connected_Calendar &&
+		          control.action.kind != .Set_Default_Connected_Calendar &&
 		          control.action.kind != .Configure_Flash {
 			continue
 		} else if !calendar_ui.shortcut_open && !calendar_ui.settings_open &&
@@ -739,6 +850,8 @@ calendar_ui_rebuild_accessibility :: proc() {
 		   !calendar_ui_is_window_action(control.action.kind) &&
 		   control.action.kind != .Editor_Field &&
 		   control.action.kind != .Editor_Important &&
+		   control.action.kind != .Editor_All_Day &&
+		   control.action.kind != .Editor_Calendar &&
 		   control.action.kind != .Editor_Save &&
 		   control.action.kind != .Editor_Delete &&
 		   control.action.kind != .Editor_Cancel {
@@ -964,8 +1077,8 @@ calendar_ui_details_rect :: proc() -> Calendar_UI_Rect {
 
 calendar_ui_action_rect_for_width :: proc(index: int, view_width: f64) -> Calendar_UI_Rect {
 	width := (
-		view_width-CALENDAR_LAYOUT_MARGIN*2-CALENDAR_ACTION_BAR_GAP*2
-	)/3
+		view_width-CALENDAR_LAYOUT_MARGIN*2-CALENDAR_ACTION_BAR_GAP*5
+	)/6
 	return {
 		CALENDAR_LAYOUT_MARGIN+f64(index)*(width+CALENDAR_ACTION_BAR_GAP),
 		CALENDAR_ACTION_BAR_BOTTOM,
@@ -1023,6 +1136,9 @@ calendar_main_action_for_code :: proc(
 	case 1: return .Action_Edit
 	case 2: return .Action_Open_URL
 	case 3: return .Action_Archive
+	case 4: return .Action_Complete
+	case 5: return .Action_Confirm_Proposal
+	case 6: return .Action_Reject_Proposal
 	}
 	return .None
 }
@@ -1106,25 +1222,44 @@ calendar_ui_event_rect :: proc(
 	}
 }
 
-calendar_ui_reload_data :: proc() {
+calendar_ui_reload_data :: proc(request_connected := true) {
 	calendar_events_destroy(&calendar_ui.events)
 	calendar_occurrences_destroy(&calendar_ui.occurrences)
 	clear(&calendar_ui.holiday_occurrences)
-	events, loaded := calendar_events_load()
-	if !loaded {return}
-	calendar_ui.events = events
+	calendar_ui.events = make([dynamic]Calendar_Event)
+	calendar_ui.occurrences = make([dynamic]Calendar_Occurrence)
+	entries := agenda_entries_list("", "", "")
+	defer agenda_entries_destroy(&entries)
 	now := ical_date_time_from_stamp(time.to_unix_seconds(time.now()), true)
 	anchor_days := ical_days_from_civil(now.year, now.month, now.day) +
 	               i64(calendar_ui.day_offset)
 	range_start := ical_date_time_from_stamp((anchor_days-7)*86400, true)
 	range_end := ical_date_time_from_stamp((anchor_days+60)*86400, true)
-	occurrences, _ := calendar_expand_events(
-		calendar_ui.events[:],
-		range_start,
-		range_end,
-		1_000,
-	)
-	calendar_ui.occurrences = occurrences
+	for &entry in entries {
+		if entry.state != "active" {continue}
+		stamp_text := entry.start_at
+		if len(stamp_text) == 0 {stamp_text = entry.due_at}
+		has_confirmed_time := len(stamp_text) > 0
+		stamp, parsed_stamp := strconv.parse_i64(stamp_text)
+		start := now
+		if parsed_stamp {start = ical_date_time_from_stamp(stamp, true)} else if parsed, ok := ical_parse_date_time(stamp_text); ok {start = parsed}
+		end := start
+		if end_stamp, ok := strconv.parse_i64(entry.end_at); ok {end = ical_date_time_from_stamp(end_stamp, true)} else if parsed, ok := ical_parse_date_time(entry.end_at); ok {end = parsed}
+		event := Calendar_Event{
+			row_id = entry.id,
+			uid = fmt.tprintf("agenda-%d", entry.id),
+			summary = strings.clone(entry.original_text),
+			location = strings.clone(entry.location),
+			url = strings.clone(entry.source_url),
+			dtstart = ical_format_date_time(start),
+			dtend = ical_format_date_time(end),
+			sequence = entry.revision,
+		}
+		append(&calendar_ui.events, event)
+		if has_confirmed_time {
+			calendar_append_occurrence(&calendar_ui.occurrences, &calendar_ui.events[len(calendar_ui.events)-1], len(calendar_ui.events)-1, start, end, "")
+		}
+	}
 	calendar_ui.holiday_occurrences = calendar_holiday_occurrences_expand(
 		calendar_ui.holiday_countries[:],
 		range_start,
@@ -1148,6 +1283,9 @@ calendar_ui_begin_flash :: proc() {
 		   control.action.kind != .Settings_Category &&
 		   control.action.kind != .Settings_Search &&
 		   control.action.kind != .Set_Theme &&
+		   control.action.kind != .Request_Calendar_Access &&
+		   control.action.kind != .Toggle_Connected_Calendar &&
+		   control.action.kind != .Set_Default_Connected_Calendar &&
 		   control.action.kind != .Configure_Flash {
 			continue
 		} else if !calendar_ui.settings_open &&
@@ -1162,6 +1300,8 @@ calendar_ui_begin_flash :: proc() {
 		   !calendar_ui_is_window_action(control.action.kind) &&
 		   control.action.kind != .Editor_Field &&
 		   control.action.kind != .Editor_Important &&
+		   control.action.kind != .Editor_All_Day &&
+		   control.action.kind != .Editor_Calendar &&
 		   control.action.kind != .Editor_Save &&
 		   control.action.kind != .Editor_Delete &&
 		   control.action.kind != .Editor_Cancel {
@@ -1338,6 +1478,20 @@ calendar_ui_open_url :: proc(value: string) {
 	if workspace != nil {msg_void_id(workspace, sel_registerName("openURL:"), url)}
 }
 
+calendar_ui_open_apple_calendar :: proc() {
+	workspace := msg_id(
+		objc_getClass("NSWorkspace"),
+		sel_registerName("sharedWorkspace"),
+	)
+	if workspace == nil {return}
+	launch := transmute(proc "c" (Id, Sel, Id) -> bool)objc_send_address
+	_ = launch(
+		workspace,
+		sel_registerName("launchApplication:"),
+		nsstring("Calendar"),
+	)
+}
+
 calendar_action_available :: proc(
 	action: Calendar_UI_Action,
 	navigation_active: bool,
@@ -1346,7 +1500,7 @@ calendar_action_available :: proc(
 ) -> bool {
 	if !navigation_active {return false}
 	#partial switch action {
-	case .Action_Edit, .Action_Archive:
+	case .Action_Edit, .Action_Archive, .Action_Complete:
 		return kind == .Event && event_available
 	case .Action_Open_URL:
 		return has_url
@@ -1356,7 +1510,7 @@ calendar_action_available :: proc(
 }
 
 calendar_ui_action_available :: proc(action: Calendar_UI_Action) -> bool {
-	return calendar_action_available(
+	available := calendar_action_available(
 		action,
 		calendar_ui.navigation_active,
 		calendar_ui.navigation_kind,
@@ -1364,6 +1518,28 @@ calendar_ui_action_available :: proc(action: Calendar_UI_Action) -> bool {
 		calendar_ui.navigation_event_index < len(calendar_ui.events),
 		len(calendar_ui_details_url()) > 0,
 	)
+	if action == .Action_Copy_To_Connected {
+		return false
+	}
+	if action == .Action_Open_In_Apple_Calendar {
+		return false
+	}
+	if action == .Action_Confirm_Proposal || action == .Action_Reject_Proposal {
+		if !calendar_ui.navigation_active || calendar_ui.navigation_kind != .Event ||
+		   calendar_ui.navigation_event_index < 0 || calendar_ui.navigation_event_index >= len(calendar_ui.events) {return false}
+		event := &calendar_ui.events[calendar_ui.navigation_event_index]
+		proposal, found := agenda_proposal_pending_for_entry(event.row_id, context.temp_allocator)
+		if found {agenda_proposal_destroy(&proposal, context.temp_allocator)}
+		return found
+	}
+	if available && (action == .Action_Edit || action == .Action_Archive) &&
+	   calendar_ui.navigation_kind == .Event &&
+	   calendar_ui.navigation_event_index >= 0 &&
+	   calendar_ui.navigation_event_index < len(calendar_ui.events) {
+		event := &calendar_ui.events[calendar_ui.navigation_event_index]
+		if event.source == .EventKit {return event.writable}
+	}
+	return available
 }
 
 calendar_ui_selected_occurrence :: proc() -> (^Calendar_Occurrence, bool) {
@@ -1383,6 +1559,7 @@ calendar_ui_selected_occurrence :: proc() -> (^Calendar_Occurrence, bool) {
 
 calendar_event_is_recurring :: proc(event: ^Calendar_Event) -> bool {
 	if event == nil {return false}
+	if event.source == .EventKit {return event.connected_recurring}
 	for &candidate in calendar_ui.events {
 		if candidate.uid != event.uid || len(candidate.recurrence_id) > 0 {
 			continue
@@ -1470,20 +1647,14 @@ calendar_ui_archive_occurrence :: proc() -> bool {
 calendar_ui_archive_confirm :: proc(series: bool) {
 	if !calendar_ui_action_available(.Action_Archive) {return}
 	event := &calendar_ui.events[calendar_ui.navigation_event_index]
-	archived := false
-	if series {
-		archived = calendar_event_series_set_archived(event.uid, true)
-	} else if calendar_event_is_recurring(event) {
-		archived = calendar_ui_archive_occurrence()
-	} else {
-		archived = calendar_event_set_archived(event.row_id, true)
-	}
-	if !archived {
+	updated, code := agenda_entry_set_state(event.row_id, event.sequence, "dismissed")
+	if len(code) > 0 {
 		delete(calendar_ui.archive_error)
-		calendar_ui.archive_error = strings.clone("THE EVENT COULD NOT BE ARCHIVED")
+		calendar_ui.archive_error = strings.clone("THE ENTRY COULD NOT BE DISMISSED")
 		calendar_ui.needs_redraw = true
 		return
 	}
+	agenda_entry_destroy(&updated)
 	calendar_ui_archive_modal_close()
 	calendar_ui_clear_navigation_selection()
 	calendar_ui_reload_data()
@@ -1727,8 +1898,8 @@ calendar_ui_open_palette :: proc() {
 	calendar_palette_append(
 		&entries,
 		{kind = .New_Event},
-		"New event",
-		"Open the event editor",
+		"New agenda entry",
+		"Open the agenda entry editor",
 		"Command",
 		[]string{"create", "calendar"},
 		{none = CALENDAR_PALETTE_EDITOR | CALENDAR_PALETTE_ARCHIVE},
@@ -1780,9 +1951,9 @@ calendar_ui_open_palette :: proc() {
 	calendar_palette_append(
 		&entries,
 		{kind = .Action_Edit},
-		"Edit focused event",
-		"Open the focused event in the editor",
-		"Event action",
+		"Edit focused entry",
+		"Open the focused agenda entry in the editor",
+		"Agenda action",
 		[]string{"change", "update"},
 		{all = CALENDAR_PALETTE_FOCUSED_EVENT},
 		"Focus an event first",
@@ -1800,20 +1971,90 @@ calendar_ui_open_palette :: proc() {
 	calendar_palette_append(
 		&entries,
 		{kind = .Action_Archive},
-		"Archive focused event",
-		"Hide the focused event from the calendar",
-		"Event action",
+		"Dismiss focused entry",
+		"Hide the focused entry from the active agenda",
+		"Agenda action",
 		[]string{"remove", "hide"},
 		{all = CALENDAR_PALETTE_FOCUSED_EVENT},
 		"Focus an event first",
 	)
 	calendar_palette_append(
 		&entries,
+		{kind = .Action_Complete},
+		"Complete focused entry",
+		"Complete the focused entry or advance its recurrence",
+		"Agenda action",
+		[]string{"done", "finish", "advance"},
+		{all = CALENDAR_PALETTE_FOCUSED_EVENT},
+		"Focus an entry first",
+	)
+	calendar_palette_append(
+		&entries,
+		{kind = .Action_Confirm_Proposal},
+		"Confirm focused proposal",
+		"Apply the pending structured interpretation",
+		"Agenda action",
+		[]string{"proposal", "interpretation", "approve"},
+		{all = CALENDAR_PALETTE_FOCUSED_EVENT},
+		"Focus an entry with a pending proposal first",
+	)
+	calendar_palette_append(
+		&entries,
+		{kind = .Action_Reject_Proposal},
+		"Reject focused proposal",
+		"Discard the pending structured interpretation",
+		"Agenda action",
+		[]string{"proposal", "interpretation", "discard"},
+		{all = CALENDAR_PALETTE_FOCUSED_EVENT},
+		"Focus an entry with a pending proposal first",
+	)
+	when false {calendar_palette_append(
+		&entries,
+		{kind = .Action_Copy_To_Connected},
+		"Copy focused event to connected calendar",
+		"Create an EventKit event in the default writable calendar",
+		"Event action",
+		[]string{"copy", "connected", "eventkit", "calendar"},
+		{all = CALENDAR_PALETTE_FOCUSED_EVENT},
+		"Focus a local event and configure a default calendar first",
+	)
+	calendar_palette_append(
+		&entries,
+		{kind = .Action_Open_In_Apple_Calendar},
+		"Open invitation in Apple Calendar",
+		"Delegate invitation actions that EventKit cannot perform reliably",
+		"Event action",
+		[]string{"invitation", "attendee", "response", "apple calendar"},
+		{all = CALENDAR_PALETTE_FOCUSED_EVENT},
+		"Focus a connected invitation first",
+	)}
+	calendar_palette_append(
+		&entries,
 		{kind = .Editor_Save},
-		"Save event",
-		"Commit the active event editor",
+		"Save entry",
+		"Commit the active agenda entry editor",
 		"Dialog action",
 		nil,
+		{all = CALENDAR_PALETTE_EDITOR},
+		"Open the event editor first",
+	)
+	when false {calendar_palette_append(
+		&entries,
+		{kind = .Editor_Calendar},
+		"Select next event calendar",
+		"Select local storage or a writable connected calendar",
+		"Dialog action",
+		[]string{"calendar", "move", "destination", "account"},
+		{all = CALENDAR_PALETTE_EDITOR},
+		"Open the event editor first",
+	)}
+	calendar_palette_append(
+		&entries,
+		{kind = .Editor_All_Day},
+		"Toggle all-day entry",
+		"Convert the active editor dates between all-day and timed values",
+		"Dialog action",
+		[]string{"date", "time", "all day"},
 		{all = CALENDAR_PALETTE_EDITOR},
 		"Open the event editor first",
 	)
@@ -1932,10 +2173,10 @@ calendar_ui_open_palette :: proc() {
 		}
 		calendar_palette_append(
 			&entries,
-			{kind = .Jump_Event, index = event_index},
+			{kind = len(event.dtstart) > 0 ? .Jump_Event : .Open_Event, index = event_index},
 			event.summary,
 			event.location,
-			"Event",
+			"Entry",
 			[]string{event.description, event.categories, event.uid, event.url},
 		)
 	}
@@ -2022,10 +2263,13 @@ calendar_ui_editor_rect :: proc() -> Calendar_UI_Rect {
 
 calendar_ui_editor_field_rect :: proc(index: int) -> Calendar_UI_Rect {
 	modal := calendar_ui_editor_rect()
+	column := index / 5
+	row := index % 5
+	column_width := modal.w/2
 	return {
-		modal.x+150,
-		modal.y+modal.h-86-f64(index)*48,
-		modal.w-174,
+		modal.x+90+f64(column)*column_width,
+		modal.y+modal.h-86-f64(row)*48,
+		column_width-106,
 		34,
 	}
 }
@@ -2035,21 +2279,108 @@ calendar_ui_editor_button_rect :: proc(index: int) -> Calendar_UI_Rect {
 	return {modal.x+150+f64(index)*112, modal.y+20, 100, 34}
 }
 
+calendar_ui_editor_calendar_rect :: proc() -> Calendar_UI_Rect {
+	modal := calendar_ui_editor_rect()
+	return {modal.x+486, modal.y+20, modal.w-504, 34}
+}
+
+calendar_ui_editor_all_day_rect :: proc() -> Calendar_UI_Rect {
+	modal := calendar_ui_editor_rect()
+	return {modal.x+modal.w-154, modal.y+modal.h-48, 136, 34}
+}
+
+calendar_ui_editor_calendar_title :: proc() -> string {
+	if len(calendar_ui.editor_calendar_identifier) == 0 {return "LOCAL"}
+	for calendar in calendar_eventkit_calendars {
+		if calendar.identifier == calendar_ui.editor_calendar_identifier {
+			return calendar.title
+		}
+	}
+	return "UNAVAILABLE"
+}
+
+calendar_ui_editor_can_select_calendar :: proc() -> bool {
+	if !calendar_ui.editor_open {return false}
+	if calendar_ui.editor_event_index >= 0 {
+		if calendar_ui.editor_event_index >= len(calendar_ui.events) ||
+		   calendar_ui.events[calendar_ui.editor_event_index].source !=
+				.EventKit {
+			return false
+		}
+	}
+	for calendar in calendar_eventkit_calendars {
+		if calendar.writable {return true}
+	}
+	return false
+}
+
+calendar_editor_toggle_all_day_dates :: proc(
+	start, end: ICal_Date_Time,
+	all_day: bool,
+) -> (ICal_Date_Time, ICal_Date_Time) {
+	start_day := ical_days_from_civil(start.year, start.month, start.day)
+	end_day := ical_days_from_civil(end.year, end.month, end.day)
+	if all_day {
+		if end_day <= start_day {end_day = start_day+1}
+		return ical_date_time_from_stamp(
+			start_day*86_400,
+			true,
+		), ical_date_time_from_stamp(
+			end_day*86_400,
+			true,
+		)
+	}
+	day_span := max(i64(1), end_day-start_day)
+	return ical_date_time_from_stamp(
+		start_day*86_400+9*3_600,
+	), ical_date_time_from_stamp(
+		(start_day+day_span-1)*86_400+10*3_600,
+	)
+}
+
+calendar_ui_editor_toggle_all_day :: proc() {
+	start, start_valid := ical_parse_date_time(calendar_ui.editor_start)
+	end, end_valid := ical_parse_date_time(calendar_ui.editor_end)
+	if !start_valid || !end_valid {
+		calendar_ui_editor_set_error("CHECK THE START AND END VALUES")
+		return
+	}
+	calendar_ui.editor_all_day = !calendar_ui.editor_all_day
+	start, end = calendar_editor_toggle_all_day_dates(
+		start,
+		end,
+		calendar_ui.editor_all_day,
+	)
+	delete(calendar_ui.editor_start)
+	delete(calendar_ui.editor_end)
+	calendar_ui.editor_start = ical_format_date_time(start)
+	calendar_ui.editor_end = ical_format_date_time(end)
+	calendar_ui.needs_redraw = true
+}
+
 calendar_ui_editor_clear :: proc() {
 	delete(calendar_ui.editor_summary)
+	delete(calendar_ui.editor_calendar_identifier)
 	delete(calendar_ui.editor_start)
 	delete(calendar_ui.editor_end)
 	delete(calendar_ui.editor_location)
+	delete(calendar_ui.editor_url)
 	delete(calendar_ui.editor_categories)
 	delete(calendar_ui.editor_description)
+	delete(calendar_ui.editor_time_zone)
+	delete(calendar_ui.editor_alarms)
 	delete(calendar_ui.editor_rrule)
 	delete(calendar_ui.editor_error)
 	calendar_ui.editor_summary = ""
+	calendar_ui.editor_calendar_identifier = ""
 	calendar_ui.editor_start = ""
 	calendar_ui.editor_end = ""
 	calendar_ui.editor_location = ""
+	calendar_ui.editor_url = ""
 	calendar_ui.editor_categories = ""
 	calendar_ui.editor_description = ""
+	calendar_ui.editor_time_zone = ""
+	calendar_ui.editor_alarms = ""
 	calendar_ui.editor_rrule = ""
 	calendar_ui.editor_error = ""
 }
@@ -2061,14 +2392,28 @@ calendar_ui_editor_open :: proc(event_index := -1) {
 	calendar_ui.editor_field = 0
 	if event_index >= 0 && event_index < len(calendar_ui.events) {
 		event := &calendar_ui.events[event_index]
+		calendar_ui.editor_calendar_identifier = strings.clone(
+			event.calendar_identifier,
+		)
 		calendar_ui.editor_summary = strings.clone(event.summary)
 		calendar_ui.editor_start = strings.clone(event.dtstart)
 		calendar_ui.editor_end = strings.clone(event.dtend)
 		calendar_ui.editor_location = strings.clone(event.location)
+		calendar_ui.editor_url = strings.clone(event.url)
 		calendar_ui.editor_categories = strings.clone(event.categories)
 		calendar_ui.editor_description = strings.clone(event.description)
+		calendar_ui.editor_time_zone = strings.clone(event.time_zone)
+		if event.source == .EventKit {
+			calendar_ui.editor_alarms = strings.clone(event.alarm_offsets)
+		} else {
+			calendar_ui.editor_alarms =
+				calendar_eventkit_local_alarm_offsets(event)
+		}
 		calendar_ui.editor_rrule = strings.clone(event.rrule)
 		calendar_ui.editor_important = event.important
+		start_value, start_valid := ical_parse_date_time(event.dtstart)
+		calendar_ui.editor_all_day =
+			event.all_day || (start_valid && start_value.is_date)
 	} else {
 		now := ical_date_time_from_stamp(time.to_unix_seconds(time.now()), true)
 		day := ical_days_from_civil(now.year, now.month, now.day) +
@@ -2078,6 +2423,20 @@ calendar_ui_editor_open :: proc(event_index := -1) {
 		calendar_ui.editor_start = ical_format_date_time(start)
 		calendar_ui.editor_end = ical_format_date_time(end)
 		calendar_ui.editor_important = false
+		calendar_ui.editor_all_day = false
+		if default_identifier, found := calendar_connected_default_calendar(
+			context.temp_allocator,
+		); found {
+			for calendar in calendar_eventkit_calendars {
+				if calendar.identifier == default_identifier &&
+				   calendar.writable {
+					calendar_ui.editor_calendar_identifier = strings.clone(
+						default_identifier,
+					)
+					break
+				}
+			}
+		}
 	}
 	calendar_text_focus(.Editor_Summary)
 	flash.cancel(&calendar_ui.flash)
@@ -2102,9 +2461,12 @@ calendar_ui_editor_field_text :: proc(index: int) -> ^string {
 	case 1: return &calendar_ui.editor_start
 	case 2: return &calendar_ui.editor_end
 	case 3: return &calendar_ui.editor_location
-	case 4: return &calendar_ui.editor_categories
-	case 5: return &calendar_ui.editor_description
-	case 6: return &calendar_ui.editor_rrule
+	case 4: return &calendar_ui.editor_url
+	case 5: return &calendar_ui.editor_categories
+	case 6: return &calendar_ui.editor_description
+	case 7: return &calendar_ui.editor_time_zone
+	case 8: return &calendar_ui.editor_alarms
+	case 9: return &calendar_ui.editor_rrule
 	}
 	return nil
 }
@@ -2120,14 +2482,119 @@ calendar_ui_editor_commit :: proc(cancelled := false) {
 		return
 	}
 	if len(strings.trim_space(calendar_ui.editor_summary)) == 0 {
-		calendar_ui_editor_set_error("SUMMARY IS REQUIRED")
+		calendar_ui_editor_set_error("ENTRY TEXT IS REQUIRED")
 		return
+	}
+	entry_id: i64
+	expected_revision := 0
+	if calendar_ui.editor_event_index >= 0 && calendar_ui.editor_event_index < len(calendar_ui.events) {
+		entry_id = calendar_ui.events[calendar_ui.editor_event_index].row_id
+		expected_revision = calendar_ui.events[calendar_ui.editor_event_index].sequence
+	}
+	if cancelled {
+		_, code := agenda_entry_set_state(entry_id, expected_revision, "dismissed")
+		if len(code) > 0 {calendar_ui_editor_set_error("THE ENTRY COULD NOT BE DISMISSED"); return}
+		calendar_ui_editor_close()
+		calendar_ui_reload_data()
+		return
+	}
+	start_text := ""
+	end_text := ""
+	if start, ok := ical_parse_date_time(calendar_ui.editor_start); ok {start_text = fmt.tprintf("%d", ical_date_time_stamp(start))}
+	if end, ok := ical_parse_date_time(calendar_ui.editor_end); ok {end_text = fmt.tprintf("%d", ical_date_time_stamp(end))}
+	input := Agenda_Entry_Input{
+		schema_version = 1,
+		original_text = calendar_ui.editor_summary,
+		start_at = start_text,
+		end_at = end_text,
+		location = calendar_ui.editor_location,
+		source_url = calendar_ui.editor_url,
+	}
+	if entry_id > 0 {
+		current, found := agenda_entry_get(entry_id, context.temp_allocator)
+		if found {
+			input.due_at = current.due_at
+			input.reminder_at = current.reminder_at
+			input.recurrence_seconds = current.recurrence_seconds
+		}
+		updated, code := agenda_entry_update(entry_id, expected_revision, &input)
+		if found {agenda_entry_destroy(&current, context.temp_allocator)}
+		if len(code) > 0 {calendar_ui_editor_set_error("THE ENTRY CHANGED OR COULD NOT BE STORED"); return}
+		agenda_entry_destroy(&updated)
+	} else {
+		created, ok := agenda_entry_create(&input)
+		if !ok {calendar_ui_editor_set_error("THE ENTRY COULD NOT BE STORED"); return}
+		agenda_entry_destroy(&created)
+	}
+	calendar_ui_editor_close()
+	calendar_ui_reload_data()
+	when false {
+	if calendar_ui.editor_event_index < 0 &&
+	   len(calendar_ui.editor_calendar_identifier) > 0 {
+		calendar_eventkit_clear_error()
+		if !calendar_eventkit_queue_create(
+			calendar_ui.editor_calendar_identifier,
+			calendar_ui.editor_summary,
+			calendar_ui.editor_description,
+			calendar_ui.editor_location,
+			calendar_ui.editor_url,
+			calendar_ui.editor_categories,
+			calendar_ui.editor_start,
+			calendar_ui.editor_end,
+			calendar_ui.editor_time_zone,
+			calendar_ui.editor_alarms,
+			calendar_ui.editor_rrule,
+			calendar_ui.editor_important,
+		) {
+			calendar_ui_editor_set_error(
+				"THE CONNECTED EVENT WRITE COULD NOT START",
+			)
+			return
+		}
+		calendar_ui_editor_close()
+		return
+	}
+	if calendar_ui.editor_event_index >= 0 &&
+	   calendar_ui.editor_event_index < len(calendar_ui.events) {
+		event := &calendar_ui.events[calendar_ui.editor_event_index]
+		if event.source == .EventKit {
+			calendar_eventkit_clear_error()
+			queued := false
+			if cancelled {
+				queued = calendar_eventkit_queue_delete(event)
+			} else {
+				queued = calendar_eventkit_queue_update(
+					event,
+					calendar_ui.editor_calendar_identifier,
+					calendar_ui.editor_summary,
+					calendar_ui.editor_description,
+					calendar_ui.editor_location,
+					calendar_ui.editor_url,
+					calendar_ui.editor_categories,
+					calendar_ui.editor_start,
+					calendar_ui.editor_end,
+					calendar_ui.editor_time_zone,
+					calendar_ui.editor_alarms,
+					calendar_ui.editor_rrule,
+					calendar_ui.editor_important,
+				)
+			}
+			if !queued {
+				calendar_ui_editor_set_error(
+					"THE CONNECTED EVENT WRITE COULD NOT START",
+				)
+				return
+			}
+			calendar_ui_editor_close()
+			return
+		}
 	}
 	input := Calendar_Event_Input{
 		schema_version = 1,
 		summary = calendar_ui.editor_summary,
 		description = calendar_ui.editor_description,
 		location = calendar_ui.editor_location,
+		url = calendar_ui.editor_url,
 		important = calendar_ui.editor_important,
 		dtstart = calendar_ui.editor_start,
 		dtend = calendar_ui.editor_end,
@@ -2136,12 +2603,26 @@ calendar_ui_editor_commit :: proc(cancelled := false) {
 	if len(calendar_ui.editor_categories) > 0 {
 		input.categories = []string{calendar_ui.editor_categories}
 	}
+	alarm_offsets, alarms_valid := calendar_eventkit_parse_alarm_offsets(
+		calendar_ui.editor_alarms,
+	)
+	if !alarms_valid {
+		calendar_ui_editor_set_error(
+			"ALARMS MUST BE COMMA-SEPARATED LEAD TIMES IN SECONDS",
+		)
+		return
+	}
+	defer delete(alarm_offsets)
+	input.reminder_offsets_seconds = make([]int, len(alarm_offsets))
+	defer delete(input.reminder_offsets_seconds)
+	for offset, index in alarm_offsets {
+		input.reminder_offsets_seconds[index] = int(offset)
+	}
 	if calendar_ui.editor_event_index >= 0 &&
 	   calendar_ui.editor_event_index < len(calendar_ui.events) {
 		event := &calendar_ui.events[calendar_ui.editor_event_index]
 		input.uid = event.uid
 		input.recurrence_id = event.recurrence_id
-		input.url = event.url
 		input.sequence = event.sequence+1
 	}
 	contents, valid := calendar_cli_event_document(
@@ -2164,6 +2645,7 @@ calendar_ui_editor_commit :: proc(cancelled := false) {
 	calendar_ui_editor_close()
 	calendar_ui_reload_data()
 	calendar_notification_reconcile()
+	}
 }
 
 calendar_window_zoom_next_frame :: proc(
@@ -2246,6 +2728,62 @@ calendar_ui_execute_action :: proc(action: Calendar_App_Action) {
 		calendar_text_focus(.Command_Palette)
 	case .Set_Theme:
 		_ = calendar_ui_apply_theme(action.theme_id)
+	case .Request_Calendar_Access:
+		delete(calendar_ui.settings_error)
+		calendar_ui.settings_error = ""
+		switch calendar_eventkit_authorization {
+		case .Not_Determined:
+			if !calendar_eventkit_request_access() {
+				calendar_ui.settings_error = strings.clone(
+					"THE ACCESS REQUEST COULD NOT START",
+				)
+			}
+		case .Full_Access:
+			calendar_ui_reload_data()
+		case .Denied, .Restricted:
+			calendar_ui.settings_error = strings.clone(
+				"ENABLE CALENDAR ACCESS IN SYSTEM SETTINGS",
+			)
+		case .Write_Only:
+			calendar_ui.settings_error = strings.clone(
+				"FULL CALENDAR ACCESS IS REQUIRED",
+			)
+		}
+	case .Toggle_Connected_Calendar:
+		if action.index >= 0 &&
+		   action.index < len(calendar_eventkit_calendars) {
+			calendar := &calendar_eventkit_calendars[action.index]
+			visible := calendar_connected_calendar_visible(calendar.identifier)
+			if calendar_connected_calendar_set_visible(
+				calendar.identifier,
+				!visible,
+			) {
+				calendar_ui_reload_data(false)
+			} else {
+				delete(calendar_ui.settings_error)
+				calendar_ui.settings_error = strings.clone(
+					"THE CALENDAR VISIBILITY COULD NOT BE SAVED",
+				)
+			}
+		}
+	case .Set_Default_Connected_Calendar:
+		if action.index >= 0 &&
+		   action.index < len(calendar_eventkit_calendars) {
+			calendar := &calendar_eventkit_calendars[action.index]
+			delete(calendar_ui.settings_error)
+			calendar_ui.settings_error = ""
+			if !calendar.writable {
+				calendar_ui.settings_error = strings.clone(
+					"THE SELECTED CALENDAR IS READ ONLY",
+				)
+			} else if !calendar_connected_set_default_calendar(
+				calendar.identifier,
+			) {
+				calendar_ui.settings_error = strings.clone(
+					"THE DEFAULT CALENDAR COULD NOT BE SAVED",
+				)
+			}
+		}
 	case .Configure_Flash:
 		calendar_shortcut_recorder_open()
 	case .Shortcut_Record:
@@ -2367,6 +2905,52 @@ calendar_ui_execute_action :: proc(action: Calendar_App_Action) {
 		if calendar_ui_action_available(.Action_Archive) {
 			calendar_ui_archive_modal_open()
 		}
+	case .Action_Complete:
+		if calendar_ui_action_available(.Action_Complete) {
+			event := &calendar_ui.events[calendar_ui.navigation_event_index]
+			updated, code := agenda_entry_set_state(event.row_id, event.sequence, "completed")
+			if len(code) == 0 {
+				agenda_entry_destroy(&updated)
+				calendar_ui_clear_navigation_selection()
+				calendar_ui_reload_data()
+				calendar_notification_reconcile()
+			}
+		}
+	case .Action_Confirm_Proposal, .Action_Reject_Proposal:
+		if calendar_ui_action_available(action.kind) {
+			event := &calendar_ui.events[calendar_ui.navigation_event_index]
+			proposal, found := agenda_proposal_pending_for_entry(event.row_id, context.temp_allocator)
+			if found {
+				updated, code := agenda_proposal_resolve(proposal.id, action.kind == .Action_Confirm_Proposal)
+				agenda_proposal_destroy(&proposal, context.temp_allocator)
+				if len(code) == 0 {
+					agenda_entry_destroy(&updated)
+					calendar_ui_clear_navigation_selection()
+					calendar_ui_reload_data()
+					calendar_notification_reconcile()
+				}
+			}
+		}
+	case .Action_Copy_To_Connected:
+		if calendar_ui_action_available(.Action_Copy_To_Connected) {
+			event := &calendar_ui.events[calendar_ui.navigation_event_index]
+			default_identifier, found := calendar_connected_default_calendar(
+				context.temp_allocator,
+			)
+			calendar_eventkit_clear_error()
+			if !found || !calendar_eventkit_queue_copy(
+				event,
+				default_identifier,
+			) {
+				calendar_eventkit_last_error = strings.clone(
+					"THE CONNECTED EVENT COPY COULD NOT START",
+				)
+			}
+		}
+	case .Action_Open_In_Apple_Calendar:
+		if calendar_ui_action_available(.Action_Open_In_Apple_Calendar) {
+			calendar_ui_open_apple_calendar()
+		}
 	case .Archive_Cancel:
 		calendar_ui_archive_modal_close()
 	case .Archive_Occurrence:
@@ -2381,6 +2965,55 @@ calendar_ui_execute_action :: proc(action: Calendar_App_Action) {
 		calendar_text_focus(calendar_text_editor_field(action.index))
 	case .Editor_Important:
 		calendar_ui.editor_important = !calendar_ui.editor_important
+	case .Editor_All_Day:
+		calendar_ui_editor_toggle_all_day()
+	case .Editor_Calendar:
+		if calendar_ui_editor_can_select_calendar() {
+			if calendar_ui.editor_event_index < 0 {
+				current_slot := 0
+				for calendar, index in calendar_eventkit_calendars {
+					if calendar.identifier ==
+					   calendar_ui.editor_calendar_identifier {
+						current_slot = index+1
+						break
+					}
+				}
+				for offset in 1..=len(calendar_eventkit_calendars)+1 {
+					slot := (
+						current_slot+offset
+					)%(len(calendar_eventkit_calendars)+1)
+					if slot == 0 {
+						delete(calendar_ui.editor_calendar_identifier)
+						calendar_ui.editor_calendar_identifier = ""
+						break
+					}
+					calendar := &calendar_eventkit_calendars[slot-1]
+					if !calendar.writable {continue}
+					delete(calendar_ui.editor_calendar_identifier)
+					calendar_ui.editor_calendar_identifier =
+						strings.clone(calendar.identifier)
+					break
+				}
+			} else {
+				start := -1
+				for calendar, index in calendar_eventkit_calendars {
+					if calendar.identifier ==
+					   calendar_ui.editor_calendar_identifier {
+						start = index
+						break
+					}
+				}
+				for offset in 1..=len(calendar_eventkit_calendars) {
+					index := (start+offset)%len(calendar_eventkit_calendars)
+					calendar := &calendar_eventkit_calendars[index]
+					if !calendar.writable {continue}
+					delete(calendar_ui.editor_calendar_identifier)
+					calendar_ui.editor_calendar_identifier =
+						strings.clone(calendar.identifier)
+					break
+				}
+			}
+		}
 	case .Editor_Save:
 		if calendar_ui.editor_open {calendar_ui_editor_commit()}
 	case .Editor_Delete:
@@ -3148,6 +3781,102 @@ calendar_draw_details :: proc(
 		calendar_detail_draw_field(ctx, font, "RECURRENCE", event.rrule, panel, &cursor, muted, ink)
 		calendar_detail_draw_field(ctx, font, "URL", event.url, panel, &cursor, muted, ink)
 		calendar_detail_draw_field(ctx, font, "STATUS", event.status, panel, &cursor, muted, ink)
+		if event.source == .EventKit {
+			calendar_detail_draw_field(
+				ctx,
+				font,
+				"CALENDAR",
+				event.calendar_title,
+				panel,
+				&cursor,
+				muted,
+				ink,
+			)
+			calendar_detail_draw_field(
+				ctx,
+				font,
+				"ACCOUNT",
+				event.source_title,
+				panel,
+				&cursor,
+				muted,
+				ink,
+			)
+			calendar_detail_draw_field(
+				ctx,
+				font,
+				"ACCESS",
+				event.writable ? "WRITABLE" : "READ ONLY",
+				panel,
+				&cursor,
+				muted,
+				ink,
+			)
+			calendar_detail_draw_field(
+				ctx,
+				font,
+				"TIME ZONE",
+				event.time_zone,
+				panel,
+				&cursor,
+				muted,
+				ink,
+			)
+			calendar_detail_draw_field(
+				ctx,
+				font,
+				"ALARMS",
+				event.alarms,
+				panel,
+				&cursor,
+				muted,
+				ink,
+			)
+			calendar_detail_draw_field(
+				ctx,
+				font,
+				"ORGANIZER",
+				event.organizer,
+				panel,
+				&cursor,
+				muted,
+				ink,
+			)
+			calendar_detail_draw_field(
+				ctx,
+				font,
+				"ATTENDEES",
+				event.attendees,
+				panel,
+				&cursor,
+				muted,
+				ink,
+			)
+			calendar_detail_draw_field(
+				ctx,
+				font,
+				"MY RESPONSE",
+				event.participation_status,
+				panel,
+				&cursor,
+				muted,
+				ink,
+			)
+		}
+		if len(calendar_eventkit_last_error) > 0 {
+			calendar_detail_draw_field(
+				ctx,
+				font,
+				"CONNECTED ERROR",
+				calendar_eventkit_last_error,
+				panel,
+				&cursor,
+				muted,
+				calendar_color64(
+					calendar_theme(calendar_ui.theme_id).destructive,
+				),
+			)
+		}
 	} else {
 		occurrence := Calendar_Holiday_Occurrence{
 			country_index = calendar_ui.navigation_holiday_country_index,
@@ -3296,13 +4025,28 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 			}
 		}
 	}
-	action_kinds := [3]Calendar_UI_Action{
+	action_kinds := [6]Calendar_UI_Action{
 		.Action_Edit,
 		.Action_Open_URL,
 		.Action_Archive,
+		.Action_Complete,
+		.Action_Confirm_Proposal,
+		.Action_Reject_Proposal,
 	}
-	action_names := [3]string{"action edit", "action open url", "action archive"}
-	action_labels := [3]string{"edit", "open url", "archive"}
+	action_names := [5]string{
+		"action edit",
+		"action open url",
+		"action archive",
+		"action copy connected",
+		"action apple calendar",
+	}
+	action_labels := [5]string{
+		"edit",
+		"open url",
+		"archive",
+		"copy connected",
+		"apple calendar",
+	}
 	number_prefix_active :=
 		calendar_ui.number_prefix == 1 &&
 		calendar_number_time_ms() < calendar_ui.number_prefix_deadline_ms
@@ -3333,7 +4077,7 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 		)
 		modal := calendar_ui_editor_rect()
 		calendar_push_rect(vertices, modal, header)
-		for field_index in 0..<7 {
+		for field_index in 0..<10 {
 			field_rect := calendar_ui_editor_field_rect(field_index)
 			calendar_push_rect(
 				vertices,
@@ -3352,9 +4096,9 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 			)
 		}
 		important_rect := Calendar_UI_Rect{
-			modal.x+150,
-			modal.y+modal.h-86-7*48,
-			190,
+			modal.x+18,
+			modal.y+20,
+			112,
 			34,
 		}
 		important_color := row_alt
@@ -3372,6 +4116,28 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 			important_rect,
 			.Editor_Important,
 		)
+		all_day_rect := calendar_ui_editor_all_day_rect()
+		calendar_push_rect(
+			vertices,
+			all_day_rect,
+			calendar_ui.editor_all_day ? theme.important : row_alt,
+		)
+		calendar_ui_add_control(
+			"editor all day",
+			"all day",
+			all_day_rect,
+			.Editor_All_Day,
+		)
+		if calendar_ui_editor_can_select_calendar() {
+			calendar_rect := calendar_ui_editor_calendar_rect()
+			calendar_push_rect(vertices, calendar_rect, button)
+			calendar_ui_add_control(
+				"editor event calendar",
+				"select event calendar",
+				calendar_rect,
+				.Editor_Calendar,
+			)
+		}
 		save_rect := calendar_ui_editor_button_rect(0)
 		cancel_rect := calendar_ui_editor_button_rect(1)
 		calendar_push_rect(vertices, save_rect, theme.positive)
@@ -3409,6 +4175,7 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 		calendar_push_rect(vertices, modal, row_alt)
 		event := &calendar_ui.events[calendar_ui.navigation_event_index]
 		recurring := calendar_event_is_recurring(event)
+		connected := event.source == .EventKit
 		count := recurring ? 3 : 2
 		cancel_index := count-1
 		if recurring {
@@ -3417,14 +4184,14 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 			calendar_push_rect(vertices, occurrence_rect, button)
 			calendar_push_rect(vertices, series_rect, theme.destructive)
 			calendar_ui_add_control(
-				"archive occurrence",
-				"archive occurrence",
+				connected ? "delete connected occurrence" : "archive occurrence",
+				connected ? "delete occurrence" : "archive occurrence",
 				occurrence_rect,
 				.Archive_Occurrence,
 			)
 			calendar_ui_add_control(
-				"archive series",
-				"archive series",
+				connected ? "delete connected future" : "archive series",
+				connected ? "delete future" : "archive series",
 				series_rect,
 				.Archive_Series,
 			)
@@ -3432,8 +4199,8 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 			archive_rect := calendar_ui_archive_button_rect(0, count)
 			calendar_push_rect(vertices, archive_rect, theme.destructive)
 			calendar_ui_add_control(
-				"archive event",
-				"archive event",
+				connected ? "delete connected event" : "archive event",
+				connected ? "delete event" : "archive event",
 				archive_rect,
 				.Archive_Occurrence,
 			)
@@ -3441,8 +4208,8 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 		cancel_rect := calendar_ui_archive_button_rect(cancel_index, count)
 		calendar_push_rect(vertices, cancel_rect, button)
 		calendar_ui_add_control(
-			"archive cancel",
-			"cancel archive",
+			connected ? "delete connected cancel" : "archive cancel",
+			connected ? "cancel delete" : "cancel archive",
 			cancel_rect,
 			.Archive_Cancel,
 		)
@@ -3474,8 +4241,9 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 			close_rect,
 			{kind = .Settings_Close},
 		)
-		categories := [2]Calendar_Settings_Category{
+		categories := [3]Calendar_Settings_Category{
 			.Styling,
+			.Connected_Calendars,
 			.Shortcuts,
 		}
 		for category, index in categories {
@@ -3498,6 +4266,15 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 			calendar_push_rect(vertices, rect, theme.raised)
 			if descriptor.action.kind == .Set_Theme &&
 			   descriptor.action.theme_id == calendar_ui.theme_id {
+				calendar_push_border(vertices, rect, theme.focus)
+			} else if descriptor.action.kind == .Toggle_Connected_Calendar &&
+			          descriptor.action.index >= 0 &&
+			          descriptor.action.index < len(calendar_eventkit_calendars) &&
+			          calendar_connected_calendar_visible(
+						calendar_eventkit_calendars[
+							descriptor.action.index
+						].identifier,
+			          ) {
 				calendar_push_border(vertices, rect, theme.focus)
 			}
 			calendar_ui_add_action_control(
@@ -4133,20 +4910,40 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 		}
 	}
 	calendar_draw_details(ctx, font, ink, muted)
-	action_kinds := [3]Calendar_UI_Action{
+	action_kinds := [6]Calendar_UI_Action{
 		.Action_Edit,
 		.Action_Open_URL,
 		.Action_Archive,
+		.Action_Complete,
+		.Action_Confirm_Proposal,
+		.Action_Reject_Proposal,
 	}
-	action_labels := [3]string{"EDIT", "OPEN URL", "ARCHIVE"}
+	action_labels := [6]string{
+		"EDIT",
+		"OPEN URL",
+		"DISMISS",
+		"COMPLETE",
+		"CONFIRM",
+		"REJECT",
+	}
 	for action, action_index in action_kinds {
+		label := action_labels[action_index]
+		if action == .Action_Archive &&
+		   calendar_ui.navigation_active &&
+		   calendar_ui.navigation_kind == .Event &&
+		   calendar_ui.navigation_event_index >= 0 &&
+		   calendar_ui.navigation_event_index < len(calendar_ui.events) &&
+		   calendar_ui.events[calendar_ui.navigation_event_index].source ==
+				.EventKit {
+			label = "DELETE"
+		}
 		rect := calendar_ui_action_rect(action_index)
 		color := muted
 		if calendar_ui_action_available(action) {color = ink}
 		calendar_draw_numbered_action(
 			ctx,
 			font,
-			action_labels[action_index],
+			label,
 			11+action_index,
 			rect,
 			color,
@@ -4169,31 +4966,37 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			ink,
 			0,
 		)
-		labels := [7]string{
+		labels := [10]string{
 			"SUMMARY",
 			"START",
 			"END",
 			"LOCATION",
+			"URL",
 			"CATEGORIES",
 			"DESCRIPTION",
+			"TIME ZONE",
+			"ALARMS",
 			"RRULE",
 		}
-		values := [7]string{
+		values := [10]string{
 			calendar_ui.editor_summary,
 			calendar_ui.editor_start,
 			calendar_ui.editor_end,
 			calendar_ui.editor_location,
+			calendar_ui.editor_url,
 			calendar_ui.editor_categories,
 			calendar_ui.editor_description,
+			calendar_ui.editor_time_zone,
+			calendar_ui.editor_alarms,
 			calendar_ui.editor_rrule,
 		}
-		for field_index in 0..<7 {
+		for field_index in 0..<10 {
 			field_rect := calendar_ui_editor_field_rect(field_index)
 			calendar_draw_text(
 				ctx,
 				font,
 				labels[field_index],
-				{modal.x+18, field_rect.y, 120, field_rect.h},
+				{field_rect.x-82, field_rect.y, 76, field_rect.h},
 				muted,
 				0,
 			)
@@ -4210,9 +5013,9 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			)
 		}
 		important_rect := Calendar_UI_Rect{
-			modal.x+150,
-			modal.y+modal.h-86-7*48,
-			190,
+			modal.x+18,
+			modal.y+20,
+			112,
 			34,
 		}
 		calendar_draw_text(
@@ -4222,6 +5025,31 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			important_rect,
 			calendar_ui.editor_important ? calendar_color64(theme.important) : muted,
 		)
+		all_day_text_color := muted
+		if calendar_ui.editor_all_day {
+			all_day_text_color = calendar_color64(theme.important)
+		}
+		calendar_draw_text(
+			ctx,
+			font,
+			calendar_ui.editor_all_day ? "ALL DAY: YES" : "ALL DAY: NO",
+			calendar_ui_editor_all_day_rect(),
+			all_day_text_color,
+			8,
+		)
+		if calendar_ui_editor_can_select_calendar() {
+			calendar_draw_text(
+				ctx,
+				font,
+				fmt.tprintf(
+					"CALENDAR: %s",
+					calendar_ui_editor_calendar_title(),
+				),
+				calendar_ui_editor_calendar_rect(),
+				muted,
+				8,
+			)
+		}
 		calendar_draw_text(
 			ctx,
 			font,
@@ -4274,10 +5102,12 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 		)
 		event := &calendar_ui.events[calendar_ui.navigation_event_index]
 		recurring := calendar_event_is_recurring(event)
+		connected := event.source == .EventKit
+		dialog_title := connected ? "DELETE EVENT" : "ARCHIVE EVENT"
 		calendar_draw_text(
 			ctx,
 			font,
-			"ARCHIVE EVENT",
+			dialog_title,
 			{modal.x+24, modal.y+modal.h-52, modal.w-48, 30},
 			ink,
 			0,
@@ -4291,7 +5121,12 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			0,
 		)
 		message := "ARCHIVED EVENTS ARE HIDDEN FROM THE CALENDAR AND REMINDERS"
-		if recurring {
+		if connected {
+			message = "EVENTKIT WILL DELETE THIS EVENT FROM ITS CONNECTED CALENDAR"
+		}
+		if recurring && connected {
+			message = "CHOOSE THIS OCCURRENCE OR THIS AND FUTURE OCCURRENCES"
+		} else if recurring {
 			message = "CHOOSE WHETHER TO ARCHIVE THIS OCCURRENCE OR THE COMPLETE SERIES"
 		}
 		calendar_draw_text(
@@ -4307,7 +5142,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			calendar_draw_numbered_action(
 				ctx,
 				font,
-				"ARCHIVE OCCURRENCE",
+				connected ? "DELETE OCCURRENCE" : "ARCHIVE OCCURRENCE",
 				1,
 				calendar_ui_archive_button_rect(0, count),
 				ink,
@@ -4316,7 +5151,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			calendar_draw_numbered_action(
 				ctx,
 				font,
-				"ARCHIVE SERIES",
+				connected ? "DELETE FUTURE" : "ARCHIVE SERIES",
 				2,
 				calendar_ui_archive_button_rect(1, count),
 				inverse,
@@ -4326,7 +5161,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			calendar_draw_numbered_action(
 				ctx,
 				font,
-				"ARCHIVE",
+				connected ? "DELETE" : "ARCHIVE",
 				1,
 				calendar_ui_archive_button_rect(0, count),
 				inverse,
@@ -4386,8 +5221,9 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			muted,
 			xmark[:],
 		)
-		categories := [2]Calendar_Settings_Category{
+		categories := [3]Calendar_Settings_Category{
 			.Styling,
+			.Connected_Calendars,
 			.Shortcuts,
 		}
 		for category, index in categories {
@@ -4419,6 +5255,36 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 				value = "CURRENT"
 			} else if descriptor.action.kind == .Configure_Flash {
 				value = calendar_shortcut_display(calendar_ui.flash_leader)
+			} else if descriptor.action.kind == .Request_Calendar_Access {
+				value = strings.to_upper(
+					calendar_eventkit_authorization_name(),
+					context.temp_allocator,
+				)
+			} else if descriptor.action.kind == .Toggle_Connected_Calendar &&
+			          descriptor.action.index >= 0 &&
+			          descriptor.action.index < len(calendar_eventkit_calendars) {
+				calendar := &calendar_eventkit_calendars[
+					descriptor.action.index
+				]
+				value = calendar_connected_calendar_visible(
+					calendar.identifier,
+				) ? "VISIBLE" : "HIDDEN"
+				if !calendar.writable {
+					value = fmt.tprintf("%s · READ ONLY", value)
+				}
+			} else if descriptor.action.kind ==
+			          .Set_Default_Connected_Calendar &&
+			          descriptor.action.index >= 0 &&
+			          descriptor.action.index < len(calendar_eventkit_calendars) {
+				default_identifier, _ := calendar_connected_default_calendar(
+					context.temp_allocator,
+				)
+				default_calendar := &calendar_eventkit_calendars[
+					descriptor.action.index
+				]
+				if default_identifier == default_calendar.identifier {
+					value = "DEFAULT"
+				}
 			}
 			calendar_draw_text(
 				ctx,
@@ -4893,6 +5759,12 @@ calendar_render_frame :: proc() {
 calendar_on_frame :: proc "c" (self: Id, command: Sel, timer: Id) {
 	context = runtime.default_context()
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	if calendar_eventkit_external_refresh_requested() {
+		calendar_ui_reload_data()
+	}
+	if calendar_eventkit_consume_result() {
+		calendar_ui_reload_data(false)
+	}
 	_ = calendar_expire_number_prefix_at(calendar_number_time_ms())
 	now_stamp := time.to_unix_seconds(time.now())
 	if calendar_ui.notification_reconcile_stamp == 0 ||
@@ -4960,6 +5832,12 @@ calendar_register_classes :: proc() -> Id {
 		delegate_class,
 		sel_registerName("calendarCLIRequest:"),
 		rawptr(calendar_on_cli_ipc_request),
+		"v@:@",
+	)
+	class_addMethod(
+		delegate_class,
+		sel_registerName("calendarEventStoreChanged:"),
+		rawptr(calendar_eventkit_store_changed),
 		"v@:@",
 	)
 	class_addMethod(
@@ -5209,12 +6087,12 @@ calendar_gui_initialize :: proc() -> bool {
 		return false
 	}
 	calendar_ui.holiday_countries = calendar_holiday_countries_load()
-	calendar_ui_reload_data()
 	app := msg_id(objc_getClass("NSApplication"), sel_registerName("sharedApplication"))
 	calendar_register_accessibility_class()
 	view_class := calendar_register_classes()
 	window_class := calendar_register_window_class()
 	calendar_ui.app = app
+	calendar_ui_reload_data()
 	msg_void_i(app, sel_registerName("setActivationPolicy:"), 0)
 	msg_void_id(app, sel_registerName("setDelegate:"), calendar_ui.delegate)
 	frame := Rect{{120, 100}, {CALENDAR_DEFAULT_WINDOW_WIDTH, CALENDAR_DEFAULT_WINDOW_HEIGHT}}
@@ -5226,7 +6104,7 @@ calendar_gui_initialize :: proc() -> bool {
 		2,
 		false,
 	)
-	msg_void_id(calendar_ui.window, sel_registerName("setTitle:"), nsstring("HW Calendar"))
+	msg_void_id(calendar_ui.window, sel_registerName("setTitle:"), nsstring("HW Agenda"))
 	msg_void_bool(calendar_ui.window, sel_registerName("setOpaque:"), true)
 	msg_void_bool(calendar_ui.window, sel_registerName("setHasShadow:"), false)
 	calendar_msg_void_size(

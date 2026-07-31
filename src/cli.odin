@@ -2,6 +2,7 @@ package main
 
 import "core:encoding/json"
 import "core:fmt"
+import "core:hash"
 import "core:os"
 import "core:strconv"
 import "core:strings"
@@ -20,9 +21,26 @@ Calendar_CLI_Command :: enum {
 	Event_Get,
 	Event_List,
 	Event_Search,
+	Calendar_Status,
+	Calendar_List,
+	Calendar_Request_Access,
 	Reminder_Status,
 	UI_Snapshot,
 	UI_Check,
+	Entry_Create,
+	Entry_Update,
+	Entry_Get,
+	Entry_List,
+	Entry_Search,
+	Entry_Complete,
+	Entry_Reopen,
+	Entry_Dismiss,
+	Entry_Restore,
+	Agenda_Query,
+	Proposal_Submit,
+	Proposal_Get,
+	Proposal_Confirm,
+	Proposal_Reject,
 }
 
 Calendar_CLI_Request :: struct {
@@ -31,6 +49,11 @@ Calendar_CLI_Request :: struct {
 	rule: string,
 	start: string,
 	uid: string,
+	id: string,
+	source: string,
+	calendar: string,
+	if_version: string,
+	confirm_external_write: bool,
 	scope: string,
 	occurrence: string,
 	from: string,
@@ -39,21 +62,30 @@ Calendar_CLI_Request :: struct {
 	output: string,
 	baseline: string,
 	limit: int,
+	if_revision: int,
 }
 
 calendar_cli_command_reads_input :: proc(command: Calendar_CLI_Command) -> bool {
 	return command == .ICal_Validate || command == .ICal_Import ||
 	       command == .Event_Create || command == .Event_Update ||
-	       command == .Event_Delete
+	       command == .Event_Delete || command == .Entry_Create ||
+	       command == .Entry_Update || command == .Proposal_Submit
 }
 
 calendar_cli_command_mutates_database :: proc(command: Calendar_CLI_Command) -> bool {
 	return command == .ICal_Import || command == .Event_Create ||
-	       command == .Event_Update || command == .Event_Delete
+	       command == .Event_Update || command == .Event_Delete ||
+	       command == .Entry_Create || command == .Entry_Update ||
+	       command == .Entry_Complete || command == .Entry_Reopen ||
+	       command == .Entry_Dismiss || command == .Entry_Restore ||
+	       command == .Proposal_Submit || command == .Proposal_Confirm ||
+	       command == .Proposal_Reject
 }
 
 calendar_cli_command_requires_gui :: proc(command: Calendar_CLI_Command) -> bool {
-	return command == .UI_Snapshot || command == .UI_Check
+	return command == .UI_Snapshot || command == .UI_Check ||
+	       command == .Calendar_Status || command == .Calendar_List ||
+	       command == .Calendar_Request_Access
 }
 
 calendar_cli_command_uses_database :: proc(command: Calendar_CLI_Command) -> bool {
@@ -108,6 +140,8 @@ Calendar_CLI_Import_Response :: struct {
 }
 
 Calendar_CLI_Event_Output :: struct {
+	id: string `json:"id,omitempty"`,
+	source: string,
 	uid: string,
 	recurrence_id: string `json:"recurrence_id,omitempty"`,
 	summary: string,
@@ -122,6 +156,18 @@ Calendar_CLI_Event_Output :: struct {
 	start: string,
 	end: string,
 	rrule: string `json:"rrule,omitempty"`,
+	calendar_id: string `json:"calendar_id,omitempty"`,
+	calendar_title: string `json:"calendar_title,omitempty"`,
+	account_title: string `json:"account_title,omitempty"`,
+	version: string `json:"version,omitempty"`,
+	time_zone: string `json:"time_zone,omitempty"`,
+	alarms: string `json:"alarms,omitempty"`,
+	alarm_offsets_seconds: string `json:"alarm_offsets_seconds,omitempty"`,
+	organizer: string `json:"organizer,omitempty"`,
+	attendees: string `json:"attendees,omitempty"`,
+	participation_status: string `json:"participation_status,omitempty"`,
+	writable: bool,
+	all_day: bool,
 }
 
 Calendar_CLI_Event_List_Data :: struct {
@@ -136,9 +182,13 @@ Calendar_CLI_Event_List_Response :: struct {
 }
 
 Calendar_CLI_Mutation_Data :: struct {
+	id: string `json:"id,omitempty"`,
+	source: string,
 	uid: string,
 	recurrence_id: string `json:"recurrence_id,omitempty"`,
 	document_id: i64,
+	version: string `json:"version,omitempty"`,
+	calendar_id: string `json:"calendar_id,omitempty"`,
 	status: string,
 }
 
@@ -172,6 +222,31 @@ Calendar_CLI_Reminder_Response :: struct {
 	data: Calendar_CLI_Reminder_Data,
 }
 
+Calendar_CLI_Connected_Calendar_Output :: struct {
+	id: string,
+	title: string,
+	account_id: string,
+	account_title: string,
+	account_type: string,
+	color: string,
+	writable: bool,
+	subscribed: bool,
+	visible: bool,
+	default: bool,
+}
+
+Calendar_CLI_Calendar_Data :: struct {
+	authorization: string,
+	default_calendar_id: string `json:"default_calendar_id,omitempty"`,
+	calendars: []Calendar_CLI_Connected_Calendar_Output,
+}
+
+Calendar_CLI_Calendar_Response :: struct {
+	ok: bool,
+	command: string,
+	data: Calendar_CLI_Calendar_Data,
+}
+
 Calendar_CLI_Recurrence_Data :: struct {
 	occurrences: []string,
 	truncated: bool,
@@ -200,6 +275,12 @@ Calendar_Event_Input :: struct {
 	exdates: []string,
 	reminder_offsets_seconds: []int,
 	sequence: int,
+	source: string,
+	id: string,
+	calendar_id: string,
+	version: string,
+	time_zone: string,
+	all_day: bool,
 }
 
 calendar_event_input_destroy :: proc(input: ^Calendar_Event_Input) {
@@ -215,6 +296,11 @@ calendar_event_input_destroy :: proc(input: ^Calendar_Event_Input) {
 	delete(input.dtstart)
 	delete(input.dtend)
 	delete(input.rrule)
+	delete(input.source)
+	delete(input.id)
+	delete(input.calendar_id)
+	delete(input.version)
+	delete(input.time_zone)
 	for value in input.rdates {delete(value)}
 	delete(input.rdates)
 	for value in input.exdates {delete(value)}
@@ -235,9 +321,26 @@ calendar_cli_command_name :: proc(command: Calendar_CLI_Command) -> string {
 	case .Event_Get: return "event get"
 	case .Event_List: return "event list"
 	case .Event_Search: return "event search"
+	case .Calendar_Status: return "calendar status"
+	case .Calendar_List: return "calendar list"
+	case .Calendar_Request_Access: return "calendar request-access"
 	case .Reminder_Status: return "reminder status"
 	case .UI_Snapshot: return "ui snapshot"
 	case .UI_Check: return "ui check"
+	case .Entry_Create: return "entry create"
+	case .Entry_Update: return "entry update"
+	case .Entry_Get: return "entry get"
+	case .Entry_List: return "entry list"
+	case .Entry_Search: return "entry search"
+	case .Entry_Complete: return "entry complete"
+	case .Entry_Reopen: return "entry reopen"
+	case .Entry_Dismiss: return "entry dismiss"
+	case .Entry_Restore: return "entry restore"
+	case .Agenda_Query: return "agenda query"
+	case .Proposal_Submit: return "proposal submit"
+	case .Proposal_Get: return "proposal get"
+	case .Proposal_Confirm: return "proposal confirm"
+	case .Proposal_Reject: return "proposal reject"
 	case .None: return "unknown"
 	}
 	return "unknown"
@@ -270,29 +373,37 @@ calendar_cli_error :: proc(
 calendar_cli_parse :: proc(args: []string) -> (Calendar_CLI_Request, Calendar_CLI_Result, bool) {
 	request := Calendar_CLI_Request{limit=10_000}
 	if len(args) < 2 {
-		return {}, calendar_cli_error(.None, 2, "usage", "Expected an iCalendar, event, reminder, or UI command."), false
+		return {}, calendar_cli_error(.None, 2, "usage", "Expected an entry, agenda, proposal, reminder, or UI command."), false
 	}
 	group, action := args[0], args[1]
 	switch {
-	case group == "ical" && action == "validate": request.command = .ICal_Validate
-	case group == "ical" && action == "import": request.command = .ICal_Import
-	case group == "ical" && action == "export": request.command = .ICal_Export
-	case group == "recurrence" && action == "expand":
-		request.command = .Recurrence_Expand
-	case group == "event" && action == "create": request.command = .Event_Create
-	case group == "event" && action == "update": request.command = .Event_Update
-	case group == "event" && action == "delete": request.command = .Event_Delete
-	case group == "event" && action == "get": request.command = .Event_Get
-	case group == "event" && action == "list": request.command = .Event_List
-	case group == "event" && action == "search": request.command = .Event_Search
 	case group == "reminder" && action == "status": request.command = .Reminder_Status
 	case group == "ui" && action == "snapshot": request.command = .UI_Snapshot
 	case group == "ui" && action == "check": request.command = .UI_Check
+	case group == "entry" && action == "create": request.command = .Entry_Create
+	case group == "entry" && action == "update": request.command = .Entry_Update
+	case group == "entry" && action == "get": request.command = .Entry_Get
+	case group == "entry" && action == "list": request.command = .Entry_List
+	case group == "entry" && action == "search": request.command = .Entry_Search
+	case group == "entry" && action == "complete": request.command = .Entry_Complete
+	case group == "entry" && action == "reopen": request.command = .Entry_Reopen
+	case group == "entry" && action == "dismiss": request.command = .Entry_Dismiss
+	case group == "entry" && action == "restore": request.command = .Entry_Restore
+	case group == "agenda" && action == "query": request.command = .Agenda_Query
+	case group == "proposal" && action == "submit": request.command = .Proposal_Submit
+	case group == "proposal" && action == "get": request.command = .Proposal_Get
+	case group == "proposal" && action == "confirm": request.command = .Proposal_Confirm
+	case group == "proposal" && action == "reject": request.command = .Proposal_Reject
 	case:
 		return {}, calendar_cli_error(.None, 2, "usage", "Unknown command."), false
 	}
 	for index := 2; index < len(args); {
 		if args[index] == "--all" {
+			index += 1
+			continue
+		}
+		if args[index] == "--confirm-external-write" {
+			request.confirm_external_write = true
 			index += 1
 			continue
 		}
@@ -304,6 +415,10 @@ calendar_cli_parse :: proc(args: []string) -> (Calendar_CLI_Request, Calendar_CL
 		case "--rule": request.rule = value
 		case "--start": request.start = value
 		case "--uid": request.uid = value
+		case "--id": request.id = value
+		case "--source": request.source = value
+		case "--calendar": request.calendar = value
+		case "--if-version": request.if_version = value
 		case "--scope": request.scope = value
 		case "--occurrence": request.occurrence = value
 		case "--from": request.from = value
@@ -311,6 +426,10 @@ calendar_cli_parse :: proc(args: []string) -> (Calendar_CLI_Request, Calendar_CL
 		case "--query": request.query = value
 		case "--output": request.output = value
 		case "--baseline": request.baseline = value
+		case "--if-revision":
+			parsed, ok := strconv.parse_int(value)
+			if !ok || parsed < 1 {return {}, calendar_cli_error(request.command, 2, "usage", "--if-revision must be a positive integer."), false}
+			request.if_revision = parsed
 		case "--limit":
 			parsed, ok := strconv.parse_int(value)
 			if !ok || parsed < 1 || parsed > ICAL_MAX_EXPANSION_RESULTS {
@@ -322,7 +441,84 @@ calendar_cli_parse :: proc(args: []string) -> (Calendar_CLI_Request, Calendar_CL
 		}
 		index += 2
 	}
+	if len(request.source) > 0 &&
+	   request.source != "local" &&
+	   request.source != "eventkit" {
+		return {}, calendar_cli_error(
+			request.command,
+			2,
+			"usage",
+			"--source must be local or eventkit.",
+		), false
+	}
+	if len(request.scope) > 0 &&
+	   request.scope != "all" &&
+	   request.scope != "occurrence" &&
+	   request.scope != "future" {
+		return {}, calendar_cli_error(
+			request.command,
+			2,
+			"usage",
+			"--scope must be all, occurrence, or future.",
+		), false
+	}
 	return request, {}, true
+}
+
+calendar_cli_connected_calendars :: proc(
+	request: Calendar_CLI_Request,
+) -> Calendar_CLI_Result {
+	if request.command == .Calendar_Request_Access {
+		if !calendar_eventkit_request_access() {
+			return calendar_cli_error(
+				request.command,
+				5,
+				"access_request_failed",
+				"The calendar access request could not start.",
+			)
+		}
+	}
+	default_identifier, _ := calendar_connected_default_calendar(
+		context.temp_allocator,
+	)
+	values := make(
+		[]Calendar_CLI_Connected_Calendar_Output,
+		len(calendar_eventkit_calendars),
+	)
+	for calendar, index in calendar_eventkit_calendars {
+		values[index] = {
+			id = calendar.identifier,
+			title = calendar.title,
+			account_id = calendar.source_identifier,
+			account_title = calendar.source_title,
+			account_type = calendar_eventkit_source_type_name(
+				calendar.source_type,
+			),
+			color = calendar.color,
+			writable = calendar.writable,
+			subscribed = calendar.subscribed,
+			visible = calendar_connected_calendar_visible(
+				calendar.identifier,
+			),
+			default = calendar.identifier == default_identifier,
+		}
+	}
+	status := calendar_eventkit_authorization_name()
+	if request.command == .Calendar_Request_Access {
+		status = "request_pending"
+	}
+	response := Calendar_CLI_Calendar_Response{
+		ok = true,
+		command = calendar_cli_command_name(request.command),
+		data = {
+			authorization = status,
+			default_calendar_id = default_identifier,
+			calendars = values,
+		},
+	}
+	encoded := calendar_cli_encode(response)
+	delete(values)
+	return {output = encoded}
 }
 
 calendar_cli_diagnostics :: proc(
@@ -487,7 +683,19 @@ calendar_cli_event_output :: proc(
 ) -> Calendar_CLI_Event_Output {
 	start_text := ical_format_date_time(start, context.temp_allocator)
 	end_text := ical_format_date_time(end, context.temp_allocator)
+	source := "local"
+	if event.source == .EventKit {source = "eventkit"}
+	id := event.opaque_id
+	if len(id) == 0 {
+		identity := fmt.tprintf("%s:%s", event.uid, recurrence_id)
+		id = fmt.tprintf(
+			"local-%016x",
+			hash.fnv64a(transmute([]u8)identity),
+		)
+	}
 	return {
+		id = ical_clone(id),
+		source = strings.clone(source),
 		uid = ical_clone(event.uid),
 		recurrence_id = ical_clone(recurrence_id),
 		summary = ical_clone(event.summary),
@@ -502,11 +710,25 @@ calendar_cli_event_output :: proc(
 		start = ical_clone(start_text),
 		end = ical_clone(end_text),
 		rrule = ical_clone(event.rrule),
+		calendar_id = ical_clone(event.calendar_identifier),
+		calendar_title = ical_clone(event.calendar_title),
+		account_title = ical_clone(event.source_title),
+		version = ical_clone(event.version),
+		time_zone = ical_clone(event.time_zone),
+		alarms = ical_clone(event.alarms),
+		alarm_offsets_seconds = ical_clone(event.alarm_offsets),
+		organizer = ical_clone(event.organizer),
+		attendees = ical_clone(event.attendees),
+		participation_status = ical_clone(event.participation_status),
+		writable = event.source == .Local || event.writable,
+		all_day = event.all_day || start.is_date,
 	}
 }
 
 calendar_cli_event_outputs_destroy :: proc(outputs: []Calendar_CLI_Event_Output) {
 	for &output in outputs {
+		delete(output.id)
+		delete(output.source)
 		delete(output.uid)
 		delete(output.recurrence_id)
 		delete(output.summary)
@@ -518,8 +740,65 @@ calendar_cli_event_outputs_destroy :: proc(outputs: []Calendar_CLI_Event_Output)
 		delete(output.start)
 		delete(output.end)
 		delete(output.rrule)
+		delete(output.calendar_id)
+		delete(output.calendar_title)
+		delete(output.account_title)
+		delete(output.version)
+		delete(output.time_zone)
+		delete(output.alarms)
+		delete(output.alarm_offsets_seconds)
+		delete(output.organizer)
+		delete(output.attendees)
+		delete(output.participation_status)
 	}
 	delete(outputs)
+}
+
+calendar_cli_event_id :: proc(
+	event: ^Calendar_Event,
+	allocator := context.allocator,
+) -> string {
+	if event == nil {return ""}
+	if len(event.opaque_id) > 0 {
+		return strings.clone(event.opaque_id, allocator)
+	}
+	identity := fmt.tprintf("%s:%s", event.uid, event.recurrence_id)
+	return fmt.aprintf(
+		"local-%016x",
+		hash.fnv64a(transmute([]u8)identity),
+		allocator = allocator,
+	)
+}
+
+calendar_cli_events_load :: proc(
+	request: Calendar_CLI_Request,
+	allocator := context.allocator,
+) -> ([dynamic]Calendar_Event, bool) {
+	result := make([dynamic]Calendar_Event, allocator)
+	local_events, local_loaded := calendar_events_load(allocator)
+	if !local_loaded {return result, false}
+	for &event in local_events {
+		if len(request.source) > 0 && request.source != "local" {continue}
+		append(&result, calendar_event_clone(&event, allocator))
+	}
+	calendar_events_destroy(&local_events)
+	if len(request.source) == 0 || request.source == "eventkit" {
+		connected_events, connected_loaded :=
+			calendar_connected_cached_events_load(allocator)
+		if !connected_loaded {
+			calendar_events_destroy(&result)
+			return nil, false
+		}
+		for &event in connected_events {
+			if len(request.calendar) > 0 &&
+			   event.calendar_identifier != request.calendar {
+				continue
+			}
+			append(&result, calendar_event_clone(&event, allocator))
+		}
+		calendar_events_destroy(&connected_events)
+	}
+	return result, true
 }
 
 calendar_cli_parse_date_input :: proc(value: string) -> (ICal_Date_Time, bool) {
@@ -547,7 +826,24 @@ calendar_cli_load_range :: proc(
 	if !start_ok || !end_ok || ical_date_time_compare(range_start, range_end) >= 0 {
 		return {}, false
 	}
-	events, loaded := calendar_events_load()
+	if calendar_eventkit_initialized &&
+	   calendar_eventkit_authorization == .Full_Access &&
+	   request.source != "local" {
+		cursor := ical_date_time_stamp(range_start)
+		range_end_stamp := ical_date_time_stamp(range_end)
+		maximum_window := i64(1_460*86_400)
+		for cursor < range_end_stamp {
+			segment_end := min(cursor+maximum_window, range_end_stamp)
+			if !calendar_connected_cache_covers(cursor, segment_end) {
+				_ = calendar_eventkit_refresh_cache_sync(
+					cursor,
+					segment_end,
+				)
+			}
+			cursor = segment_end
+		}
+	}
+	events, loaded := calendar_cli_events_load(request)
 	if !loaded {return {}, false}
 	defer calendar_events_destroy(&events)
 	occurrences, truncated := calendar_expand_events(
@@ -597,7 +893,17 @@ calendar_cli_event_search :: proc(request: Calendar_CLI_Request) -> Calendar_CLI
 	if len(strings.trim_space(request.query)) == 0 {
 		return calendar_cli_error(request.command, 2, "usage", "event search requires --query.")
 	}
-	events, loaded := calendar_events_load()
+	if calendar_eventkit_initialized &&
+	   calendar_eventkit_authorization == .Full_Access &&
+	   request.source != "local" {
+		now := time.to_unix_seconds(time.now())
+		start := now-730*86_400
+		end := now+730*86_400
+		if !calendar_connected_cache_covers(start, end) {
+			_ = calendar_eventkit_refresh_cache_sync(start, end)
+		}
+	}
+	events, loaded := calendar_cli_events_load(request)
 	if !loaded {return calendar_cli_error(request.command, 6, "storage_failed", sqlite_error(calendar_database))}
 	defer calendar_events_destroy(&events)
 	search: match_sorter.Search_Context
@@ -666,15 +972,15 @@ calendar_cli_event_search :: proc(request: Calendar_CLI_Request) -> Calendar_CLI
 }
 
 calendar_cli_event_get :: proc(request: Calendar_CLI_Request) -> Calendar_CLI_Result {
-	if len(request.uid) == 0 {
+	if len(request.uid) == 0 && len(request.id) == 0 {
 		return calendar_cli_error(
 			request.command,
 			2,
 			"usage",
-			"event get requires --uid.",
+			"event get requires --id or --uid.",
 		)
 	}
-	events, loaded := calendar_events_load()
+	events, loaded := calendar_cli_events_load(request)
 	if !loaded {
 		return calendar_cli_error(
 			request.command,
@@ -685,8 +991,14 @@ calendar_cli_event_get :: proc(request: Calendar_CLI_Request) -> Calendar_CLI_Re
 	}
 	defer calendar_events_destroy(&events)
 	count := 0
-	for event in events {
-		if event.uid == request.uid &&
+	for &event in events {
+		id_matches := true
+		if len(request.id) > 0 {
+			event_id := calendar_cli_event_id(&event, context.temp_allocator)
+			id_matches = event_id == request.id
+		}
+		uid_matches := len(request.uid) == 0 || event.uid == request.uid
+		if id_matches && uid_matches &&
 		   (len(request.occurrence) == 0 ||
 		    event.recurrence_id == request.occurrence) {
 			count += 1
@@ -703,7 +1015,13 @@ calendar_cli_event_get :: proc(request: Calendar_CLI_Request) -> Calendar_CLI_Re
 	outputs := make([]Calendar_CLI_Event_Output, count)
 	output_index := 0
 	for &event in events {
-		if event.uid != request.uid ||
+		id_matches := true
+		if len(request.id) > 0 {
+			event_id := calendar_cli_event_id(&event, context.temp_allocator)
+			id_matches = event_id == request.id
+		}
+		uid_matches := len(request.uid) == 0 || event.uid == request.uid
+		if !id_matches || !uid_matches ||
 		   (len(request.occurrence) > 0 &&
 		    event.recurrence_id != request.occurrence) {
 			continue
@@ -985,15 +1303,237 @@ calendar_cli_decode_event_input :: proc(input_text: string) -> (Calendar_Event_I
 	return input, true
 }
 
+calendar_cli_connected_target :: proc(
+	request: Calendar_CLI_Request,
+) -> (Calendar_Event, bool, bool) {
+	lookup := request
+	lookup.source = "eventkit"
+	events, loaded := calendar_cli_events_load(lookup)
+	if !loaded {return {}, false, false}
+	defer calendar_events_destroy(&events)
+	result: Calendar_Event
+	found := false
+	for &event in events {
+		if event.opaque_id != request.id {continue}
+		if len(request.occurrence) > 0 &&
+		   event.recurrence_id != request.occurrence &&
+		   event.dtstart != request.occurrence {
+			continue
+		}
+		if found {
+			calendar_event_destroy(&result)
+			return {}, false, true
+		}
+		result = calendar_event_clone(&event)
+		found = true
+	}
+	return result, found, false
+}
+
+calendar_cli_connected_event_mutate :: proc(
+	request: Calendar_CLI_Request,
+	input: ^Calendar_Event_Input,
+) -> Calendar_CLI_Result {
+	if !request.confirm_external_write {
+		return calendar_cli_error(
+			request.command,
+			2,
+			"confirmation_required",
+			"Connected writes require --confirm-external-write.",
+		)
+	}
+	if !calendar_eventkit_initialized {
+		return calendar_cli_error(
+			request.command,
+			4,
+			"gui_not_running",
+			"Connected writes require the running application.",
+		)
+	}
+	mutation: Calendar_EventKit_Mutation
+	if request.command == .Event_Create {
+		calendar_identifier := request.calendar
+		if len(calendar_identifier) == 0 {
+			calendar_identifier = input.calendar_id
+		}
+		if len(calendar_identifier) == 0 {
+			return calendar_cli_error(
+				request.command,
+				2,
+				"usage",
+				"Connected event create requires --calendar.",
+			)
+		}
+		mutation = {
+			kind = .Create,
+			calendar_identifier = strings.clone(calendar_identifier),
+			summary = strings.clone(input.summary),
+			description = strings.clone(input.description),
+			location = strings.clone(input.location),
+			url = strings.clone(input.url),
+			categories = strings.clone(
+				strings.join(input.categories, ",", context.temp_allocator),
+			),
+			dtstart = strings.clone(input.dtstart),
+			dtend = strings.clone(input.dtend),
+			time_zone = strings.clone(input.time_zone),
+			rrule = strings.clone(input.rrule),
+			important = input.important,
+		}
+		if input.reminder_offsets_seconds != nil {
+			mutation.alarm_offsets = make(
+				[]i64,
+				len(input.reminder_offsets_seconds),
+			)
+			for offset, index in input.reminder_offsets_seconds {
+				mutation.alarm_offsets[index] = i64(offset)
+			}
+			mutation.replace_alarms = true
+		}
+	} else {
+		if len(request.id) == 0 || len(request.if_version) == 0 {
+			return calendar_cli_error(
+				request.command,
+				2,
+				"usage",
+				"Connected update and delete require --id and --if-version.",
+			)
+		}
+		target, found, ambiguous := calendar_cli_connected_target(request)
+		if ambiguous {
+			return calendar_cli_error(
+				request.command,
+				2,
+				"occurrence_required",
+				"Recurring connected writes require --occurrence.",
+			)
+		}
+		if !found {
+			return calendar_cli_error(
+				request.command,
+				3,
+				"not_found",
+				"The connected event was not found in the local search cache.",
+			)
+		}
+		defer calendar_event_destroy(&target)
+		if target.version != request.if_version {
+			return calendar_cli_error(
+				request.command,
+				5,
+				"version_conflict",
+				"The connected event version does not match --if-version.",
+			)
+		}
+		kind := Calendar_EventKit_Mutation_Kind.Update
+		if request.command == .Event_Delete {kind = .Delete}
+		mutation = calendar_eventkit_mutation_from_event(&target, kind)
+		delete(mutation.expected_version)
+		mutation.expected_version = strings.clone(request.if_version)
+		destination := request.calendar
+		if len(destination) == 0 {destination = input.calendar_id}
+		if len(destination) > 0 {
+			delete(mutation.calendar_identifier)
+			mutation.calendar_identifier = strings.clone(destination)
+		}
+		mutation.future = request.scope == "future" || request.scope == "all"
+		mutation.whole_series = request.scope == "all"
+		if kind == .Update {
+			delete(mutation.summary)
+			delete(mutation.description)
+			delete(mutation.location)
+			delete(mutation.url)
+			delete(mutation.categories)
+			delete(mutation.dtstart)
+			delete(mutation.dtend)
+			delete(mutation.time_zone)
+			delete(mutation.rrule)
+			mutation.summary = strings.clone(input.summary)
+			mutation.description = strings.clone(input.description)
+			mutation.location = strings.clone(input.location)
+			mutation.url = strings.clone(input.url)
+			mutation.categories = strings.clone(
+				strings.join(
+					input.categories,
+					",",
+					context.temp_allocator,
+				),
+			)
+			mutation.dtstart = strings.clone(input.dtstart)
+			mutation.dtend = strings.clone(input.dtend)
+			mutation.time_zone = strings.clone(input.time_zone)
+			mutation.rrule = strings.clone(input.rrule)
+			mutation.important = input.important
+			if input.reminder_offsets_seconds != nil {
+				mutation.alarm_offsets = make(
+					[]i64,
+					len(input.reminder_offsets_seconds),
+				)
+				for offset, index in input.reminder_offsets_seconds {
+					mutation.alarm_offsets[index] = i64(offset)
+				}
+				mutation.replace_alarms = true
+			}
+		}
+	}
+	result, completed := calendar_eventkit_execute_mutation(mutation)
+	if !completed {
+		return calendar_cli_error(
+			request.command,
+			6,
+			"eventkit_timeout",
+			"EventKit did not complete the connected write.",
+		)
+	}
+	defer calendar_eventkit_result_destroy(&result)
+	if !result.mutation_succeeded {
+		return calendar_cli_error(
+			request.command,
+			5,
+			"external_write_failed",
+			result.error,
+		)
+	}
+	status := "saved"
+	if request.command == .Event_Delete {status = "deleted"}
+	return {
+		output = calendar_cli_encode(Calendar_CLI_Mutation_Response{
+			ok = true,
+			command = calendar_cli_command_name(request.command),
+			data = {
+				id = result.mutation_opaque_id,
+				source = "eventkit",
+				version = result.verified_version,
+				calendar_id = result.verified_event.calendar_identifier,
+				status = status,
+			},
+		}),
+	}
+}
+
 calendar_cli_event_mutate :: proc(
 	request: Calendar_CLI_Request,
 	cancelled := false,
 ) -> Calendar_CLI_Result {
-	input, decoded := calendar_cli_decode_event_input(request.input)
+	input: Calendar_Event_Input
+	decoded := false
+	if request.command == .Event_Delete &&
+	   len(request.input) == 0 &&
+	   (request.source == "eventkit" ||
+	    strings.has_prefix(request.id, "ek-")) {
+		decoded = true
+	} else {
+		input, decoded = calendar_cli_decode_event_input(request.input)
+	}
 	if !decoded {
 		return calendar_cli_error(request.command, 3, "invalid_json", "Standard input must contain one versioned event document.")
 	}
 	defer calendar_event_input_destroy(&input)
+	connected := request.source == "eventkit" || input.source == "eventkit" ||
+	             strings.has_prefix(request.id, "ek-")
+	if connected {
+		return calendar_cli_connected_event_mutate(request, &input)
+	}
 	if request.command != .Event_Create {
 		if len(request.uid) == 0 {
 			return calendar_cli_error(request.command, 2, "usage", "The mutation requires --uid.")
@@ -1057,6 +1597,7 @@ calendar_cli_event_mutate :: proc(
 			ok = true,
 			command = calendar_cli_command_name(request.command),
 			data = {
+				source = "local",
 				uid = uid,
 				recurrence_id = input.recurrence_id,
 				document_id = document_id,
@@ -1067,7 +1608,10 @@ calendar_cli_event_mutate :: proc(
 }
 
 calendar_cli_execute :: proc(request: Calendar_CLI_Request) -> Calendar_CLI_Result {
-	switch request.command {
+	if request.command >= .Entry_Create && request.command <= .Proposal_Reject {
+		return agenda_cli_execute(request)
+	}
+	#partial switch request.command {
 	case .ICal_Validate: return calendar_cli_validate(request)
 	case .ICal_Import: return calendar_cli_import(request)
 	case .ICal_Export: return calendar_cli_export(request)
@@ -1083,6 +1627,8 @@ calendar_cli_execute :: proc(request: Calendar_CLI_Request) -> Calendar_CLI_Resu
 	case .Event_Search: return calendar_cli_event_search(request)
 	case .Event_Get:
 		return calendar_cli_event_get(request)
+	case .Calendar_Status, .Calendar_List, .Calendar_Request_Access:
+		return calendar_cli_connected_calendars(request)
 	case .Reminder_Status:
 		return {
 			output = calendar_cli_encode(Calendar_CLI_Reminder_Response{

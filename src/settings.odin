@@ -7,6 +7,7 @@ import flash "flash:."
 
 Calendar_Settings_Category :: enum {
 	Styling,
+	Connected_Calendars,
 	Shortcuts,
 }
 
@@ -20,11 +21,14 @@ Calendar_Setting_Descriptor :: struct {
 }
 
 CALENDAR_SETTING_FLASH_ID :: command_palette.Entry_ID(100)
+CALENDAR_SETTING_EVENTKIT_ACCESS_ID :: command_palette.Entry_ID(200)
+CALENDAR_SETTING_EVENTKIT_CALENDAR_BASE_ID :: command_palette.Entry_ID(1_000)
 CALENDAR_SETTINGS_ROW_HEIGHT :: 36.0
 
 calendar_settings_category_name :: proc(category: Calendar_Settings_Category) -> string {
 	switch category {
 	case .Styling: return "STYLING"
+	case .Connected_Calendars: return "CALENDARS"
 	case .Shortcuts: return "SHORTCUTS"
 	}
 	return "SETTINGS"
@@ -56,6 +60,84 @@ calendar_settings_descriptors :: proc(
 		flash_keywords,
 		[]string{"keyboard", "shortcut", "leader", "navigation", "jump"},
 	)
+	when false {
+	access_keywords := make([]string, 5, allocator)
+	copy(
+		access_keywords,
+		[]string{"calendar", "eventkit", "permission", "account", "access"},
+	)
+	append(&result, Calendar_Setting_Descriptor{
+		id = CALENDAR_SETTING_EVENTKIT_ACCESS_ID,
+		category = .Connected_Calendars,
+		title = "Calendar access",
+		subtitle = fmt.tprintf(
+			"EventKit access: %s",
+			calendar_eventkit_authorization_name(),
+		),
+		keywords = access_keywords,
+		action = {kind = .Request_Calendar_Access},
+	})
+	for calendar, index in calendar_eventkit_calendars {
+		source_type := calendar_eventkit_source_type_name(calendar.source_type)
+		visibility_keywords := make([]string, 6, allocator)
+		copy(
+			visibility_keywords,
+			[]string{
+				"calendar",
+				"visibility",
+				"show",
+				"hide",
+				calendar.source_title,
+				source_type,
+			},
+		)
+		append(&result, Calendar_Setting_Descriptor{
+			id = CALENDAR_SETTING_EVENTKIT_CALENDAR_BASE_ID+
+			     command_palette.Entry_ID(index*2),
+			category = .Connected_Calendars,
+			title = calendar.title,
+			subtitle = fmt.tprintf(
+				"%s · %s · %s",
+				calendar.source_title,
+				calendar.writable ? "writable" : "read only",
+				calendar.color,
+			),
+			keywords = visibility_keywords,
+			action = {
+				kind = .Toggle_Connected_Calendar,
+				index = index,
+			},
+		})
+		default_keywords := make([]string, 6, allocator)
+		copy(
+			default_keywords,
+			[]string{
+				"calendar",
+				"default",
+				"destination",
+				"new event",
+				calendar.source_title,
+				source_type,
+			},
+		)
+		append(&result, Calendar_Setting_Descriptor{
+			id = CALENDAR_SETTING_EVENTKIT_CALENDAR_BASE_ID+
+			     command_palette.Entry_ID(index*2+1),
+			category = .Connected_Calendars,
+			title = fmt.tprintf("Default: %s", calendar.title),
+			subtitle = (
+				calendar.writable ?
+					"Use this calendar for new connected events" :
+					"This calendar is read only"
+			),
+			keywords = default_keywords,
+			action = {
+				kind = .Set_Default_Connected_Calendar,
+				index = index,
+			},
+		})
+	}
+	}
 	append(&result, Calendar_Setting_Descriptor{
 		id = CALENDAR_SETTING_FLASH_ID,
 		category = .Shortcuts,
