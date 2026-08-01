@@ -41,3 +41,23 @@ calendar_cli_requires_positive_revision_test :: proc(t: ^testing.T) {
 	testing.expect(t, !parsed)
 	testing.expect(t, strings.contains(result.output, "positive integer"))
 }
+
+@(test)
+calendar_cli_parses_pointer_bridge_test :: proc(t: ^testing.T) {
+	request, result, parsed := calendar_cli_parse([]string{
+		"ui", "bridge-pointer", "--control", "settings",
+	})
+	defer delete(result.output)
+	testing.expect(t, parsed)
+	testing.expect_value(t, request.command, Calendar_CLI_Command.UI_Bridge_Pointer)
+	testing.expect_value(t, request.target_control, "settings")
+	testing.expect(t, calendar_cli_command_requires_gui(request.command))
+}
+
+@(test)
+calendar_cli_requires_pointer_bridge_control_test :: proc(t: ^testing.T) {
+	_, result, parsed := calendar_cli_parse([]string{"ui", "bridge-pointer"})
+	defer delete(result.output)
+	testing.expect(t, !parsed)
+	testing.expect(t, strings.contains(result.output, "requires --control"))
+}

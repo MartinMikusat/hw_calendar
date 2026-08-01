@@ -154,6 +154,7 @@ calendar_cli_ipc_request_destroy :: proc(request: ^Calendar_CLI_Request) {
 	delete(request.query)
 	delete(request.output)
 	delete(request.baseline)
+	delete(request.target_control)
 	request^ = {}
 }
 

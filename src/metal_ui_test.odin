@@ -2,6 +2,7 @@ package main
 
 import "core:testing"
 import flash "flash:."
+import framework_ui "ui_framework:core"
 
 @(test)
 calendar_text_styles_bind_size_and_tracking_test :: proc(t: ^testing.T) {
@@ -566,4 +567,34 @@ calendar_flash_badges_clamp_to_view_test :: proc(t: ^testing.T) {
 	testing.expect_value(t, badge.x, 0.0)
 	testing.expect_value(t, badge.y, 0.0)
 	testing.expect_value(t, badge.w, 16.0)
+}
+
+@(test)
+calendar_shared_registry_preserves_control_identity_and_capabilities_test :: proc(
+	t: ^testing.T,
+) {
+	previous_ui := calendar_ui
+	calendar_ui = {width = 800, height = 600}
+	defer {
+		calendar_ui_clear_controls()
+		delete(calendar_ui.controls)
+		framework_ui.registry_reset(&calendar_shared_registry, 0)
+		calendar_shared_view = {}
+		calendar_ui = previous_ui
+	}
+	calendar_ui_add_control(
+		"today",
+		"today",
+		{10, 10, 80, 30},
+		.Today,
+	)
+	calendar_publish_shared_registry()
+	testing.expect_value(t, len(calendar_shared_view.actions), 1)
+	testing.expect_value(t, len(calendar_shared_view.controls), 1)
+	control := calendar_shared_view.controls[0]
+	testing.expect_value(t, control.id, framework_ui.Key(calendar_control_id("today")))
+	testing.expect(t, .Primary_Press in control.capabilities)
+	testing.expect(t, .Accessibility in control.capabilities)
+	testing.expect(t, .Flash in control.capabilities)
+	testing.expect(t, .CLI in control.capabilities)
 }

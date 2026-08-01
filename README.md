@@ -33,8 +33,9 @@ work, and enabled holidays share this view. An entry without a confirmed date
 remains available through search and the structured command interface.
 
 The entry editor keeps natural-language text as its primary field. The shared
-control registry routes pointer, numbered keyboard, Accessibility, Flash, and
-command-menu activation through typed application actions.
+control registry routes pointer, numbered keyboard, Accessibility, and Flash
+through typed application actions. It also exports command-menu and CLI
+capability metadata.
 
 Use the gear control or `Command-,` to open Settings. Settings contains theme
 and Flash shortcut configuration. The theme catalog contains HW Light and HW
@@ -69,6 +70,7 @@ build/hw_calendar ui snapshot
 build/hw_calendar ui check --baseline /path/to/snapshot.json
 build/hw_calendar ui modal-state
 build/hw_calendar ui modal-dismiss
+build/hw_calendar ui bridge-pointer --control "settings"
 ```
 
 Every entry mutation uses an expected revision. A proposal also records its
@@ -77,6 +79,10 @@ source revision. The application rejects stale mutations and stale proposals.
 The GUI owns the SQLite database while it runs. Commands use the GUI's private
 local socket in that state. When the GUI is closed, a command locks and opens
 the database directly.
+
+The pointer bridge resolves a live control by its functional name. It sends
+AppKit mouse events through the same view callback as physical pointer input.
+It does not activate or raise the application window.
 
 The agenda uses `agenda.sqlite3`. On the first agenda launch, the application
 renames an unused `calendar.sqlite3` file to `calendar-unused.sqlite3`. It does
@@ -100,6 +106,12 @@ The application emits base content, the modal backdrop, and modal content into
 one ordered draw stream. `hw_odin_ui_framework` caches CoreText glyphs in an
 atlas and encodes that stream through one Metal pipeline. This order keeps
 background content below the backdrop and modal content above it.
+
+`src/ui_registry.odin` owns a persistent framework registry. Each frame resets
+the builder, publishes only controls in the active input scope, and validates
+the complete cross-surface contract. Pointer, Accessibility, Flash, and
+numbered activation resolve through this registry before the application
+executes a typed action.
 
 Debug and ASan builds compile Metal source at runtime when the optional shader
 compiler is unavailable. Release builds require a bundled `ui.metallib`; use

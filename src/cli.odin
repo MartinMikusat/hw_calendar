@@ -29,6 +29,7 @@ Calendar_CLI_Command :: enum {
 	UI_Check,
 	UI_Modal_State,
 	UI_Modal_Dismiss,
+	UI_Bridge_Pointer,
 	Entry_Create,
 	Entry_Update,
 	Entry_Get,
@@ -63,6 +64,7 @@ Calendar_CLI_Request :: struct {
 	query: string,
 	output: string,
 	baseline: string,
+	target_control: string,
 	limit: int,
 	if_revision: int,
 }
@@ -87,6 +89,7 @@ calendar_cli_command_mutates_database :: proc(command: Calendar_CLI_Command) -> 
 calendar_cli_command_requires_gui :: proc(command: Calendar_CLI_Command) -> bool {
 	return command == .UI_Snapshot || command == .UI_Check ||
 	       command == .UI_Modal_State || command == .UI_Modal_Dismiss ||
+	       command == .UI_Bridge_Pointer ||
 	       command == .Calendar_Status || command == .Calendar_List ||
 	       command == .Calendar_Request_Access
 }
@@ -128,6 +131,16 @@ Calendar_CLI_Modal_Response :: struct {
 	ok: bool,
 	command: string,
 	data: Calendar_CLI_Modal_Data,
+}
+
+Calendar_CLI_UI_Bridge_Data :: struct {
+	control: string,
+}
+
+Calendar_CLI_UI_Bridge_Response :: struct {
+	ok: bool,
+	command: string,
+	data: Calendar_CLI_UI_Bridge_Data,
 }
 
 Calendar_CLI_Validate_Data :: struct {
@@ -344,6 +357,7 @@ calendar_cli_command_name :: proc(command: Calendar_CLI_Command) -> string {
 	case .UI_Check: return "ui check"
 	case .UI_Modal_State: return "ui modal-state"
 	case .UI_Modal_Dismiss: return "ui modal-dismiss"
+	case .UI_Bridge_Pointer: return "ui bridge-pointer"
 	case .Entry_Create: return "entry create"
 	case .Entry_Update: return "entry update"
 	case .Entry_Get: return "entry get"
@@ -399,6 +413,7 @@ calendar_cli_parse :: proc(args: []string) -> (Calendar_CLI_Request, Calendar_CL
 	case group == "ui" && action == "check": request.command = .UI_Check
 	case group == "ui" && action == "modal-state": request.command = .UI_Modal_State
 	case group == "ui" && action == "modal-dismiss": request.command = .UI_Modal_Dismiss
+	case group == "ui" && action == "bridge-pointer": request.command = .UI_Bridge_Pointer
 	case group == "entry" && action == "create": request.command = .Entry_Create
 	case group == "entry" && action == "update": request.command = .Entry_Update
 	case group == "entry" && action == "get": request.command = .Entry_Get
@@ -445,6 +460,7 @@ calendar_cli_parse :: proc(args: []string) -> (Calendar_CLI_Request, Calendar_CL
 		case "--query": request.query = value
 		case "--output": request.output = value
 		case "--baseline": request.baseline = value
+		case "--control": request.target_control = value
 		case "--if-revision":
 			parsed, ok := strconv.parse_int(value)
 			if !ok || parsed < 1 {return {}, calendar_cli_error(request.command, 2, "usage", "--if-revision must be a positive integer."), false}
@@ -479,6 +495,14 @@ calendar_cli_parse :: proc(args: []string) -> (Calendar_CLI_Request, Calendar_CL
 			2,
 			"usage",
 			"--scope must be all, occurrence, or future.",
+		), false
+	}
+	if request.command == .UI_Bridge_Pointer && len(request.target_control) == 0 {
+		return {}, calendar_cli_error(
+			request.command,
+			2,
+			"usage",
+			"ui bridge-pointer requires --control.",
 		), false
 	}
 	return request, {}, true
@@ -1682,6 +1706,23 @@ calendar_cli_execute :: proc(request: Calendar_CLI_Request) -> Calendar_CLI_Resu
 					dismissal = dismissal,
 					dismissed = dismissed,
 				},
+			}),
+		}
+	case .UI_Bridge_Pointer:
+		if pointer_error := calendar_ui_post_pointer_click(request.target_control);
+		   len(pointer_error) > 0 {
+			return calendar_cli_error(
+				request.command,
+				3,
+				"pointer_failed",
+				pointer_error,
+			)
+		}
+		return {
+			output = calendar_cli_encode(Calendar_CLI_UI_Bridge_Response{
+				ok = true,
+				command = calendar_cli_command_name(request.command),
+				data = {control=request.target_control},
 			}),
 		}
 	case .None:

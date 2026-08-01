@@ -14,6 +14,7 @@ import command_palette "command_palette:."
 import flash "flash:."
 import text_input "components:text_input"
 import framework_coretext "ui_framework:coretext"
+import framework_ui "ui_framework:core"
 import framework_draw "ui_framework:draw"
 import framework_metal "ui_framework:metal"
 
@@ -485,6 +486,46 @@ calendar_msg_i64 :: proc(receiver: Id, selector: Sel) -> i64 {
 	return p(receiver, selector)
 }
 
+calendar_msg_id_mouse_event :: proc(
+	receiver: Id,
+	selector: Sel,
+	event_type: uint,
+	location: Point,
+	modifiers: uint,
+	timestamp: f64,
+	window_number: int,
+	event_context: Id,
+	event_number, click_count: int,
+	pressure: f32,
+) -> Id {
+	p := transmute(proc "c" (
+		_: Id,
+		_: Sel,
+		_: uint,
+		_: Point,
+		_: uint,
+		_: f64,
+		_: int,
+		_: Id,
+		_: int,
+		_: int,
+		_: f32,
+	) -> Id)objc_send_address
+	return p(
+		receiver,
+		selector,
+		event_type,
+		location,
+		modifiers,
+		timestamp,
+		window_number,
+		event_context,
+		event_number,
+		click_count,
+		pressure,
+	)
+}
+
 calendar_msg_bool_sel :: proc(receiver: Id, selector, value: Sel) -> bool {
 	p := transmute(proc "c" (Id, Sel, Sel) -> bool)objc_send_address
 	return p(receiver, selector, value)
@@ -541,68 +582,6 @@ calendar_msg_rect_rect :: proc(
 ) -> Rect {
 	p := transmute(proc "c" (Id, Sel, Rect) -> Rect)objc_send_address
 	return p(receiver, selector, rect)
-}
-
-calendar_control_id :: proc(name: string) -> u64 {
-	return hash.fnv64a(transmute([]u8)name)
-}
-
-calendar_ui_clear_controls :: proc() {
-	for &control in calendar_ui.controls {
-		delete(control.name)
-		delete(control.label)
-	}
-	clear(&calendar_ui.controls)
-}
-
-calendar_ui_add_control :: proc(
-	name, label: string,
-	rect: Calendar_UI_Rect,
-	action := Calendar_UI_Action.None,
-	event_index := -1,
-	occurrence_stamp := i64(0),
-	occurrence_is_date := false,
-	holiday_country_index := -1,
-	holiday_definition_index := -1,
-) {
-	append(&calendar_ui.controls, Calendar_UI_Control{
-		id = calendar_control_id(name),
-		name = strings.clone(name),
-		label = strings.clone(label),
-		rect = rect,
-		action = {
-			kind = action,
-			index = event_index,
-			definition_index = holiday_definition_index,
-			occurrence_stamp = occurrence_stamp,
-			occurrence_is_date = occurrence_is_date,
-		},
-	})
-	if holiday_country_index >= 0 {
-		calendar_ui.controls[len(calendar_ui.controls)-1].action.index =
-			holiday_country_index
-	}
-}
-
-calendar_ui_add_action_control :: proc(
-	name, label: string,
-	rect: Calendar_UI_Rect,
-	action: Calendar_App_Action,
-) {
-	append(&calendar_ui.controls, Calendar_UI_Control{
-		id = calendar_control_id(name),
-		name = strings.clone(name),
-		label = strings.clone(label),
-		rect = rect,
-		action = action,
-	})
-}
-
-calendar_ui_find_control :: proc(id: u64) -> ^Calendar_UI_Control {
-	for &control in calendar_ui.controls {
-		if control.id == id {return &control}
-	}
-	return nil
 }
 
 calendar_ui_ax_control :: proc(element: Id) -> ^Calendar_UI_Control {
@@ -772,8 +751,7 @@ calendar_on_ax_press :: proc "c" (self: Id, command: Sel) -> bool {
 	context = runtime.default_context()
 	control := calendar_ui_ax_control(self)
 	if control == nil {return false}
-	calendar_ui_activate_control(control.id)
-	return true
+	return calendar_ui_activate_control(control.id, .Accessibility)
 }
 
 calendar_on_ax_value :: proc "c" (self: Id, command: Sel) -> Id {
@@ -903,50 +881,9 @@ calendar_ui_rebuild_accessibility :: proc() {
 	array := msg_id(objc_getClass("NSMutableArray"), sel_registerName("array"))
 	calendar_ui.ax_children = msg_id(array, sel_registerName("retain"))
 	element_class := objc_getClass("hw_calendar_AccessibilityElement")
-	for &control in calendar_ui.controls {
-		if calendar_ui.discard_changes_open &&
-		   !calendar_ui_is_window_action(control.action.kind) &&
-		   control.action.kind != .Discard_Keep_Editing &&
-		   control.action.kind != .Discard_Changes {
-			continue
-		} else if !calendar_ui.discard_changes_open && calendar_ui.shortcut_open &&
-		   !calendar_ui_is_window_action(control.action.kind) &&
-		   control.action.kind != .Shortcut_Record &&
-		   control.action.kind != .Shortcut_Save &&
-		   control.action.kind != .Shortcut_Reset &&
-		   control.action.kind != .Shortcut_Cancel {
-			continue
-		} else if !calendar_ui.shortcut_open && calendar_ui.settings_open &&
-		          !calendar_ui_is_window_action(control.action.kind) &&
-		          control.action.kind != .Open_Settings &&
-		          control.action.kind != .Settings_Close &&
-		          control.action.kind != .Settings_Category &&
-		          control.action.kind != .Settings_Search &&
-		          control.action.kind != .Set_Theme &&
-		          control.action.kind != .Request_Calendar_Access &&
-		          control.action.kind != .Toggle_Connected_Calendar &&
-		          control.action.kind != .Set_Default_Connected_Calendar &&
-		          control.action.kind != .Configure_Flash {
-			continue
-		} else if !calendar_ui.shortcut_open && !calendar_ui.settings_open &&
-		          calendar_ui.archive_modal_open &&
-		          !calendar_ui_is_window_action(control.action.kind) &&
-		          control.action.kind != .Archive_Cancel &&
-		          control.action.kind != .Archive_Occurrence &&
-		          control.action.kind != .Archive_Series {
-			continue
-		} else if !calendar_ui.shortcut_open && !calendar_ui.settings_open &&
-		          !calendar_ui.archive_modal_open && calendar_ui.editor_open &&
-		   !calendar_ui_is_window_action(control.action.kind) &&
-		   control.action.kind != .Editor_Field &&
-		   control.action.kind != .Editor_Important &&
-		   control.action.kind != .Editor_All_Day &&
-		   control.action.kind != .Editor_Calendar &&
-		   control.action.kind != .Editor_Save &&
-		   control.action.kind != .Editor_Delete &&
-		   control.action.kind != .Editor_Cancel {
-			continue
-		}
+	for &shared_control in calendar_shared_view.controls {
+		control := calendar_ui_find_control(u64(shared_control.id))
+		if control == nil {continue}
 		element := msg_id(element_class, sel_registerName("new"))
 		role := "AXButton"
 	if control.action.kind == .Editor_Field ||
@@ -970,7 +907,7 @@ calendar_ui_rebuild_accessibility :: proc() {
 		msg_void_id(
 			element,
 			sel_registerName("setAccessibilityLabel:"),
-			nsstring(calendar_ui_ax_label(&control)),
+			nsstring(calendar_ui_ax_label(control)),
 		)
 		msg_void_bool(
 			element,
@@ -1368,54 +1305,19 @@ calendar_ui_begin_flash :: proc() {
 	targets := make(
 		[dynamic]flash.Target,
 		0,
-		len(calendar_ui.controls),
+		len(calendar_shared_view.controls),
 		context.temp_allocator,
 	)
-	for control in calendar_ui.controls {
-		if calendar_ui.discard_changes_open &&
-		   !calendar_ui_is_window_action(control.action.kind) &&
-		   control.action.kind != .Discard_Keep_Editing &&
-		   control.action.kind != .Discard_Changes {
-			continue
-		} else if !calendar_ui.discard_changes_open && calendar_ui.settings_open &&
-		   !calendar_ui_is_window_action(control.action.kind) &&
-		   control.action.kind != .Open_Settings &&
-		   control.action.kind != .Settings_Close &&
-		   control.action.kind != .Settings_Category &&
-		   control.action.kind != .Settings_Search &&
-		   control.action.kind != .Set_Theme &&
-		   control.action.kind != .Request_Calendar_Access &&
-		   control.action.kind != .Toggle_Connected_Calendar &&
-		   control.action.kind != .Set_Default_Connected_Calendar &&
-		   control.action.kind != .Configure_Flash {
-			continue
-		} else if !calendar_ui.settings_open &&
-		          calendar_ui.archive_modal_open &&
-		   !calendar_ui_is_window_action(control.action.kind) &&
-		   control.action.kind != .Archive_Cancel &&
-		   control.action.kind != .Archive_Occurrence &&
-		   control.action.kind != .Archive_Series {
-			continue
-		}
-		if !calendar_ui.settings_open && calendar_ui.editor_open &&
-		   !calendar_ui_is_window_action(control.action.kind) &&
-		   control.action.kind != .Editor_Field &&
-		   control.action.kind != .Editor_Important &&
-		   control.action.kind != .Editor_All_Day &&
-		   control.action.kind != .Editor_Calendar &&
-		   control.action.kind != .Editor_Save &&
-		   control.action.kind != .Editor_Delete &&
-		   control.action.kind != .Editor_Cancel {
-			continue
-		}
+	for control in calendar_shared_view.controls {
+		if !control.enabled || .Flash not_in control.capabilities {continue}
 		append(&targets, flash.Target{
 			id = flash.Target_ID(control.id),
-			label = control.label,
+			label = control.flash_label,
 			rect = {
-				control.rect.x,
-				control.rect.y,
-				control.rect.w,
-				control.rect.h,
+				f64(control.rect.x),
+				f64(control.rect.y),
+				f64(control.rect.w),
+				f64(control.rect.h),
 			},
 			anchor = .Top_Left,
 		})
@@ -3273,13 +3175,23 @@ calendar_ui_execute_action :: proc(action: Calendar_App_Action) {
 	calendar_ui.needs_redraw = true
 }
 
-calendar_ui_activate_control :: proc(id: u64) {
+calendar_ui_activate_control :: proc(
+	id: u64,
+	source := framework_ui.Activation_Source.Pointer,
+) -> bool {
+	_, activated := framework_ui.activate_control_in_view(
+		calendar_shared_view,
+		framework_ui.Key(id),
+		source,
+	)
+	if !activated {return false}
 	for control in calendar_ui.controls {
 		if control.id != id {continue}
 		calendar_ui_execute_action(control.action)
-		break
+		calendar_ui.needs_redraw = true
+		return true
 	}
-	calendar_ui.needs_redraw = true
+	return false
 }
 
 calendar_ui_click :: proc(point: Point, click_count: uint = 1) -> bool {
@@ -3297,15 +3209,11 @@ calendar_ui_click :: proc(point: Point, click_count: uint = 1) -> bool {
 		_ = calendar_modal_request_dismiss()
 		return true
 	}
-	for index := len(calendar_ui.controls)-1; index >= 0; index -= 1 {
-		control := calendar_ui.controls[index]
-		if modal.kind == .Discard_Changes &&
-		   !calendar_ui_is_window_action(control.action.kind) &&
-		   control.action.kind != .Discard_Keep_Editing &&
-		   control.action.kind != .Discard_Changes {
-			continue
-		}
-		if calendar_ui_contains(control.rect, point) {
+	if control := calendar_shared_control_at_point(point); control != nil {
+		if modal.kind != .Discard_Changes ||
+		   calendar_ui_is_window_action(control.action.kind) ||
+		   control.action.kind == .Discard_Keep_Editing ||
+		   control.action.kind == .Discard_Changes {
 			#partial switch control.action.kind {
 			case .Settings_Search:
 				calendar_text_begin_pointer(
@@ -3337,6 +3245,67 @@ calendar_ui_click :: proc(point: Point, click_count: uint = 1) -> bool {
 	if modal.kind != .None {return true}
 	calendar_ui.needs_redraw = true
 	return false
+}
+
+calendar_ui_post_pointer_click :: proc(functional_name: string) -> string {
+	shared_control: ^framework_ui.Control_Record
+	for &control in calendar_shared_view.controls {
+		if control.functional_name == functional_name {
+			shared_control = &control
+			break
+		}
+	}
+	if shared_control == nil {return "The pointer target does not exist."}
+	if !shared_control.enabled ||
+	   .Primary_Press not_in shared_control.capabilities {
+		return "The pointer target is not enabled for primary input."
+	}
+	control := calendar_ui_find_control(u64(shared_control.id))
+	if control == nil {return "The pointer target is not in the application registry."}
+	window_point := Point{
+		control.rect.x+control.rect.w/2,
+		control.rect.y+control.rect.h/2,
+	}
+	window_number := int(calendar_msg_i64(
+		calendar_ui.window,
+		sel_registerName("windowNumber"),
+	))
+	event_class := objc_getClass("NSEvent")
+	event_selector := sel_registerName(
+		"mouseEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:",
+	)
+	down := calendar_msg_id_mouse_event(
+		event_class,
+		event_selector,
+		1,
+		window_point,
+		0,
+		0,
+		window_number,
+		nil,
+		0,
+		1,
+		1,
+	)
+	up := calendar_msg_id_mouse_event(
+		event_class,
+		event_selector,
+		2,
+		window_point,
+		0,
+		0,
+		window_number,
+		nil,
+		0,
+		1,
+		0,
+	)
+	if down == nil || up == nil {
+		return "AppKit could not create the pointer events."
+	}
+	msg_void_id(calendar_ui.view, sel_registerName("mouseDown:"), down)
+	msg_void_id(calendar_ui.view, sel_registerName("mouseUp:"), up)
+	return ""
 }
 
 calendar_ui_resize_edges :: proc(point: Point) -> u8 {
@@ -3601,12 +3570,12 @@ calendar_on_key_down :: proc "c" (self: Id, command: Sel, event: Id) {
 		} else if key_code == 36 {
 			result := flash.activate_selection(&calendar_ui.flash)
 			if result.kind == .Activated {
-				calendar_ui_activate_control(u64(result.target_id))
+				calendar_ui_activate_control(u64(result.target_id), .Flash)
 			}
 		} else if len(text) == 1 {
 			result := flash.consume(&calendar_ui.flash, text[0])
 			if result.kind == .Activated {
-				calendar_ui_activate_control(u64(result.target_id))
+				calendar_ui_activate_control(u64(result.target_id), .Flash)
 			}
 		}
 		calendar_ui.needs_redraw = true
@@ -3664,23 +3633,15 @@ calendar_on_key_down :: proc "c" (self: Id, command: Sel, event: Id) {
 			calendar_ui_begin_flash()
 		} else if !command_down && !control_down &&
 		          !shift_down && !option_down {
-			if slot, found := calendar_number_slot_for_key_code(key_code);
+			if digit, found := calendar_number_digit_for_key_code(key_code);
 			   found {
-				event := &calendar_ui.events[
-					calendar_ui.navigation_event_index
-				]
-				action := calendar_archive_action_for_slot(
-					calendar_event_is_recurring(event),
-					slot,
-				)
-				#partial switch action {
-				case .Archive_Occurrence:
-					calendar_ui_archive_confirm(false)
-				case .Archive_Series:
-					calendar_ui_archive_confirm(true)
-				case .Archive_Cancel:
-					calendar_ui_archive_modal_close()
-				case:
+				control_id, activated, _ :=
+					calendar_consume_shared_numbered_digit(
+						digit,
+						calendar_number_time_ms(),
+					)
+				if activated {
+					_ = calendar_ui_activate_control(control_id, .Numbered)
 				}
 			}
 		}
@@ -3731,12 +3692,13 @@ calendar_on_key_down :: proc "c" (self: Id, command: Sel, event: Id) {
 	}
 	if !command_down && !control_down && !shift_down && !option_down {
 		if digit, found := calendar_number_digit_for_key_code(key_code); found {
-			action, handled := calendar_consume_main_action_digit_at(
+			control_id, activated, handled :=
+				calendar_consume_shared_numbered_digit(
 				digit,
 				calendar_number_time_ms(),
 			)
-			if action != .None && calendar_ui_action_available(action) {
-				calendar_ui_execute_action({kind = action})
+			if activated {
+				_ = calendar_ui_activate_control(control_id, .Numbered)
 			}
 			if handled {return}
 		}
@@ -6185,6 +6147,7 @@ calendar_render_frame :: proc() {
 		)
 	}
 	modal_start := calendar_build_geometry(&vertices)
+	calendar_publish_shared_registry()
 	calendar_ui_rebuild_accessibility()
 	ordered_ready := calendar_build_ordered_frame(vertices[:], modal_start)
 	if ordered_ready {
