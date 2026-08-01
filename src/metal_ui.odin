@@ -4935,9 +4935,9 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 	today_color := calendar_color64(theme.warm)
 	search_color := calendar_color64(theme.cool)
 	new_color := calendar_color64(theme.warm_strong)
-	calendar_draw_text(ctx, font, "TODAY", calendar_ui_today_rect(), today_color, 14)
-	calendar_draw_text(ctx, font, "SEARCH", calendar_ui_search_rect(), search_color, 14)
-	calendar_draw_text(ctx, font, "NEW EVENT", calendar_ui_new_rect(), new_color, 10)
+	calendar_draw_text(ctx, font, "TODAY", calendar_ui_today_rect(), today_color, 0, .Center)
+	calendar_draw_text(ctx, font, "SEARCH", calendar_ui_search_rect(), search_color, 0, .Center)
+	calendar_draw_text(ctx, font, "NEW EVENT", calendar_ui_new_rect(), new_color, 0, .Center)
 	now := ical_date_time_from_stamp(time.to_unix_seconds(time.now()), true)
 	anchor := ical_days_from_civil(now.year, now.month, now.day) +
 	          i64(calendar_ui.day_offset)
