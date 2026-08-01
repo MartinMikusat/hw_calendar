@@ -122,31 +122,6 @@ msg_id_f64_f64 :: proc(receiver: Id, selector: Sel, a, b: f64) -> Id {
 	return p(receiver, selector, a, b)
 }
 
-msg_id_u_u_u_b :: proc(
-	receiver: Id,
-	selector: Sel,
-	a, b, c: uint,
-	d: bool,
-) -> Id {
-	p := transmute(proc "c" (Id, Sel, uint, uint, uint, bool) -> Id)objc_send_address
-	return p(receiver, selector, a, b, c, d)
-}
-
-msg_void_ptr_u_u :: proc(
-	receiver: Id,
-	selector: Sel,
-	value: rawptr,
-	length, index: uint,
-) {
-	p := transmute(proc "c" (Id, Sel, rawptr, uint, uint))objc_send_address
-	p(receiver, selector, value, length, index)
-}
-
-msg_void_id_u :: proc(receiver: Id, selector: Sel, value: Id, index: uint) {
-	p := transmute(proc "c" (Id, Sel, Id, uint))objc_send_address
-	p(receiver, selector, value, index)
-}
-
 msg_void_u_u_u :: proc(receiver: Id, selector: Sel, a, b, c: uint) {
 	p := transmute(proc "c" (Id, Sel, uint, uint, uint))objc_send_address
 	p(receiver, selector, a, b, c)

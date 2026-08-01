@@ -6,6 +6,7 @@ MATCH_SORTER_ROOT="$ROOT/../hw_odin_matchSorter"
 UI_FLASH_ROOT="$ROOT/../hw_odin_ui_flash"
 COMMAND_PALETTE_ROOT="$ROOT/../hw_odin_ui_commandPalette"
 COMPONENTS_ROOT="$ROOT/../hw_odin_ui_components"
+UI_FRAMEWORK_ROOT="$ROOT/../hw_odin_ui_framework"
 ICON_ROOT="$ROOT/resources/icons/iconoir"
 HOLIDAY_ROOT="$ROOT/resources/holidays"
 
@@ -39,6 +40,15 @@ mkdir -p \
   "$APP/Contents/MacOS" \
   "$APP/Contents/Resources/Icons/Iconoir" \
   "$APP/Contents/Resources/Holidays"
+if xcrun metal -help >/dev/null 2>&1; then
+  "$UI_FRAMEWORK_ROOT/scripts/build-metallib.sh" "$APP/Contents/Resources/ui.metallib"
+elif [ "$MODE" = "release" ]; then
+  echo "[hw_calendar] release builds require the optional Metal shader toolchain" >&2
+  echo "[hw_calendar] install it with: xcodebuild -downloadComponent MetalToolchain" >&2
+  exit 1
+else
+  rm -f "$APP/Contents/Resources/ui.metallib"
+fi
 EXECUTABLE="$APP/Contents/MacOS/hw_calendar"
 TEMP="$ROOT/build/temp/$MODE"
 mkdir -p "$TEMP"
@@ -48,6 +58,7 @@ odin build "$ROOT/src" -out:"$EXECUTABLE" "$@" \
   -collection:flash="$UI_FLASH_ROOT" \
   -collection:command_palette="$COMMAND_PALETTE_ROOT" \
   -collection:components="$COMPONENTS_ROOT" \
+  -collection:ui_framework="$UI_FRAMEWORK_ROOT" \
   -extra-linker-flags:"-framework AppKit -framework Foundation -framework Metal -framework QuartzCore -framework CoreText -framework CoreGraphics -framework UserNotifications"
 cp "$ROOT/Info.plist" "$APP/Contents/Info.plist"
 cp "$ICON_ROOT/xmark.svg" "$APP/Contents/Resources/Icons/Iconoir/xmark.svg"

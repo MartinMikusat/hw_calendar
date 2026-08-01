@@ -9,6 +9,7 @@ odin test "$ROOT/src" \
   -collection:flash="$ROOT/../hw_odin_ui_flash" \
   -collection:command_palette="$ROOT/../hw_odin_ui_commandPalette" \
   -collection:components="$ROOT/../hw_odin_ui_components" \
+  -collection:ui_framework="$ROOT/../hw_odin_ui_framework" \
   -extra-linker-flags:"-framework AppKit -framework Foundation -framework Metal -framework QuartzCore -framework CoreText -framework CoreGraphics -framework UserNotifications"
 
 "$ROOT/build.sh"

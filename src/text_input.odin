@@ -613,15 +613,20 @@ calendar_draw_editable_text :: proc(
 	origin_y := rect.y+
 	            (rect.h-(run.ascent+run.descent)/calendar_ui.scale)/2+
 	            run.descent/calendar_ui.scale
-	CGContextSaveGState(ctx)
-	defer CGContextRestoreGState(ctx)
-	CGContextClipToRect(
-		ctx,
-		{
-			{rect.x*calendar_ui.scale, rect.y*calendar_ui.scale},
-			{rect.w*calendar_ui.scale, rect.h*calendar_ui.scale},
-		},
-	)
+	if calendar_ordered_active {
+		calendar_ordered_push_clip(rect)
+		defer calendar_ordered_pop_clip()
+	} else {
+		CGContextSaveGState(ctx)
+		defer CGContextRestoreGState(ctx)
+		CGContextClipToRect(
+			ctx,
+			{
+				{rect.x*calendar_ui.scale, rect.y*calendar_ui.scale},
+				{rect.w*calendar_ui.scale, rect.h*calendar_ui.scale},
+			},
+		)
+	}
 	start, end := text_input.selection_bounds(&calendar_ui.input_state, text)
 	if start < end {
 		start_x := CTLineGetOffsetForStringIndex(
@@ -648,19 +653,23 @@ calendar_draw_editable_text :: proc(
 		)
 	}
 	if len(text) > 0 {
-		CGContextSetRGBFillColor(
-			ctx,
-			text_color[0],
-			text_color[1],
-			text_color[2],
-			text_color[3],
-		)
-		CGContextSetTextPosition(
-			ctx,
-			origin_x*calendar_ui.scale,
-			origin_y*calendar_ui.scale,
-		)
-		CTLineDraw(run.line, ctx)
+		if calendar_ordered_active {
+			calendar_ordered_emit_line(run.line, origin_x, origin_y, text_color)
+		} else {
+			CGContextSetRGBFillColor(
+				ctx,
+				text_color[0],
+				text_color[1],
+				text_color[2],
+				text_color[3],
+			)
+			CGContextSetTextPosition(
+				ctx,
+				origin_x*calendar_ui.scale,
+				origin_y*calendar_ui.scale,
+			)
+			CTLineDraw(run.line, ctx)
+		}
 	}
 	if start == end {
 		calendar_fill_overlay_rect(

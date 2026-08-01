@@ -84,7 +84,10 @@ not read or migrate records from that file.
 
 ## Development
 
-Install Odin and keep the pinned sibling libraries beside this repository.
+Install Odin and keep the sibling repositories from
+[`dependencies.lock`](dependencies.lock) beside this repository. Each build
+rejects a sibling checkout whose origin, commit, or worktree differs from the
+lock.
 
 ```sh
 ./test.sh
@@ -92,6 +95,15 @@ Install Odin and keep the pinned sibling libraries beside this repository.
 ./dev.sh
 ./dev.sh asan
 ```
+
+The application emits base content, the modal backdrop, and modal content into
+one ordered draw stream. `hw_odin_ui_framework` caches CoreText glyphs in an
+atlas and encodes that stream through one Metal pipeline. This order keeps
+background content below the backdrop and modal content above it.
+
+Debug and ASan builds compile Metal source at runtime when the optional shader
+compiler is unavailable. Release builds require a bundled `ui.metallib`; use
+`xcodebuild -downloadComponent MetalToolchain` to install its compiler.
 
 The development watcher rebuilds the complete executable. It replaces the
 running process only after a successful build. A replacement restores the
