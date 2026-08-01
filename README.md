@@ -114,7 +114,8 @@ Bundled holiday data:
 - SHA-256: `3555b57422a8bc6aa11d7f861fdfca106bc5eb1c423148a13b5a2f7574c5452f`
 - Data: [resources/holidays/sk.json](resources/holidays/sk.json)
 
-## Release TODO
+## Release details
 
-Produce a Developer ID-signed and notarized build. Verify confirmed native
-reminder delivery while the application is closed.
+The current release task is tracked in [TODO.md](TODO.md). Completion requires
+a Developer ID-signed and notarized build and verified native reminder delivery
+while the application is closed.
