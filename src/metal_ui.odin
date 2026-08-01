@@ -75,6 +75,7 @@ foreign core_text {
 	) -> int ---
 	CTLineDraw :: proc "c" (line, ctx: rawptr) ---
 	kCTFontAttributeName: rawptr
+	kCTKernAttributeName: rawptr
 	kCTForegroundColorFromContextAttributeName: rawptr
 }
 
@@ -89,6 +90,11 @@ foreign calendar_core_foundation {
 		external: b8,
 	) -> CF.String ---
 	CFStringGetLength :: proc "c" (string: rawptr) -> int ---
+	CFNumberCreate :: proc "c" (
+		allocator: rawptr,
+		number_type: int,
+		value: rawptr,
+	) -> rawptr ---
 	CFAttributedStringCreateMutable :: proc "c" (
 		allocator: rawptr,
 		max_length: int,
@@ -108,6 +114,12 @@ foreign calendar_core_foundation {
 }
 
 Calendar_UI_Rect :: struct {x, y, w, h: f64}
+Calendar_Text_Style :: enum {Label, Body, Heading}
+Calendar_Text_Style_Spec :: struct {
+	size_scale: f64,
+	weight: f64,
+	tracking: f64,
+}
 Calendar_NS_Range :: struct {location, length: uint}
 Calendar_Solid_Vertex :: struct {x, y, r, g, b, a: f32}
 Calendar_Texture_Vertex :: struct {x, y, u, v, r, g, b, a: f32}
@@ -330,18 +342,40 @@ CALENDAR_CONTENT_BOTTOM :: CALENDAR_ACTION_BAR_BOTTOM+
 CALENDAR_WINDOW_STYLE :: uint(14)
 CALENDAR_WINDOW_MINIMIZE_STYLE :: uint(15)
 CALENDAR_WINDOW_RESIZE_INSET :: 6.0
+CALENDAR_TEXT_BASE_SIZE :: 11.0
+
+calendar_text_style_spec :: proc(style: Calendar_Text_Style) -> Calendar_Text_Style_Spec {
+	switch style {
+	case .Label: return {size_scale=0.7, weight=0, tracking=0}
+	case .Body: return {size_scale=1, weight=0, tracking=-0.45}
+	case .Heading: return {size_scale=2, weight=0.35, tracking=-0.7}
+	}
+	return {size_scale=1}
+}
 CALENDAR_WINDOW_MIN_WIDTH :: 640.0
 CALENDAR_WINDOW_MIN_HEIGHT :: 480.0
 
-calendar_system_monospaced_font :: proc(size: f64) -> rawptr {
+calendar_system_monospaced_font_weight :: proc(size, weight: f64) -> rawptr {
 	font := msg_id_f64_f64(
 		objc_getClass("NSFont"),
 		sel_registerName("monospacedSystemFontOfSize:weight:"),
 		size,
-		0,
+		weight,
 	)
 	if font == nil {return nil}
 	return CFRetain(font)
+}
+
+calendar_system_monospaced_font :: proc(size: f64) -> rawptr {
+	return calendar_system_monospaced_font_weight(size, 0)
+}
+
+calendar_system_monospaced_font_for_style :: proc(style: Calendar_Text_Style) -> rawptr {
+	spec := calendar_text_style_spec(style)
+	return calendar_system_monospaced_font_weight(
+		CALENDAR_TEXT_BASE_SIZE*spec.size_scale*calendar_ui.scale,
+		spec.weight,
+	)
 }
 
 calendar_msg_void_size :: proc(receiver: Id, selector: Sel, size: Size) {
@@ -1213,11 +1247,17 @@ calendar_ui_day_rect :: proc(index: int) -> Calendar_UI_Rect {
 calendar_ui_event_rect :: proc(
 	day_rect: Calendar_UI_Rect,
 	index: int,
+	visible_count: int,
 ) -> Calendar_UI_Rect {
+	count := max(1, min(3, visible_count))
+	left := day_rect.x+178
+	right := day_rect.x+day_rect.w-12
+	gap := 6.0
+	width := (right-left-gap*f64(count-1))/f64(count)
 	return {
-		day_rect.x+178+f64(index)*max(120, (day_rect.w-190)/3),
+		left+f64(index)*(width+gap),
 		day_rect.y+3,
-		max(110, (day_rect.w-202)/3),
+		width,
 		day_rect.h-6,
 	}
 }
@@ -3680,18 +3720,22 @@ calendar_detail_draw_field :: proc(
 	panel: Calendar_UI_Rect,
 	cursor: ^f64,
 	label_color, value_color: [4]f64,
+	label_font: rawptr = nil,
 ) {
 	if len(value) == 0 {return}
+	effective_label_font := label_font
+	if effective_label_font == nil {effective_label_font = font}
 	calendar_draw_text(
 		ctx,
-		font,
+		effective_label_font,
 		label,
-		{panel.x+16, cursor^-16, panel.w-32, 16},
+		{panel.x+20, cursor^-16, panel.w-40, 16},
 		label_color,
 		0,
+		style = .Label,
 	)
-	cursor^ -= 20
-	maximum := max(18, int((panel.w-32)/7))
+	cursor^ -= 10
+	maximum := max(18, int((panel.w-40)/7))
 	line := ""
 	remaining := value
 	for word in strings.split_iterator(&remaining, " ") {
@@ -3701,11 +3745,11 @@ calendar_detail_draw_field :: proc(
 				ctx,
 				font,
 				line,
-				{panel.x+16, cursor^-16, panel.w-32, 16},
+				{panel.x+20, cursor^-16, panel.w-40, 16},
 				value_color,
 				0,
 			)
-			cursor^ -= 18
+			cursor^ -= 16
 			line = word
 		} else {
 			line = candidate
@@ -3716,13 +3760,13 @@ calendar_detail_draw_field :: proc(
 			ctx,
 			font,
 			line,
-			{panel.x+16, cursor^-16, panel.w-32, 16},
+			{panel.x+20, cursor^-16, panel.w-40, 16},
 			value_color,
 			0,
 		)
-		cursor^ -= 18
+		cursor^ -= 16
 	}
-	cursor^ -= 8
+	cursor^ -= 6
 }
 
 calendar_draw_details :: proc(
@@ -3885,12 +3929,55 @@ calendar_draw_details :: proc(
 		}
 		country, definition, found := calendar_holiday_definition_for_occurrence(occurrence)
 		if found {
-			calendar_detail_draw_field(ctx, font, "HOLIDAY", definition.name, panel, &cursor, muted, ink)
-			calendar_detail_draw_field(ctx, font, "COUNTRY", country.country_name, panel, &cursor, muted, ink)
-			calendar_detail_draw_field(ctx, font, "CATEGORY", calendar_holiday_kind_label(calendar_holiday_kind(definition.kind)), panel, &cursor, muted, ink)
-			calendar_detail_draw_field(ctx, font, "DATE", ical_format_date_time(occurrence.date), panel, &cursor, muted, ink)
-			calendar_detail_draw_field(ctx, font, "SOURCE", country.source_title, panel, &cursor, muted, ink)
-			calendar_detail_draw_field(ctx, font, "SOURCE URL", country.source_url, panel, &cursor, muted, ink)
+			label_font := calendar_system_monospaced_font_for_style(.Label)
+			heading_font := calendar_system_monospaced_font_for_style(.Heading)
+			section_font := calendar_system_monospaced_font_weight(
+				11*calendar_ui.scale,
+				0.25,
+			)
+			if heading_font != nil {defer CFRelease(heading_font)}
+			if section_font != nil {defer CFRelease(section_font)}
+			if label_font != nil {defer CFRelease(label_font)}
+			calendar_draw_text(
+				ctx, label_font if label_font != nil else font,
+				"HOLIDAY",
+				{panel.x+20, cursor-16, panel.w-40, 16},
+				muted,
+				0,
+				style = .Label,
+			)
+			cursor -= 44
+			calendar_draw_text(
+				ctx, heading_font if heading_font != nil else font,
+				definition.name,
+				{panel.x+20, cursor-28, panel.w-40, 32},
+				ink,
+				0,
+				style = .Heading,
+			)
+			cursor -= 58
+			column_gap := 20.0
+			column_width := (panel.w-40-column_gap)/2
+			calendar_draw_text(ctx, label_font if label_font != nil else font, "COUNTRY", {panel.x+20, cursor-16, column_width, 16}, muted, 0, style=.Label)
+			calendar_draw_text(ctx, label_font if label_font != nil else font, "CATEGORY", {panel.x+20+column_width+column_gap, cursor-16, column_width, 16}, muted, 0, style=.Label)
+			cursor -= 10
+			calendar_draw_text(ctx, section_font if section_font != nil else font, country.country_name, {panel.x+20, cursor-20, column_width, 20}, ink, 0)
+			calendar_draw_text(ctx, section_font if section_font != nil else font, calendar_holiday_kind_label(calendar_holiday_kind(definition.kind)), {panel.x+20+column_width+column_gap, cursor-20, column_width, 20}, ink, 0)
+			cursor -= 22
+			calendar_draw_text(ctx, label_font if label_font != nil else font, "DATE", {panel.x+20, cursor-16, panel.w-40, 16}, muted, 0, style=.Label)
+			cursor -= 10
+			calendar_draw_text(
+				ctx, section_font if section_font != nil else font,
+				fmt.tprintf("%04d-%02d-%02d", occurrence.date.year, occurrence.date.month, occurrence.date.day),
+				{panel.x+20, cursor-20, panel.w-40, 20},
+				ink,
+				0,
+			)
+			cursor -= 36
+			calendar_draw_text(ctx, section_font if section_font != nil else font, "SOURCE", {panel.x+20, cursor-18, panel.w-40, 18}, ink, 0)
+			cursor -= 28
+			calendar_detail_draw_field(ctx, font, "REFERENCE", country.source_title, panel, &cursor, muted, ink, label_font)
+			calendar_detail_draw_field(ctx, font, "URL", country.source_url, panel, &cursor, muted, ink, label_font)
 		}
 	}
 	CGContextRestoreGState(ctx)
@@ -3942,7 +4029,7 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 		}
 		for item, item_index in day_items {
 			if item_index >= 3 {break}
-			event_rect := calendar_ui_event_rect(rect, item_index)
+			event_rect := calendar_ui_event_rect(rect, item_index, min(3, len(day_items)))
 			event_color := button
 			if item.kind == .Holiday {
 				calendar_push_rect(vertices, event_rect, event_color)
@@ -4414,7 +4501,11 @@ calendar_icon_maximize_points :: proc() -> [12]Calendar_Icon_Point {
 	}
 }
 
-calendar_text_run :: proc(font: rawptr, text: string) -> Calendar_Text_Run {
+calendar_text_run :: proc(
+	font: rawptr,
+	text: string,
+	style := Calendar_Text_Style.Body,
+) -> Calendar_Text_Run {
 	if len(text) == 0 {return {}}
 	bytes := transmute([]u8)text
 	string_ref := CFStringCreateWithBytes(
@@ -4432,6 +4523,17 @@ calendar_text_run :: proc(font: rawptr, text: string) -> Calendar_Text_Run {
 	CFAttributedStringReplaceString(attributed, {0, 0}, string_ref)
 	range := CF.Range{0, CF.Index(CFStringGetLength(string_ref))}
 	CFAttributedStringSetAttribute(attributed, range, kCTFontAttributeName, font)
+	tracking := calendar_text_style_spec(style).tracking*calendar_ui.scale
+	tracking_number := CFNumberCreate(nil, 13, &tracking)
+	if tracking_number != nil {
+		defer CFRelease(tracking_number)
+		CFAttributedStringSetAttribute(
+			attributed,
+			range,
+			kCTKernAttributeName,
+			tracking_number,
+		)
+	}
 	CFAttributedStringSetAttribute(
 		attributed,
 		range,
@@ -4458,8 +4560,9 @@ calendar_draw_text :: proc(
 	color: [4]f64,
 	inset := 8.0,
 	alignment := Calendar_Text_Alignment.Start,
+	style := Calendar_Text_Style.Body,
 ) {
-	run := calendar_text_run(font, text)
+	run := calendar_text_run(font, text, style)
 	if run.line == nil {return}
 	defer CFRelease(run.line)
 	CGContextSaveGState(ctx)
@@ -4813,7 +4916,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 	if ctx == nil {return pixels}
 	defer CGContextRelease(ctx)
 	CGContextClearRect(ctx, {{0, 0}, {f64(width), f64(height)}})
-	font := calendar_system_monospaced_font(11*calendar_ui.scale)
+	font := calendar_system_monospaced_font_for_style(.Body)
 	if font == nil {return pixels}
 	defer CFRelease(font)
 	theme := calendar_theme(calendar_ui.theme_id)
@@ -4854,7 +4957,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 		day_items := calendar_day_items(day)
 		for item, item_index in day_items {
 			if item_index >= 3 {break}
-			event_rect := calendar_ui_event_rect(rect, item_index)
+			event_rect := calendar_ui_event_rect(rect, item_index, min(3, len(day_items)))
 			if item.kind == .Holiday {
 				country, definition, found :=
 					calendar_holiday_definition_for_occurrence(item.holiday)

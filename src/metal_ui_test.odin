@@ -4,6 +4,37 @@ import "core:testing"
 import flash "flash:."
 
 @(test)
+calendar_text_styles_bind_size_and_tracking_test :: proc(t: ^testing.T) {
+	label := calendar_text_style_spec(.Label)
+	body := calendar_text_style_spec(.Body)
+	heading := calendar_text_style_spec(.Heading)
+	testing.expect_value(t, label.size_scale, 0.7)
+	testing.expect_value(t, label.tracking, 0.0)
+	testing.expect_value(t, body.size_scale, 1.0)
+	testing.expect_value(t, body.tracking, -0.45)
+	testing.expect_value(t, heading.size_scale, 2.0)
+	testing.expect(t, heading.tracking < body.tracking)
+}
+
+@(test)
+calendar_event_rect_uses_available_day_width_test :: proc(t: ^testing.T) {
+	day := Calendar_UI_Rect{0, 0, 900, CALENDAR_DAY_ROW_HEIGHT}
+	single := calendar_ui_event_rect(day, 0, 1)
+	first_of_two := calendar_ui_event_rect(day, 0, 2)
+	second_of_two := calendar_ui_event_rect(day, 1, 2)
+	first_of_three := calendar_ui_event_rect(day, 0, 3)
+	testing.expect_value(t, single.x, 178.0)
+	testing.expect_value(t, single.x+single.w, 888.0)
+	testing.expect(t, single.w > first_of_two.w)
+	testing.expect(t, first_of_two.w > first_of_three.w)
+	testing.expect_value(
+		t,
+		second_of_two.x-(first_of_two.x+first_of_two.w),
+		6.0,
+	)
+}
+
+@(test)
 calendar_editor_all_day_conversion_uses_exclusive_end_date_test :: proc(
 	t: ^testing.T,
 ) {
