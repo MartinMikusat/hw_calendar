@@ -146,6 +146,8 @@ calendar_ui_diagnostic_action_name :: proc(action: Calendar_UI_Action) -> string
 	case .Editor_Save: return "editor-save"
 	case .Editor_Delete: return "editor-delete"
 	case .Editor_Cancel: return "editor-cancel"
+	case .Discard_Keep_Editing: return "discard-keep-editing"
+	case .Discard_Changes: return "discard-changes"
 	}
 	return "unknown"
 }

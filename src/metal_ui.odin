@@ -174,6 +174,30 @@ Calendar_UI_Action :: enum {
 	Editor_Save,
 	Editor_Delete,
 	Editor_Cancel,
+	Discard_Keep_Editing,
+	Discard_Changes,
+}
+
+Calendar_Modal_Kind :: enum {
+	None,
+	Command_Palette,
+	Settings,
+	Shortcut,
+	Archive,
+	Editor,
+	Discard_Changes,
+}
+
+Calendar_Modal_Dismissal :: enum {
+	Dismissible,
+	Dirty_Confirm,
+	Blocking,
+}
+
+Calendar_Modal :: struct {
+	kind: Calendar_Modal_Kind,
+	rect: Calendar_UI_Rect,
+	dismissal: Calendar_Modal_Dismissal,
 }
 
 Calendar_App_Action :: struct {
@@ -241,6 +265,7 @@ Calendar_UI_State :: struct {
 	solid_pipeline: Id,
 	texture_pipeline: Id,
 	text_texture: Id,
+	modal_text_texture: Id,
 	text_width: uint,
 	text_height: uint,
 	width: f64,
@@ -315,6 +340,9 @@ Calendar_UI_State :: struct {
 	editor_error: string,
 	editor_important: bool,
 	editor_all_day: bool,
+	editor_initial_hash: u64,
+	discard_changes_open: bool,
+	discard_target: Calendar_Modal_Kind,
 	ax_children: Id,
 	ax_bindings: [dynamic]Calendar_UI_AX_Binding,
 }
@@ -712,6 +740,8 @@ calendar_ui_ax_label :: proc(control: ^Calendar_UI_Control) -> string {
 	case .Editor_Save: return "Save agenda entry"
 	case .Editor_Delete: return "Delete event"
 	case .Editor_Cancel: return "Cancel event editor"
+	case .Discard_Keep_Editing: return "Keep editing"
+	case .Discard_Changes: return "Discard unsaved changes"
 	case .None:
 	}
 	return control.name
@@ -853,7 +883,12 @@ calendar_ui_rebuild_accessibility :: proc() {
 	calendar_ui.ax_children = msg_id(array, sel_registerName("retain"))
 	element_class := objc_getClass("hw_calendar_AccessibilityElement")
 	for &control in calendar_ui.controls {
-		if calendar_ui.shortcut_open &&
+		if calendar_ui.discard_changes_open &&
+		   !calendar_ui_is_window_action(control.action.kind) &&
+		   control.action.kind != .Discard_Keep_Editing &&
+		   control.action.kind != .Discard_Changes {
+			continue
+		} else if !calendar_ui.discard_changes_open && calendar_ui.shortcut_open &&
 		   !calendar_ui_is_window_action(control.action.kind) &&
 		   control.action.kind != .Shortcut_Record &&
 		   control.action.kind != .Shortcut_Save &&
@@ -1316,7 +1351,12 @@ calendar_ui_begin_flash :: proc() {
 		context.temp_allocator,
 	)
 	for control in calendar_ui.controls {
-		if calendar_ui.settings_open &&
+		if calendar_ui.discard_changes_open &&
+		   !calendar_ui_is_window_action(control.action.kind) &&
+		   control.action.kind != .Discard_Keep_Editing &&
+		   control.action.kind != .Discard_Changes {
+			continue
+		} else if !calendar_ui.discard_changes_open && calendar_ui.settings_open &&
 		   !calendar_ui_is_window_action(control.action.kind) &&
 		   control.action.kind != .Open_Settings &&
 		   control.action.kind != .Settings_Close &&
@@ -2301,6 +2341,87 @@ calendar_ui_editor_rect :: proc() -> Calendar_UI_Rect {
 	}
 }
 
+calendar_ui_discard_rect :: proc() -> Calendar_UI_Rect {
+	width := min(460.0, calendar_ui.width-48)
+	height := 164.0
+	return {(calendar_ui.width-width)/2, (calendar_ui.height-height)/2, width, height}
+}
+
+calendar_ui_discard_button_rect :: proc(index: int) -> Calendar_UI_Rect {
+	modal := calendar_ui_discard_rect()
+	width := (modal.w-56)/2
+	return {modal.x+24+f64(index)*(width+8), modal.y+24, width, 34}
+}
+
+calendar_active_modal :: proc() -> Calendar_Modal {
+	if calendar_ui.discard_changes_open {
+		return {.Discard_Changes, calendar_ui_discard_rect(), .Blocking}
+	}
+	if calendar_ui.shortcut_open {
+		return {.Shortcut, calendar_shortcut_modal_rect(), .Dirty_Confirm}
+	}
+	if calendar_ui.settings_open {
+		return {.Settings, calendar_settings_rect(), .Dismissible}
+	}
+	if calendar_ui.archive_modal_open {
+		return {.Archive, calendar_ui_archive_modal_rect(), .Dismissible}
+	}
+	if calendar_ui.editor_open {
+		return {.Editor, calendar_ui_editor_rect(), .Dirty_Confirm}
+	}
+	if command_palette.is_open(&calendar_ui.palette) {
+		return {.Command_Palette, calendar_ui_palette_rect(), .Dismissible}
+	}
+	return {}
+}
+
+calendar_modal_kind_name :: proc(kind: Calendar_Modal_Kind) -> string {
+	switch kind {
+	case .None: return "none"
+	case .Command_Palette: return "command-palette"
+	case .Settings: return "settings"
+	case .Shortcut: return "shortcut"
+	case .Archive: return "archive"
+	case .Editor: return "editor"
+	case .Discard_Changes: return "discard-changes"
+	}
+	return "none"
+}
+
+calendar_modal_dismissal_name :: proc(value: Calendar_Modal_Dismissal) -> string {
+	switch value {
+	case .Dismissible: return "dismissible"
+	case .Dirty_Confirm: return "dirty-confirm"
+	case .Blocking: return "blocking"
+	}
+	return "dismissible"
+}
+
+calendar_editor_fingerprint :: proc() -> u64 {
+	value := fmt.tprintf(
+		"%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%t\x1f%t",
+		calendar_ui.editor_calendar_identifier,
+		calendar_ui.editor_summary,
+		calendar_ui.editor_start,
+		calendar_ui.editor_end,
+		calendar_ui.editor_location,
+		calendar_ui.editor_url,
+		calendar_ui.editor_categories,
+		calendar_ui.editor_description,
+		calendar_ui.editor_time_zone,
+		calendar_ui.editor_alarms,
+		calendar_ui.editor_rrule,
+		calendar_ui.editor_important,
+		calendar_ui.editor_all_day,
+	)
+	return hash.fnv64a(transmute([]u8)value)
+}
+
+calendar_editor_is_dirty :: proc() -> bool {
+	return calendar_ui.editor_open &&
+	       calendar_editor_fingerprint() != calendar_ui.editor_initial_hash
+}
+
 calendar_ui_editor_field_rect :: proc(index: int) -> Calendar_UI_Rect {
 	modal := calendar_ui_editor_rect()
 	column := index / 5
@@ -2478,6 +2599,7 @@ calendar_ui_editor_open :: proc(event_index := -1) {
 			}
 		}
 	}
+	calendar_ui.editor_initial_hash = calendar_editor_fingerprint()
 	calendar_text_focus(.Editor_Summary)
 	flash.cancel(&calendar_ui.flash)
 	command_palette.close(&calendar_ui.palette)
@@ -2492,7 +2614,64 @@ calendar_ui_editor_close :: proc() {
 	calendar_ui_editor_clear()
 	calendar_ui.editor_open = false
 	calendar_ui.editor_event_index = -1
+	calendar_ui.editor_initial_hash = 0
 	calendar_ui.needs_redraw = true
+}
+
+calendar_shortcut_is_dirty :: proc() -> bool {
+	if !calendar_ui.shortcut_open {return false}
+	if calendar_ui.shortcut_listening {return true}
+	if !calendar_ui.shortcut_candidate_valid {return false}
+	current, current_valid := calendar_shortcut_serialize(
+		calendar_ui.flash_leader,
+		context.temp_allocator,
+	)
+	candidate, candidate_valid := calendar_shortcut_serialize(
+		calendar_ui.shortcut_candidate,
+		context.temp_allocator,
+	)
+	return current_valid && candidate_valid && current != candidate
+}
+
+calendar_modal_close_direct :: proc(kind: Calendar_Modal_Kind) {
+	switch kind {
+	case .Command_Palette:
+		calendar_ui_open_palette()
+	case .Settings:
+		calendar_settings_close()
+	case .Shortcut:
+		calendar_shortcut_recorder_close()
+	case .Archive:
+		calendar_ui_archive_modal_close()
+	case .Editor:
+		calendar_ui_editor_close()
+	case .Discard_Changes:
+		calendar_ui.discard_changes_open = false
+		calendar_ui.discard_target = .None
+	case .None:
+	}
+	calendar_ui.needs_redraw = true
+}
+
+calendar_modal_request_dismiss :: proc() -> bool {
+	modal := calendar_active_modal()
+	if modal.kind == .None {return false}
+	if modal.kind == .Discard_Changes {
+		calendar_modal_close_direct(.Discard_Changes)
+		return true
+	}
+	dirty := modal.kind == .Editor && calendar_editor_is_dirty() ||
+	         modal.kind == .Shortcut && calendar_shortcut_is_dirty()
+	if modal.dismissal == .Dirty_Confirm && dirty {
+		calendar_ui.discard_changes_open = true
+		calendar_ui.discard_target = modal.kind
+		flash.cancel(&calendar_ui.flash)
+		calendar_ui.needs_redraw = true
+		return true
+	}
+	if modal.dismissal == .Blocking {return true}
+	calendar_modal_close_direct(modal.kind)
+	return true
 }
 
 calendar_ui_editor_field_text :: proc(index: int) -> ^string {
@@ -2840,7 +3019,7 @@ calendar_ui_execute_action :: proc(action: Calendar_App_Action) {
 	case .Shortcut_Reset:
 		_ = calendar_shortcut_recorder_reset()
 	case .Shortcut_Cancel:
-		calendar_shortcut_recorder_close()
+		_ = calendar_modal_request_dismiss()
 	case .Today:
 		calendar_ui_clear_holiday_promotion()
 		calendar_ui_clear_navigation_selection()
@@ -3061,7 +3240,13 @@ calendar_ui_execute_action :: proc(action: Calendar_App_Action) {
 			calendar_ui_editor_commit(true)
 		}
 	case .Editor_Cancel:
-		if calendar_ui.editor_open {calendar_ui_editor_close()}
+		if calendar_ui.editor_open {_ = calendar_modal_request_dismiss()}
+	case .Discard_Keep_Editing:
+		calendar_modal_close_direct(.Discard_Changes)
+	case .Discard_Changes:
+		target := calendar_ui.discard_target
+		calendar_modal_close_direct(.Discard_Changes)
+		calendar_modal_close_direct(target)
 	case .None:
 	}
 	calendar_ui.needs_redraw = true
@@ -3078,8 +3263,27 @@ calendar_ui_activate_control :: proc(id: u64) {
 
 calendar_ui_click :: proc(point: Point, click_count: uint = 1) -> bool {
 	flash.cancel(&calendar_ui.flash)
+	modal := calendar_active_modal()
+	if modal.kind != .None && !calendar_ui_contains(modal.rect, point) {
+		for index := len(calendar_ui.controls)-1; index >= 0; index -= 1 {
+			control := calendar_ui.controls[index]
+			if calendar_ui_is_window_action(control.action.kind) &&
+			   calendar_ui_contains(control.rect, point) {
+				calendar_ui_activate_control(control.id)
+				return true
+			}
+		}
+		_ = calendar_modal_request_dismiss()
+		return true
+	}
 	for index := len(calendar_ui.controls)-1; index >= 0; index -= 1 {
 		control := calendar_ui.controls[index]
+		if modal.kind == .Discard_Changes &&
+		   !calendar_ui_is_window_action(control.action.kind) &&
+		   control.action.kind != .Discard_Keep_Editing &&
+		   control.action.kind != .Discard_Changes {
+			continue
+		}
 		if calendar_ui_contains(control.rect, point) {
 			#partial switch control.action.kind {
 			case .Settings_Search:
@@ -3109,6 +3313,7 @@ calendar_ui_click :: proc(point: Point, click_count: uint = 1) -> bool {
 			return true
 		}
 	}
+	if modal.kind != .None {return true}
 	calendar_ui.needs_redraw = true
 	return false
 }
@@ -3277,9 +3482,28 @@ calendar_on_key_down :: proc "c" (self: Id, command: Sel, event: Id) {
 	shift_down := modifiers & CALENDAR_EVENT_MODIFIER_SHIFT != 0
 	option_down := modifiers & CALENDAR_EVENT_MODIFIER_OPTION != 0
 	command_down := modifiers & CALENDAR_EVENT_MODIFIER_COMMAND != 0
+	if calendar_ui.discard_changes_open {
+		if key_code == 53 || key_code == 36 {
+			calendar_modal_close_direct(.Discard_Changes)
+		} else if !command_down && !control_down && !shift_down && !option_down {
+			if slot, found := calendar_number_slot_for_key_code(key_code); found {
+				if slot == 0 {
+					calendar_ui_execute_action({kind = .Discard_Keep_Editing})
+				} else if slot == 1 {
+					calendar_ui_execute_action({kind = .Discard_Changes})
+				}
+			}
+		}
+		return
+	}
 	if calendar_ui.shortcut_open {
 		if key_code == 53 {
-			calendar_shortcut_recorder_close()
+			if calendar_ui.shortcut_listening {
+				calendar_ui.shortcut_listening = false
+				calendar_ui.needs_redraw = true
+			} else {
+				_ = calendar_modal_request_dismiss()
+			}
 			return
 		}
 		if calendar_ui.shortcut_listening {
@@ -3382,7 +3606,7 @@ calendar_on_key_down :: proc "c" (self: Id, command: Sel, event: Id) {
 		}
 		if settings_focused {
 			if key_code == 53 {
-				_ = calendar_text_blur()
+				_ = calendar_modal_request_dismiss()
 				return
 			}
 			_ = calendar_text_handle_shortcut(
@@ -3394,7 +3618,7 @@ calendar_on_key_down :: proc "c" (self: Id, command: Sel, event: Id) {
 			return
 		}
 		if key_code == 53 {
-			calendar_settings_close()
+			_ = calendar_modal_request_dismiss()
 		} else if key_code == 48 {
 			calendar_text_focus(.Settings_Search)
 		} else if key_code == 125 || key_code == 126 {
@@ -3409,7 +3633,7 @@ calendar_on_key_down :: proc "c" (self: Id, command: Sel, event: Id) {
 	}
 	if calendar_ui.archive_modal_open && !flash.is_active(&calendar_ui.flash) {
 		if key_code == 53 {
-			calendar_ui_archive_modal_close()
+			_ = calendar_modal_request_dismiss()
 		} else if calendar_shortcut_matches_event(
 			calendar_ui.flash_leader,
 			key_code,
@@ -3443,7 +3667,18 @@ calendar_on_key_down :: proc "c" (self: Id, command: Sel, event: Id) {
 	}
 	if calendar_ui.editor_open {
 		if key_code == 53 {
-			calendar_ui_editor_close()
+			_ = calendar_modal_request_dismiss()
+			return
+		}
+		if key_code == 48 {
+			direction := 1
+			if shift_down {direction = -1}
+			calendar_ui.editor_field =
+				(calendar_ui.editor_field+direction+10)%10
+			calendar_text_focus(
+				calendar_text_editor_field(calendar_ui.editor_field),
+			)
+			calendar_ui.needs_redraw = true
 			return
 		}
 		if calendar_text_active_field() < .Editor_Summary ||
@@ -4003,7 +4238,7 @@ calendar_draw_details :: proc(
 	CGContextRestoreGState(ctx)
 }
 
-calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
+calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> int {
 	theme := calendar_theme(calendar_ui.theme_id)
 	chassis := theme.canvas
 	header := theme.header
@@ -4175,15 +4410,16 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 			)
 		}
 	}
+	modal_start := len(vertices)
 	if calendar_ui.editor_open && !calendar_ui.settings_open &&
 	   !calendar_ui.shortcut_open {
 		calendar_push_rect(
 			vertices,
 			{0, 0, calendar_ui.width, calendar_ui.height},
-			ink,
+			theme.overlay,
 		)
 		modal := calendar_ui_editor_rect()
-		calendar_push_rect(vertices, modal, header)
+		calendar_push_rect(vertices, modal, theme.modal)
 		for field_index in 0..<10 {
 			field_rect := calendar_ui_editor_field_rect(field_index)
 			calendar_push_rect(
@@ -4278,8 +4514,13 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 	}
 	if calendar_ui.archive_modal_open && !calendar_ui.settings_open &&
 	   !calendar_ui.shortcut_open {
+		calendar_push_rect(
+			vertices,
+			{0, 0, calendar_ui.width, calendar_ui.height},
+			theme.overlay,
+		)
 		modal := calendar_ui_archive_modal_rect()
-		calendar_push_rect(vertices, modal, row_alt)
+		calendar_push_rect(vertices, modal, theme.modal)
 		event := &calendar_ui.events[calendar_ui.navigation_event_index]
 		recurring := calendar_event_is_recurring(event)
 		connected := event.source == .EventKit
@@ -4328,7 +4569,7 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 			theme.overlay,
 		)
 		modal := calendar_settings_rect()
-		calendar_push_rect(vertices, modal, theme.header)
+		calendar_push_rect(vertices, modal, theme.modal)
 		search_rect := calendar_settings_search_rect()
 		calendar_push_rect(vertices, search_rect, theme.control)
 		if calendar_ui.settings_query_focused {
@@ -4399,7 +4640,7 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 			theme.overlay,
 		)
 		modal := calendar_shortcut_modal_rect()
-		calendar_push_rect(vertices, modal, theme.header)
+		calendar_push_rect(vertices, modal, theme.modal)
 		record_rect := calendar_shortcut_record_rect()
 		calendar_push_rect(vertices, record_rect, theme.control)
 		if calendar_ui.shortcut_listening {
@@ -4449,14 +4690,39 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 		modal := calendar_ui_palette_rect()
 		calendar_push_rect(
 			vertices,
-			modal,
+			{0, 0, calendar_ui.width, calendar_ui.height},
 			theme.overlay,
+		)
+		calendar_push_rect(
+			vertices,
+			modal,
+			theme.modal,
 		)
 		calendar_ui_add_action_control(
 			"command palette search",
 			"search commands",
 			calendar_text_field_rect(.Command_Palette),
 			{kind = .Command_Palette_Search},
+		)
+	}
+	if calendar_ui.discard_changes_open {
+		modal := calendar_ui_discard_rect()
+		calendar_push_rect(vertices, modal, theme.modal)
+		keep := calendar_ui_discard_button_rect(0)
+		discard := calendar_ui_discard_button_rect(1)
+		calendar_push_rect(vertices, keep, theme.control)
+		calendar_push_rect(vertices, discard, theme.destructive)
+		calendar_ui_add_action_control(
+			"discard keep editing",
+			"keep editing",
+			keep,
+			{kind = .Discard_Keep_Editing},
+		)
+		calendar_ui_add_action_control(
+			"discard changes",
+			"discard changes",
+			discard,
+			{kind = .Discard_Changes},
 		)
 	}
 	for index in 0..<4 {
@@ -4466,6 +4732,8 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) {
 			button,
 		)
 	}
+	if calendar_active_modal().kind == .None {return len(vertices)}
+	return modal_start
 }
 
 Calendar_Text_Run :: struct {
@@ -4920,7 +5188,7 @@ calendar_draw_window_controls :: proc(ctx: rawptr) {
 	)
 }
 
-calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
+calendar_build_text_overlay :: proc(width, height: uint, modal_only := false) -> []u8 {
 	pixels := make([]u8, int(width*height*4))
 	space := CGColorSpaceCreateDeviceRGB()
 	ctx := CGBitmapContextCreate(
@@ -4944,6 +5212,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 	ink_soft := calendar_color64(theme.text_soft)
 	muted := calendar_color64(theme.muted)
 	inverse := calendar_color64(theme.inverse)
+	if !modal_only {
 	calendar_draw_text(
 		ctx,
 		font,
@@ -5073,12 +5342,16 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			muted,
 		)
 	}
-	if calendar_ui.editor_open {
+	}
+	if modal_only && calendar_ui.editor_open {
+		modal := calendar_ui_editor_rect()
 		CGContextClearRect(
 			ctx,
-			{{0, 0}, {f64(width), f64(height)}},
+			{
+				{modal.x*calendar_ui.scale, modal.y*calendar_ui.scale},
+				{modal.w*calendar_ui.scale, modal.h*calendar_ui.scale},
+			},
 		)
-		modal := calendar_ui_editor_rect()
 		title := "NEW EVENT"
 		if calendar_ui.editor_event_index >= 0 {title = "EDIT EVENT"}
 		calendar_draw_text(
@@ -5178,7 +5451,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			font,
 			"SAVE",
 			calendar_ui_editor_button_rect(0),
-			inverse,
+			ink,
 		)
 		calendar_draw_text(
 			ctx,
@@ -5207,14 +5480,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			)
 		}
 	}
-	if calendar_ui.archive_modal_open {
-		backdrop := [4]f64{0.02, 0.02, 0.02, 0.28}
-		if theme.dark {backdrop = [4]f64{0.0, 0.0, 0.0, 0.38}}
-		calendar_fill_overlay_rect(
-			ctx,
-			{0, 0, calendar_ui.width, calendar_ui.height},
-			backdrop,
-		)
+	if modal_only && calendar_ui.archive_modal_open {
 		modal := calendar_ui_archive_modal_rect()
 		CGContextClearRect(
 			ctx,
@@ -5311,12 +5577,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			)
 		}
 	}
-	if calendar_ui.settings_open {
-		calendar_fill_overlay_rect(
-			ctx,
-			{0, 0, calendar_ui.width, calendar_ui.height},
-			calendar_color64(theme.overlay),
-		)
+	if modal_only && calendar_ui.settings_open {
 		modal := calendar_settings_rect()
 		CGContextClearRect(
 			ctx,
@@ -5445,12 +5706,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			)
 		}
 	}
-	if calendar_ui.shortcut_open {
-		calendar_fill_overlay_rect(
-			ctx,
-			{0, 0, calendar_ui.width, calendar_ui.height},
-			calendar_color64(theme.overlay),
-		)
+	if modal_only && calendar_ui.shortcut_open {
 		modal := calendar_shortcut_modal_rect()
 		CGContextClearRect(
 			ctx,
@@ -5554,7 +5810,51 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			muted,
 		)
 	}
-	if command_palette.is_open(&calendar_ui.palette) {
+	if modal_only && calendar_ui.discard_changes_open {
+		modal := calendar_ui_discard_rect()
+		CGContextClearRect(
+			ctx,
+			{
+				{modal.x*calendar_ui.scale, modal.y*calendar_ui.scale},
+				{modal.w*calendar_ui.scale, modal.h*calendar_ui.scale},
+			},
+		)
+		calendar_draw_text(
+			ctx,
+			font,
+			"DISCARD CHANGES?",
+			{modal.x+24, modal.y+modal.h-54, modal.w-48, 30},
+			ink,
+			0,
+		)
+		calendar_draw_text(
+			ctx,
+			font,
+			"YOUR UNSAVED CHANGES WILL BE LOST",
+			{modal.x+24, modal.y+modal.h-88, modal.w-48, 24},
+			muted,
+			0,
+		)
+		calendar_draw_numbered_action(
+			ctx,
+			font,
+			"KEEP EDITING",
+			1,
+			calendar_ui_discard_button_rect(0),
+			ink,
+			muted,
+		)
+		calendar_draw_numbered_action(
+			ctx,
+			font,
+			"DISCARD CHANGES",
+			2,
+			calendar_ui_discard_button_rect(1),
+			inverse,
+			inverse,
+		)
+	}
+	if modal_only && command_palette.is_open(&calendar_ui.palette) {
 		modal := calendar_ui_palette_rect()
 		CGContextClearRect(
 			ctx,
@@ -5570,7 +5870,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			calendar_ui.palette_query,
 			"SEARCH COMMANDS",
 			calendar_text_field_rect(.Command_Palette),
-			inverse,
+			ink,
 			muted,
 			calendar_color64(theme.focus),
 		)
@@ -5579,7 +5879,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			color := muted
 			if result.available {color = ink_soft}
 			if index == command_palette.selected_index(&calendar_ui.palette) {
-				color = inverse
+				color = ink
 			}
 			title := fmt.tprintf(
 				"%-12s  %s",
@@ -5602,8 +5902,11 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 			)
 		}
 	}
-	calendar_draw_flash_hints(ctx, font)
-	calendar_draw_window_controls(ctx)
+	modal_active := calendar_active_modal().kind != .None
+	if modal_only == modal_active {
+		calendar_draw_flash_hints(ctx, font)
+		calendar_draw_window_controls(ctx)
+	}
 	return pixels
 }
 
@@ -5692,8 +5995,9 @@ fragment float4 texture_fragment(TextureOut in [[stage_in]], texture2d<float> im
 	return calendar_ui.solid_pipeline != nil && calendar_ui.texture_pipeline != nil
 }
 
-calendar_ensure_text_texture :: proc(width, height: uint) -> bool {
-	if calendar_ui.text_texture != nil && calendar_ui.text_width == width &&
+calendar_ensure_text_textures :: proc(width, height: uint) -> bool {
+	if calendar_ui.text_texture != nil && calendar_ui.modal_text_texture != nil &&
+	   calendar_ui.text_width == width &&
 	   calendar_ui.text_height == height {
 		return true
 	}
@@ -5706,14 +6010,77 @@ calendar_ensure_text_texture :: proc(width, height: uint) -> bool {
 		false,
 	)
 	texture := msg_id_id(calendar_ui.device, sel_registerName("newTextureWithDescriptor:"), desc)
-	if texture == nil {return false}
+	modal_texture := msg_id_id(calendar_ui.device, sel_registerName("newTextureWithDescriptor:"), desc)
+	if texture == nil || modal_texture == nil {
+		if texture != nil {msg_void(texture, sel_registerName("release"))}
+		if modal_texture != nil {msg_void(modal_texture, sel_registerName("release"))}
+		return false
+	}
 	if calendar_ui.text_texture != nil {
 		msg_void(calendar_ui.text_texture, sel_registerName("release"))
 	}
+	if calendar_ui.modal_text_texture != nil {
+		msg_void(calendar_ui.modal_text_texture, sel_registerName("release"))
+	}
 	calendar_ui.text_texture = texture
+	calendar_ui.modal_text_texture = modal_texture
 	calendar_ui.text_width = width
 	calendar_ui.text_height = height
 	return true
+}
+
+calendar_draw_text_texture :: proc(encoder, texture: Id) {
+	texture_vertices := calendar_texture_vertices(
+		{0, 0, calendar_ui.width, calendar_ui.height},
+	)
+	msg_void_id(encoder, sel_registerName("setRenderPipelineState:"), calendar_ui.texture_pipeline)
+	msg_void_ptr_u_u(
+		encoder,
+		sel_registerName("setVertexBytes:length:atIndex:"),
+		raw_data(texture_vertices[:]),
+		size_of(texture_vertices),
+		0,
+	)
+	msg_void_id_u(
+		encoder,
+		sel_registerName("setFragmentTexture:atIndex:"),
+		texture,
+		0,
+	)
+	msg_void_u_u_u(
+		encoder,
+		sel_registerName("drawPrimitives:vertexStart:vertexCount:"),
+		3,
+		0,
+		6,
+	)
+}
+
+calendar_draw_solid_vertices :: proc(
+	encoder: Id,
+	vertices: []Calendar_Solid_Vertex,
+) {
+	if len(vertices) == 0 {return}
+	msg_void_id(encoder, sel_registerName("setRenderPipelineState:"), calendar_ui.solid_pipeline)
+	max_vertices := 168
+	for start := 0; start < len(vertices); start += max_vertices {
+		count := min(max_vertices, len(vertices)-start)
+		batch := vertices[start:start+count]
+		msg_void_ptr_u_u(
+			encoder,
+			sel_registerName("setVertexBytes:length:atIndex:"),
+			raw_data(batch),
+			uint(len(batch))*size_of(Calendar_Solid_Vertex),
+			0,
+		)
+		msg_void_u_u_u(
+			encoder,
+			sel_registerName("drawPrimitives:vertexStart:vertexCount:"),
+			3,
+			0,
+			uint(len(batch)),
+		)
+	}
 }
 
 calendar_texture_vertices :: proc(rect: Calendar_UI_Rect) -> [6]Calendar_Texture_Vertex {
@@ -5812,31 +6179,12 @@ calendar_render_frame :: proc() {
 			.New_Event,
 		)
 	}
-	calendar_build_geometry(&vertices)
+	modal_start := calendar_build_geometry(&vertices)
 	calendar_ui_rebuild_accessibility()
-	msg_void_id(encoder, sel_registerName("setRenderPipelineState:"), calendar_ui.solid_pipeline)
-	max_vertices := 168
-	for start := 0; start < len(vertices); start += max_vertices {
-		count := min(max_vertices, len(vertices)-start)
-		batch := vertices[start:start+count]
-		msg_void_ptr_u_u(
-			encoder,
-			sel_registerName("setVertexBytes:length:atIndex:"),
-			raw_data(batch),
-			uint(len(batch))*size_of(Calendar_Solid_Vertex),
-			0,
-		)
-		msg_void_u_u_u(
-			encoder,
-			sel_registerName("drawPrimitives:vertexStart:vertexCount:"),
-			3,
-			0,
-			uint(len(batch)),
-		)
-	}
+	calendar_draw_solid_vertices(encoder, vertices[:modal_start])
 	pixel_width := uint(max(1, calendar_ui.width*calendar_ui.scale))
 	pixel_height := uint(max(1, calendar_ui.height*calendar_ui.scale))
-	if calendar_ensure_text_texture(pixel_width, pixel_height) {
+	if calendar_ensure_text_textures(pixel_width, pixel_height) {
 		pixels := calendar_build_text_overlay(pixel_width, pixel_height)
 		calendar_msg_void_region(
 			calendar_ui.text_texture,
@@ -5847,30 +6195,21 @@ calendar_render_frame :: proc() {
 			pixel_width*4,
 		)
 		delete(pixels)
-		texture_vertices := calendar_texture_vertices(
-			{0, 0, calendar_ui.width, calendar_ui.height},
-		)
-		msg_void_id(encoder, sel_registerName("setRenderPipelineState:"), calendar_ui.texture_pipeline)
-		msg_void_ptr_u_u(
-			encoder,
-			sel_registerName("setVertexBytes:length:atIndex:"),
-			raw_data(texture_vertices[:]),
-			size_of(texture_vertices),
+		calendar_draw_text_texture(encoder, calendar_ui.text_texture)
+		calendar_draw_solid_vertices(encoder, vertices[modal_start:])
+		modal_pixels := calendar_build_text_overlay(pixel_width, pixel_height, true)
+		calendar_msg_void_region(
+			calendar_ui.modal_text_texture,
+			sel_registerName("replaceRegion:mipmapLevel:withBytes:bytesPerRow:"),
+			{{0, 0, 0}, {pixel_width, pixel_height, 1}},
 			0,
+			raw_data(modal_pixels),
+			pixel_width*4,
 		)
-		msg_void_id_u(
-			encoder,
-			sel_registerName("setFragmentTexture:atIndex:"),
-			calendar_ui.text_texture,
-			0,
-		)
-		msg_void_u_u_u(
-			encoder,
-			sel_registerName("drawPrimitives:vertexStart:vertexCount:"),
-			3,
-			0,
-			6,
-		)
+		delete(modal_pixels)
+		calendar_draw_text_texture(encoder, calendar_ui.modal_text_texture)
+	} else {
+		calendar_draw_solid_vertices(encoder, vertices[modal_start:])
 	}
 	msg_void(encoder, sel_registerName("endEncoding"))
 	msg_void_id(command_buffer, sel_registerName("presentDrawable:"), drawable)
@@ -6149,8 +6488,9 @@ calendar_ui_destroy :: proc() {
 	flash.state_destroy(&calendar_ui.flash)
 	command_palette.state_destroy(&calendar_ui.palette)
 	command_palette.state_destroy(&calendar_ui.settings_search)
-	objects := [5]Id{
+	objects := [6]Id{
 		calendar_ui.text_texture,
+		calendar_ui.modal_text_texture,
 		calendar_ui.solid_pipeline,
 		calendar_ui.texture_pipeline,
 		calendar_ui.queue,

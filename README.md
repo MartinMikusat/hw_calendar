@@ -40,6 +40,10 @@ Use the gear control or `Command-,` to open Settings. Settings contains theme
 and Flash shortcut configuration. The application stores these preferences in
 its local database.
 
+Each project-styled modal uses one 80-percent backdrop over the visible
+interface. Escape, Cancel, and a backdrop click dismiss ordinary modals. An
+edited form requests confirmation before it discards unsaved changes.
+
 ## Structured commands
 
 Each command writes one JSON result to standard output. A mutation reads one
@@ -63,6 +67,8 @@ build/hw_calendar proposal reject --id 1
 build/hw_calendar reminder status
 build/hw_calendar ui snapshot
 build/hw_calendar ui check --baseline /path/to/snapshot.json
+build/hw_calendar ui modal-state
+build/hw_calendar ui modal-dismiss
 ```
 
 Every entry mutation uses an expected revision. A proposal also records its

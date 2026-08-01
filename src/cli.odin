@@ -27,6 +27,8 @@ Calendar_CLI_Command :: enum {
 	Reminder_Status,
 	UI_Snapshot,
 	UI_Check,
+	UI_Modal_State,
+	UI_Modal_Dismiss,
 	Entry_Create,
 	Entry_Update,
 	Entry_Get,
@@ -84,6 +86,7 @@ calendar_cli_command_mutates_database :: proc(command: Calendar_CLI_Command) -> 
 
 calendar_cli_command_requires_gui :: proc(command: Calendar_CLI_Command) -> bool {
 	return command == .UI_Snapshot || command == .UI_Check ||
+	       command == .UI_Modal_State || command == .UI_Modal_Dismiss ||
 	       command == .Calendar_Status || command == .Calendar_List ||
 	       command == .Calendar_Request_Access
 }
@@ -113,6 +116,18 @@ Calendar_CLI_Diagnostic_Output :: struct {
 	line: int,
 	code: string,
 	message: string,
+}
+
+Calendar_CLI_Modal_Data :: struct {
+	kind: string,
+	dismissal: string,
+	dismissed: bool,
+}
+
+Calendar_CLI_Modal_Response :: struct {
+	ok: bool,
+	command: string,
+	data: Calendar_CLI_Modal_Data,
 }
 
 Calendar_CLI_Validate_Data :: struct {
@@ -327,6 +342,8 @@ calendar_cli_command_name :: proc(command: Calendar_CLI_Command) -> string {
 	case .Reminder_Status: return "reminder status"
 	case .UI_Snapshot: return "ui snapshot"
 	case .UI_Check: return "ui check"
+	case .UI_Modal_State: return "ui modal-state"
+	case .UI_Modal_Dismiss: return "ui modal-dismiss"
 	case .Entry_Create: return "entry create"
 	case .Entry_Update: return "entry update"
 	case .Entry_Get: return "entry get"
@@ -380,6 +397,8 @@ calendar_cli_parse :: proc(args: []string) -> (Calendar_CLI_Request, Calendar_CL
 	case group == "reminder" && action == "status": request.command = .Reminder_Status
 	case group == "ui" && action == "snapshot": request.command = .UI_Snapshot
 	case group == "ui" && action == "check": request.command = .UI_Check
+	case group == "ui" && action == "modal-state": request.command = .UI_Modal_State
+	case group == "ui" && action == "modal-dismiss": request.command = .UI_Modal_Dismiss
 	case group == "entry" && action == "create": request.command = .Entry_Create
 	case group == "entry" && action == "update": request.command = .Entry_Update
 	case group == "entry" && action == "get": request.command = .Entry_Get
@@ -1646,6 +1665,25 @@ calendar_cli_execute :: proc(request: Calendar_CLI_Request) -> Calendar_CLI_Resu
 		return calendar_ui_diagnostic_snapshot_command(request)
 	case .UI_Check:
 		return calendar_ui_diagnostic_check_command(request)
+	case .UI_Modal_State, .UI_Modal_Dismiss:
+		modal := calendar_active_modal()
+		kind := calendar_modal_kind_name(modal.kind)
+		dismissal := calendar_modal_dismissal_name(modal.dismissal)
+		dismissed := false
+		if request.command == .UI_Modal_Dismiss && modal.kind != .None {
+			dismissed = calendar_modal_request_dismiss()
+		}
+		return {
+			output = calendar_cli_encode(Calendar_CLI_Modal_Response{
+				ok = true,
+				command = calendar_cli_command_name(request.command),
+				data = {
+					kind = kind,
+					dismissal = dismissal,
+					dismissed = dismissed,
+				},
+			}),
+		}
 	case .None:
 	}
 	return calendar_cli_error(request.command, 2, "usage", "Unknown command.")

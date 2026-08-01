@@ -83,6 +83,29 @@ calendar_launch_visibility_respects_explicit_policy_test :: proc(t: ^testing.T) 
 	testing.expect(t, !calendar_launch_should_show("0"))
 }
 
+@(test)
+calendar_modal_backdrop_uses_eighty_percent_opacity_test :: proc(t: ^testing.T) {
+	testing.expect_value(t, calendar_theme(.HW_Light).overlay[3], f32(0.80))
+	testing.expect_value(t, calendar_theme(.HW_Dark).overlay[3], f32(0.80))
+	testing.expect_value(t, calendar_theme(.HW_Light).modal[3], f32(1.0))
+	testing.expect_value(t, calendar_theme(.HW_Dark).modal[3], f32(1.0))
+}
+
+@(test)
+calendar_discard_confirmation_owns_modal_input_test :: proc(t: ^testing.T) {
+	previous := calendar_ui
+	defer {calendar_ui = previous}
+	calendar_ui = Calendar_UI_State{
+		width = 900,
+		height = 700,
+		settings_open = true,
+		discard_changes_open = true,
+	}
+	modal := calendar_active_modal()
+	testing.expect_value(t, modal.kind, Calendar_Modal_Kind.Discard_Changes)
+	testing.expect_value(t, modal.dismissal, Calendar_Modal_Dismissal.Blocking)
+}
+
 calendar_icon_points_use_iconoir_viewbox_test :: proc(
 	t: ^testing.T,
 	points: []Calendar_Icon_Point,
