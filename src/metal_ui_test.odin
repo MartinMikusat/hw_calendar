@@ -85,6 +85,20 @@ calendar_launch_visibility_respects_explicit_policy_test :: proc(t: ^testing.T) 
 }
 
 @(test)
+calendar_automation_uses_accessory_activation_policy_test :: proc(t: ^testing.T) {
+	testing.expect_value(
+		t,
+		calendar_application_activation_policy(false),
+		CALENDAR_APPLICATION_ACTIVATION_POLICY_REGULAR,
+	)
+	testing.expect_value(
+		t,
+		calendar_application_activation_policy(true),
+		CALENDAR_APPLICATION_ACTIVATION_POLICY_ACCESSORY,
+	)
+}
+
+@(test)
 calendar_modal_backdrop_uses_eighty_percent_opacity_test :: proc(t: ^testing.T) {
 	testing.expect_value(t, calendar_theme(.HW_Light).overlay[3], f32(0.80))
 	testing.expect_value(t, calendar_theme(.HW_Dark).overlay[3], f32(0.80))

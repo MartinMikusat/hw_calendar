@@ -122,6 +122,17 @@ running process only after a successful build. A replacement restores the
 previous process's frontmost state. A background replacement does not put its
 window onscreen. A failed build leaves the current process running.
 
+Launch isolated automation with these environment values:
+
+```sh
+HW_CALENDAR_AUTOMATION=1
+HW_CALENDAR_ACTIVATE_ON_LAUNCH=0
+HW_CALENDAR_VISIBLE_ON_LAUNCH=0
+```
+
+This policy keeps the window hidden and removes its Dock item. Remove each
+temporary automation process and launch job after the check.
+
 The interface requests AppKit's system monospaced font. It does not hard-code
 or bundle the concrete font family.
 

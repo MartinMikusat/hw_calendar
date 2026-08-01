@@ -3756,6 +3756,7 @@ calendar_should_handle_reopen :: proc "c" (
 	has_visible_windows: bool,
 ) -> bool {
 	context = runtime.default_context()
+	if calendar_automation_enabled() {return false}
 	if !has_visible_windows && calendar_ui.window != nil {
 		msg_void_id(calendar_ui.window, sel_registerName("makeKeyAndOrderFront:"), nil)
 	}
@@ -3764,6 +3765,7 @@ calendar_should_handle_reopen :: proc "c" (
 
 calendar_did_become_active :: proc "c" (self: Id, command: Sel, notification: Id) {
 	context = runtime.default_context()
+	if calendar_automation_enabled() {return}
 	if calendar_ui.window != nil {
 		msg_void_id(calendar_ui.window, sel_registerName("makeKeyAndOrderFront:"), nil)
 	}
@@ -6456,6 +6458,18 @@ calendar_launch_should_show :: proc(value: string) -> bool {
 	return len(value) == 0 || value != "0"
 }
 
+calendar_automation_enabled :: proc() -> bool {
+	return os.get_env("HW_CALENDAR_AUTOMATION") == "1"
+}
+
+CALENDAR_APPLICATION_ACTIVATION_POLICY_REGULAR :: 0
+CALENDAR_APPLICATION_ACTIVATION_POLICY_ACCESSORY :: 1
+
+calendar_application_activation_policy :: proc(automation: bool) -> int {
+	if automation {return CALENDAR_APPLICATION_ACTIVATION_POLICY_ACCESSORY}
+	return CALENDAR_APPLICATION_ACTIVATION_POLICY_REGULAR
+}
+
 calendar_gui_initialize :: proc() -> bool {
 	if !objc_initialize() {
 		fmt.eprintln("hw_calendar could not initialize the Objective-C runtime.")
@@ -6514,7 +6528,11 @@ calendar_gui_initialize :: proc() -> bool {
 	window_class := calendar_register_window_class()
 	calendar_ui.app = app
 	calendar_ui_reload_data()
-	msg_void_i(app, sel_registerName("setActivationPolicy:"), 0)
+	msg_void_i(
+		app,
+		sel_registerName("setActivationPolicy:"),
+		calendar_application_activation_policy(calendar_automation_enabled()),
+	)
 	msg_void_id(app, sel_registerName("setDelegate:"), calendar_ui.delegate)
 	frame := Rect{{120, 100}, {CALENDAR_DEFAULT_WINDOW_WIDTH, CALENDAR_DEFAULT_WINDOW_HEIGHT}}
 	calendar_ui.window = msg_id_rect_u_u_b(
