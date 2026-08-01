@@ -37,8 +37,8 @@ control registry routes pointer, numbered keyboard, Accessibility, Flash, and
 command-menu activation through typed application actions.
 
 Use the gear control or `Command-,` to open Settings. Settings contains theme
-and Flash shortcut configuration. The application stores these preferences in
-its local database.
+and Flash shortcut configuration. The theme catalog contains HW Light and HW
+Dark. The application stores these preferences in its local database.
 
 Each project-styled modal uses one 80-percent backdrop over the visible
 interface. Escape, Cancel, and a backdrop click dismiss ordinary modals. An

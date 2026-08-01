@@ -3820,6 +3820,14 @@ calendar_push_border :: proc(
 	calendar_push_rect(vertices, {rect.x+rect.w-1, rect.y, 1, rect.h}, color)
 }
 
+calendar_push_leading_edge :: proc(
+	vertices: ^[dynamic]Calendar_Solid_Vertex,
+	rect: Calendar_UI_Rect,
+	color: [4]f32,
+) {
+	calendar_push_rect(vertices, {rect.x, rect.y, 4, rect.h}, color)
+}
+
 calendar_occurrences_for_day :: proc(day: ICal_Date_Time) -> []Calendar_Occurrence {
 	result := make([dynamic]Calendar_Occurrence, context.temp_allocator)
 	day_start := ical_days_from_civil(day.year, day.month, day.day)*86400
@@ -4034,7 +4042,7 @@ calendar_draw_details :: proc(
 			ctx,
 			font,
 			"FOCUSED DETAILS",
-			{panel.x+16, panel.y+panel.h-42, panel.w-32, 24},
+			{panel.x+20, panel.y+panel.h-42, panel.w-40, 24},
 			ink,
 			0,
 		)
@@ -4042,7 +4050,7 @@ calendar_draw_details :: proc(
 			ctx,
 			font,
 			"SELECT AN EVENT OR HOLIDAY TO SHOW ITS DETAILS",
-			{panel.x+16, panel.y+panel.h-72, panel.w-32, 20},
+			{panel.x+20, panel.y+panel.h-72, panel.w-40, 20},
 			muted,
 			0,
 		)
@@ -4244,7 +4252,6 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 	header := theme.header
 	row := theme.surface
 	row_alt := theme.raised
-	important := theme.important
 	button := theme.control
 	ink := theme.overlay
 	field := theme.control
@@ -4276,8 +4283,10 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 		}
 		color := row
 		if index%2 == 1 {color = row_alt}
-		if is_important {color = important}
 		calendar_push_rect(vertices, rect, color)
+		if is_important {
+			calendar_push_leading_edge(vertices, rect, theme.important)
+		}
 		if ical_days_from_civil(day.year, day.month, day.day) ==
 		   ical_days_from_civil(now.year, now.month, now.day) {
 			calendar_push_border(vertices, rect, focus)
@@ -4302,7 +4311,7 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 					)
 				}
 				if calendar_day_item_is_navigation_selected(item) {
-					calendar_push_border(vertices, event_rect, focus)
+					calendar_push_leading_edge(vertices, event_rect, focus)
 				}
 				if !calendar_ui.editor_open && !calendar_ui.archive_modal_open &&
 				   !calendar_ui.settings_open && !calendar_ui.shortcut_open {
@@ -4329,23 +4338,19 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 			)
 			personal := strings.contains(upper_categories, "PERSONAL")
 			work := strings.contains(upper_categories, "WORK")
-			if personal {event_color = theme.personal}
-			if work {event_color = theme.work}
 			calendar_push_rect(vertices, event_rect, event_color)
-			if personal && work {
+			if personal {
+				calendar_push_leading_edge(vertices, event_rect, theme.personal)
+			}
+			if work {
 				calendar_push_rect(
 					vertices,
-					{event_rect.x, event_rect.y, 4, event_rect.h},
-					theme.warm,
-				)
-				calendar_push_rect(
-					vertices,
-					{event_rect.x+4, event_rect.y, 4, event_rect.h},
-					theme.cool,
+					{event_rect.x+(personal ? 4 : 0), event_rect.y, 4, event_rect.h},
+					theme.work,
 				)
 			}
 			if calendar_day_item_is_navigation_selected(item) {
-				calendar_push_border(vertices, event_rect, focus)
+				calendar_push_leading_edge(vertices, event_rect, focus)
 			}
 			if !calendar_ui.editor_open && !calendar_ui.archive_modal_open &&
 			   !calendar_ui.settings_open && !calendar_ui.shortcut_open {
@@ -4444,15 +4449,11 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 			112,
 			34,
 		}
-		important_color := row_alt
+		calendar_push_rect(vertices, important_rect, row_alt)
 		if calendar_ui.editor_important {
-			important_color = theme.important
+			calendar_push_border(vertices, important_rect, theme.important)
+			calendar_push_leading_edge(vertices, important_rect, theme.important)
 		}
-		calendar_push_rect(
-			vertices,
-			important_rect,
-			important_color,
-		)
 		calendar_ui_add_control(
 			"editor important",
 			"important",
@@ -4460,11 +4461,11 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 			.Editor_Important,
 		)
 		all_day_rect := calendar_ui_editor_all_day_rect()
-		calendar_push_rect(
-			vertices,
-			all_day_rect,
-			calendar_ui.editor_all_day ? theme.important : row_alt,
-		)
+		calendar_push_rect(vertices, all_day_rect, row_alt)
+		if calendar_ui.editor_all_day {
+			calendar_push_border(vertices, all_day_rect, theme.important)
+			calendar_push_leading_edge(vertices, all_day_rect, theme.important)
+		}
 		calendar_ui_add_control(
 			"editor all day",
 			"all day",
@@ -4483,7 +4484,8 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 		}
 		save_rect := calendar_ui_editor_button_rect(0)
 		cancel_rect := calendar_ui_editor_button_rect(1)
-		calendar_push_rect(vertices, save_rect, theme.positive)
+		calendar_push_rect(vertices, save_rect, button)
+		calendar_push_border(vertices, save_rect, theme.positive)
 		calendar_push_rect(vertices, cancel_rect, button)
 		calendar_ui_add_control(
 			"editor save",
@@ -4499,11 +4501,8 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 		)
 		if calendar_ui.editor_event_index >= 0 {
 			delete_rect := calendar_ui_editor_button_rect(2)
-			calendar_push_rect(
-				vertices,
-				delete_rect,
-				theme.destructive,
-			)
+			calendar_push_rect(vertices, delete_rect, button)
+			calendar_push_border(vertices, delete_rect, theme.destructive)
 			calendar_ui_add_control(
 				"editor delete",
 				"delete",
@@ -4530,7 +4529,9 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 			occurrence_rect := calendar_ui_archive_button_rect(0, count)
 			series_rect := calendar_ui_archive_button_rect(1, count)
 			calendar_push_rect(vertices, occurrence_rect, button)
-			calendar_push_rect(vertices, series_rect, theme.destructive)
+			calendar_push_border(vertices, occurrence_rect, theme.destructive)
+			calendar_push_rect(vertices, series_rect, button)
+			calendar_push_border(vertices, series_rect, theme.destructive)
 			calendar_ui_add_control(
 				connected ? "delete connected occurrence" : "archive occurrence",
 				connected ? "delete occurrence" : "archive occurrence",
@@ -4545,7 +4546,8 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 			)
 		} else {
 			archive_rect := calendar_ui_archive_button_rect(0, count)
-			calendar_push_rect(vertices, archive_rect, theme.destructive)
+			calendar_push_rect(vertices, archive_rect, button)
+			calendar_push_border(vertices, archive_rect, theme.destructive)
 			calendar_ui_add_control(
 				connected ? "delete connected event" : "archive event",
 				connected ? "delete event" : "archive event",
@@ -4658,11 +4660,10 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 		cancel_rect := calendar_shortcut_action_rect(2)
 		save_enabled := calendar_ui.shortcut_candidate_valid &&
 		                len(calendar_ui.shortcut_collision) == 0
-		calendar_push_rect(
-			vertices,
-			save_rect,
-			save_enabled ? theme.positive : theme.control,
-		)
+		calendar_push_rect(vertices, save_rect, theme.control)
+		if save_enabled {
+			calendar_push_border(vertices, save_rect, theme.positive)
+		}
 		calendar_push_rect(vertices, reset_rect, theme.control)
 		calendar_push_rect(vertices, cancel_rect, theme.control)
 		if save_enabled {
@@ -4711,7 +4712,8 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 		keep := calendar_ui_discard_button_rect(0)
 		discard := calendar_ui_discard_button_rect(1)
 		calendar_push_rect(vertices, keep, theme.control)
-		calendar_push_rect(vertices, discard, theme.destructive)
+		calendar_push_rect(vertices, discard, theme.control)
+		calendar_push_border(vertices, discard, theme.destructive)
 		calendar_ui_add_action_control(
 			"discard keep editing",
 			"keep editing",
@@ -5277,15 +5279,8 @@ calendar_build_text_overlay :: proc(width, height: uint, modal_only := false) ->
 			} else {
 				time_text = fmt.tprintf("ALL DAY  %s", item.event.summary)
 			}
-			upper_categories := strings.to_upper(
-				item.event.categories,
-				context.temp_allocator,
-			)
-			has_accent_fill :=
-				strings.contains(upper_categories, "PERSONAL") ||
-				strings.contains(upper_categories, "WORK")
 			text_color := ink
-			if theme.dark || has_accent_fill {
+			if theme.dark {
 				text_color = inverse
 			}
 			calendar_draw_text(ctx, font, time_text, event_rect, text_color)
@@ -5451,7 +5446,7 @@ calendar_build_text_overlay :: proc(width, height: uint, modal_only := false) ->
 			font,
 			"SAVE",
 			calendar_ui_editor_button_rect(0),
-			ink,
+			calendar_color64(theme.positive),
 		)
 		calendar_draw_text(
 			ctx,
@@ -5466,7 +5461,7 @@ calendar_build_text_overlay :: proc(width, height: uint, modal_only := false) ->
 				font,
 				"DELETE",
 				calendar_ui_editor_button_rect(2),
-				inverse,
+				calendar_color64(theme.destructive),
 			)
 		}
 		if len(calendar_ui.editor_error) > 0 {
@@ -5534,7 +5529,7 @@ calendar_build_text_overlay :: proc(width, height: uint, modal_only := false) ->
 				connected ? "DELETE OCCURRENCE" : "ARCHIVE OCCURRENCE",
 				1,
 				calendar_ui_archive_button_rect(0, count),
-				ink,
+				calendar_color64(theme.destructive),
 				muted,
 			)
 			calendar_draw_numbered_action(
@@ -5543,8 +5538,8 @@ calendar_build_text_overlay :: proc(width, height: uint, modal_only := false) ->
 				connected ? "DELETE FUTURE" : "ARCHIVE SERIES",
 				2,
 				calendar_ui_archive_button_rect(1, count),
-				inverse,
-				inverse,
+				calendar_color64(theme.destructive),
+				calendar_color64(theme.destructive),
 			)
 		} else {
 			calendar_draw_numbered_action(
@@ -5553,8 +5548,8 @@ calendar_build_text_overlay :: proc(width, height: uint, modal_only := false) ->
 				connected ? "DELETE" : "ARCHIVE",
 				1,
 				calendar_ui_archive_button_rect(0, count),
-				inverse,
-				inverse,
+				calendar_color64(theme.destructive),
+				calendar_color64(theme.destructive),
 			)
 		}
 		calendar_draw_numbered_action(
@@ -5780,7 +5775,7 @@ calendar_build_text_overlay :: proc(width, height: uint, modal_only := false) ->
 		save_color := muted
 		if calendar_ui.shortcut_candidate_valid &&
 		   len(calendar_ui.shortcut_collision) == 0 {
-			save_color = ink
+			save_color = calendar_color64(theme.positive)
 		}
 		calendar_draw_numbered_action(
 			ctx,
@@ -5850,8 +5845,8 @@ calendar_build_text_overlay :: proc(width, height: uint, modal_only := false) ->
 			"DISCARD CHANGES",
 			2,
 			calendar_ui_discard_button_rect(1),
-			inverse,
-			inverse,
+			calendar_color64(theme.destructive),
+			calendar_color64(theme.destructive),
 		)
 	}
 	if modal_only && command_palette.is_open(&calendar_ui.palette) {
