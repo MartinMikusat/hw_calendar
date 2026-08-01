@@ -2,4 +2,4 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-exec "$ROOT/build/hw-calendar" "$@"
+exec "$ROOT/build/hw_calendar" "$@"

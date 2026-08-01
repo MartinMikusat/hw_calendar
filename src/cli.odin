@@ -1048,7 +1048,7 @@ calendar_cli_event_get :: proc(request: Calendar_CLI_Request) -> Calendar_CLI_Re
 }
 
 calendar_cli_generate_uid :: proc() -> string {
-	return fmt.tprintf("%d@hw-calendar.local", time.to_unix_nanoseconds(time.now()))
+	return fmt.tprintf("%d@hw_calendar.local", time.to_unix_nanoseconds(time.now()))
 }
 
 calendar_cli_preserved_event_document :: proc(
@@ -1204,7 +1204,7 @@ calendar_cli_preserved_event_document :: proc(
 	strings.builder_init(&builder, allocator)
 	strings.write_string(
 		&builder,
-		"BEGIN:VCALENDAR\r\nPRODID:-//Hal Wayland//HW Calendar 0.1//EN\r\nVERSION:2.0\r\nCALSCALE:GREGORIAN\r\n",
+		"BEGIN:VCALENDAR\r\nPRODID:-//Hal Wayland//hw_calendar 0.1//EN\r\nVERSION:2.0\r\nCALSCALE:GREGORIAN\r\n",
 	)
 	ical_serialize_component(&builder, component)
 	strings.write_string(&builder, "END:VCALENDAR\r\n")
@@ -1250,7 +1250,7 @@ calendar_cli_event_document :: proc(
 	builder: strings.Builder
 	strings.builder_init(&builder, allocator)
 	strings.write_string(&builder, "BEGIN:VCALENDAR\r\n")
-	strings.write_string(&builder, "PRODID:-//Hal Wayland//HW Calendar 0.1//EN\r\n")
+	strings.write_string(&builder, "PRODID:-//Hal Wayland//hw_calendar 0.1//EN\r\n")
 	strings.write_string(&builder, "VERSION:2.0\r\n")
 	strings.write_string(&builder, "CALSCALE:GREGORIAN\r\n")
 	strings.write_string(&builder, "BEGIN:VEVENT\r\n")

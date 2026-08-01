@@ -7,7 +7,7 @@ import "core:testing"
 ical_parse_preserves_complete_component_tree_test :: proc(t: ^testing.T) {
 	input :=
 		"BEGIN:VCALENDAR\r\n" +
-		"PRODID:-//HW Calendar//EN\r\n" +
+		"PRODID:-//hw_calendar//EN\r\n" +
 		"VERSION:2.0\r\n" +
 		"BEGIN:VTIMEZONE\r\n" +
 		"TZID:Europe/Bratislava\r\n" +
@@ -53,7 +53,7 @@ ical_parse_preserves_complete_component_tree_test :: proc(t: ^testing.T) {
 ical_unfolds_input_and_folds_edited_output_by_octet_test :: proc(t: ^testing.T) {
 	input :=
 		"BEGIN:VCALENDAR\r\n" +
-		"PRODID:-//HW Calendar//EN\r\n" +
+		"PRODID:-//hw_calendar//EN\r\n" +
 		"VERSION:2.0\r\n" +
 		"BEGIN:VEVENT\r\n" +
 		"UID:event-1\r\n" +
@@ -86,7 +86,7 @@ ical_unfolds_input_and_folds_edited_output_by_octet_test :: proc(t: ^testing.T) 
 ical_reports_invalid_alarm_pair_without_dropping_component_test :: proc(t: ^testing.T) {
 	input :=
 		"BEGIN:VCALENDAR\r\n" +
-		"PRODID:-//HW Calendar//EN\r\n" +
+		"PRODID:-//hw_calendar//EN\r\n" +
 		"VERSION:2.0\r\n" +
 		"BEGIN:VEVENT\r\n" +
 		"UID:event-1\r\n" +
@@ -124,7 +124,7 @@ ical_edit_preserves_unknown_properties_and_attachments_test :: proc(
 ) {
 	input :=
 		"BEGIN:VCALENDAR\r\n" +
-		"PRODID:-//HW Calendar//EN\r\n" +
+		"PRODID:-//hw_calendar//EN\r\n" +
 		"VERSION:2.0\r\n" +
 		"BEGIN:VEVENT\r\n" +
 		"UID:event-1\r\n" +

@@ -1,6 +1,6 @@
-# HW Agenda
+# hw_calendar
 
-HW Agenda is a local personal agenda for Apple Silicon macOS. It stores one
+`hw_calendar` is a local personal agenda for Apple Silicon macOS. It stores one
 unstructured stream of entries and renders confirmed dates in a Metal period
 view.
 
@@ -46,23 +46,23 @@ Each command writes one JSON result to standard output. A mutation reads one
 versioned JSON document from standard input.
 
 ```sh
-build/hw-calendar entry create < entry.json
-build/hw-calendar entry get --id 1
-build/hw-calendar entry list
-build/hw-calendar entry search --query bathroom
-build/hw-calendar entry update --id 1 --if-revision 2 < entry.json
-build/hw-calendar entry complete --id 1 --if-revision 2
-build/hw-calendar entry reopen --id 1 --if-revision 3
-build/hw-calendar entry dismiss --id 1 --if-revision 3
-build/hw-calendar entry restore --id 1 --if-revision 4
-build/hw-calendar agenda query --from 1767225600 --to 1767830400
-build/hw-calendar proposal submit < proposal.json
-build/hw-calendar proposal get --id 1
-build/hw-calendar proposal confirm --id 1
-build/hw-calendar proposal reject --id 1
-build/hw-calendar reminder status
-build/hw-calendar ui snapshot
-build/hw-calendar ui check --baseline /path/to/snapshot.json
+build/hw_calendar entry create < entry.json
+build/hw_calendar entry get --id 1
+build/hw_calendar entry list
+build/hw_calendar entry search --query bathroom
+build/hw_calendar entry update --id 1 --if-revision 2 < entry.json
+build/hw_calendar entry complete --id 1 --if-revision 2
+build/hw_calendar entry reopen --id 1 --if-revision 3
+build/hw_calendar entry dismiss --id 1 --if-revision 3
+build/hw_calendar entry restore --id 1 --if-revision 4
+build/hw_calendar agenda query --from 1767225600 --to 1767830400
+build/hw_calendar proposal submit < proposal.json
+build/hw_calendar proposal get --id 1
+build/hw_calendar proposal confirm --id 1
+build/hw_calendar proposal reject --id 1
+build/hw_calendar reminder status
+build/hw_calendar ui snapshot
+build/hw_calendar ui check --baseline /path/to/snapshot.json
 ```
 
 Every entry mutation uses an expected revision. A proposal also records its

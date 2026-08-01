@@ -6,11 +6,11 @@ cd "$ROOT"
 
 MODE=${1:-debug}
 case "$MODE" in
-  debug) APP="$ROOT/build/HWCalendar.app" ;;
-  asan) APP="$ROOT/build/asan/HWCalendar.app" ;;
+  debug) APP="$ROOT/build/hw_calendar.app" ;;
+  asan) APP="$ROOT/build/asan/hw_calendar.app" ;;
   release)
     "$ROOT/build.sh" release
-    exec "$ROOT/build/release/HWCalendar.app/Contents/MacOS/HWCalendar"
+    exec "$ROOT/build/release/hw_calendar.app/Contents/MacOS/hw_calendar"
     ;;
   *)
     echo "usage: ./dev.sh [debug|asan|release]" >&2
@@ -18,7 +18,7 @@ case "$MODE" in
     ;;
 esac
 
-EXECUTABLE="$APP/Contents/MacOS/HWCalendar"
+EXECUTABLE="$APP/Contents/MacOS/hw_calendar"
 LOCK_DIR="$ROOT/build/dev-watcher.lock"
 LOCK_PID="$LOCK_DIR/pid"
 APP_PID=""

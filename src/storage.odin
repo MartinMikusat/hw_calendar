@@ -149,7 +149,7 @@ calendar_support_dir :: proc() -> string {
 		return override
 	}
 	home := os.get_env("HOME", context.temp_allocator)
-	return fmt.tprintf("%s/Library/Application Support/HWCalendar", home)
+	return fmt.tprintf("%s/Library/Application Support/hw_calendar", home)
 }
 
 calendar_database_path :: proc() -> string {
@@ -1197,7 +1197,7 @@ calendar_export_all :: proc(allocator := context.allocator) -> (string, bool) {
 	if !found {
 		strings.write_string(
 			&builder,
-			"BEGIN:VCALENDAR\r\nPRODID:-//Hal Wayland//HW Calendar 0.1//EN\r\nVERSION:2.0\r\nCALSCALE:GREGORIAN\r\nEND:VCALENDAR\r\n",
+			"BEGIN:VCALENDAR\r\nPRODID:-//Hal Wayland//hw_calendar 0.1//EN\r\nVERSION:2.0\r\nCALSCALE:GREGORIAN\r\nEND:VCALENDAR\r\n",
 		)
 	}
 	return strings.to_string(builder), true

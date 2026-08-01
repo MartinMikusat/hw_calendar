@@ -391,7 +391,7 @@ calendar_notification_collect :: proc(
 					body = fmt.tprintf("%s · %s", body, occurrence.location)
 				}
 				identifier := fmt.tprintf(
-					"hw-calendar/%s/%s/%d/%d",
+					"hw_calendar/%s/%s/%d/%d",
 					occurrence.uid,
 					occurrence.recurrence_id,
 					alarm_index,
@@ -494,7 +494,7 @@ calendar_notification_reconcile :: proc() {
 		start_value := entry.start_at
 		if len(start_value) == 0 {start_value = entry.due_at}
 		append(&candidates, Calendar_Notification_Candidate{
-			identifier = fmt.tprintf("hw-agenda/%d/%d", entry.id, fire_stamp),
+			identifier = fmt.tprintf("hw_calendar/%d/%d", entry.id, fire_stamp),
 			uid = fmt.tprintf("agenda-%d", entry.id),
 			start_value = strings.clone(start_value),
 			title = strings.clone(entry.original_text),
@@ -517,7 +517,7 @@ calendar_notification_reconcile :: proc() {
 calendar_notification_snooze_content :: proc(content: Id) {
 	if content == nil {return}
 	identifier := fmt.tprintf(
-		"hw-calendar/snooze/%d",
+		"hw_calendar/snooze/%d",
 		time.to_unix_nanoseconds(time.now()),
 	)
 	trigger := calendar_msg_id_f64_bool(

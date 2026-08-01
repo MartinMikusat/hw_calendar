@@ -5,7 +5,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 export HW_CALENDAR_SUPPORT_DIR="$TMP/support"
-CLI="$ROOT/build/hw-calendar"
+CLI="$ROOT/build/hw_calendar"
 
 mkdir -p "$HW_CALENDAR_SUPPORT_DIR"
 sqlite3 "$HW_CALENDAR_SUPPORT_DIR/calendar.sqlite3" 'CREATE TABLE obsolete_events(id INTEGER);'

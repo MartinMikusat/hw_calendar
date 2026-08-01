@@ -44,7 +44,7 @@ calendar_process_main :: proc(args := os.args) {
 		os.exit(result.exit_code)
 	}
 	if !calendar_cli_database_try_acquire() || !calendar_database_open() {
-		fmt.eprintln("HW Calendar could not open its database.")
+		fmt.eprintln("hw_calendar could not open its database.")
 		return
 	}
 	run_calendar_gui()

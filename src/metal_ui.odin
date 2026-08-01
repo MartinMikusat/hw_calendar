@@ -817,7 +817,7 @@ calendar_ui_rebuild_accessibility :: proc() {
 	}
 	array := msg_id(objc_getClass("NSMutableArray"), sel_registerName("array"))
 	calendar_ui.ax_children = msg_id(array, sel_registerName("retain"))
-	element_class := objc_getClass("HWCalendarAccessibilityElement")
+	element_class := objc_getClass("hw_calendar_AccessibilityElement")
 	for &control in calendar_ui.controls {
 		if calendar_ui.shortcut_open &&
 		   !calendar_ui_is_window_action(control.action.kind) &&
@@ -4824,7 +4824,7 @@ calendar_build_text_overlay :: proc(width, height: uint) -> []u8 {
 	calendar_draw_text(
 		ctx,
 		font,
-		"HW CALENDAR / CONTINUOUS DAYS",
+		"hw_calendar / CONTINUOUS DAYS",
 		calendar_ui_title_rect(),
 		ink,
 		0,
@@ -5797,7 +5797,7 @@ calendar_on_frame :: proc "c" (self: Id, command: Sel, timer: Id) {
 calendar_register_accessibility_class :: proc() {
 	class := objc_allocateClassPair(
 		objc_getClass("NSAccessibilityElement"),
-		"HWCalendarAccessibilityElement",
+		"hw_calendar_AccessibilityElement",
 		0,
 	)
 	class_addMethod(
@@ -5824,7 +5824,7 @@ calendar_register_accessibility_class :: proc() {
 calendar_register_classes :: proc() -> Id {
 	delegate_class := objc_allocateClassPair(
 		objc_getClass("NSObject"),
-		"HWCalendarDelegate",
+		"hw_calendar_Delegate",
 		0,
 	)
 	class_addMethod(delegate_class, sel_registerName("calendarFrame:"), rawptr(calendar_on_frame), "v@:@")
@@ -5867,7 +5867,7 @@ calendar_register_classes :: proc() -> Id {
 	calendar_ui.delegate = msg_id(delegate_class, sel_registerName("new"))
 	view_class := objc_allocateClassPair(
 		objc_getClass("NSView"),
-		"HWCalendarMetalView",
+		"hw_calendar_MetalView",
 		0,
 	)
 	if protocol := objc_getProtocol("NSTextInputClient"); protocol != nil {
@@ -5970,7 +5970,7 @@ calendar_register_classes :: proc() -> Id {
 calendar_register_window_class :: proc() -> Id {
 	window_class := objc_allocateClassPair(
 		objc_getClass("NSWindow"),
-		"HWCalendarWindow",
+		"hw_calendar_Window",
 		0,
 	)
 	class_addMethod(
@@ -6037,7 +6037,7 @@ calendar_launch_should_activate :: proc(
 
 calendar_gui_initialize :: proc() -> bool {
 	if !objc_initialize() {
-		fmt.eprintln("HW Calendar could not initialize the Objective-C runtime.")
+		fmt.eprintln("hw_calendar could not initialize the Objective-C runtime.")
 		return false
 	}
 	calendar_ui.scale = 1
@@ -6075,7 +6075,7 @@ calendar_gui_initialize :: proc() -> bool {
 		search_reserve_size = 64*1024*1024,
 		search_commit_size = 64*1024,
 	); error != nil {
-		fmt.eprintln("HW Calendar could not initialize search.")
+		fmt.eprintln("hw_calendar could not initialize search.")
 		return false
 	}
 	if error := command_palette.state_init(
@@ -6083,7 +6083,7 @@ calendar_gui_initialize :: proc() -> bool {
 		search_reserve_size = 8*1024*1024,
 		search_commit_size = 64*1024,
 	); error != nil {
-		fmt.eprintln("HW Calendar could not initialize Settings search.")
+		fmt.eprintln("hw_calendar could not initialize Settings search.")
 		return false
 	}
 	calendar_ui.holiday_countries = calendar_holiday_countries_load()
@@ -6104,7 +6104,7 @@ calendar_gui_initialize :: proc() -> bool {
 		2,
 		false,
 	)
-	msg_void_id(calendar_ui.window, sel_registerName("setTitle:"), nsstring("HW Agenda"))
+	msg_void_id(calendar_ui.window, sel_registerName("setTitle:"), nsstring("hw_calendar"))
 	msg_void_bool(calendar_ui.window, sel_registerName("setOpaque:"), true)
 	msg_void_bool(calendar_ui.window, sel_registerName("setHasShadow:"), false)
 	calendar_msg_void_size(
@@ -6121,7 +6121,7 @@ calendar_gui_initialize :: proc() -> bool {
 	msg_void_id(calendar_ui.window, sel_registerName("setContentView:"), calendar_ui.view)
 	calendar_ui.device = MTLCreateSystemDefaultDevice()
 	if calendar_ui.device == nil {
-		fmt.eprintln("HW Calendar requires a Metal device.")
+		fmt.eprintln("hw_calendar requires a Metal device.")
 		return false
 	}
 	calendar_ui.queue = msg_id(calendar_ui.device, sel_registerName("newCommandQueue"))
@@ -6132,7 +6132,7 @@ calendar_gui_initialize :: proc() -> bool {
 	msg_void_bool(calendar_ui.view, sel_registerName("setWantsLayer:"), true)
 	msg_void_id(calendar_ui.view, sel_registerName("setLayer:"), calendar_ui.layer)
 	if !calendar_compile_pipelines() {
-		fmt.eprintln("HW Calendar could not compile its Metal pipelines.")
+		fmt.eprintln("hw_calendar could not compile its Metal pipelines.")
 		return false
 	}
 	timer_send := transmute(proc "c" (
@@ -6167,7 +6167,7 @@ calendar_gui_initialize :: proc() -> bool {
 		msg_void_id(calendar_ui.window, sel_registerName("orderBack:"), nil)
 	}
 	if !calendar_cli_ipc_server_start() {
-		fmt.eprintln("HW Calendar could not start its local control socket.")
+		fmt.eprintln("hw_calendar could not start its local control socket.")
 		return false
 	}
 	calendar_notification_initialize()

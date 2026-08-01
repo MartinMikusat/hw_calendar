@@ -14,18 +14,18 @@ HOLIDAY_ROOT="$ROOT/resources/holidays"
 MODE=${1:-debug}
 case "$MODE" in
   debug)
-    APP="$ROOT/build/HWCalendar.app"
-    CLI="$ROOT/build/hw-calendar"
+    APP="$ROOT/build/hw_calendar.app"
+    CLI="$ROOT/build/hw_calendar"
     set -- -debug -o:none -keep-temp-files
     ;;
   asan)
-    APP="$ROOT/build/asan/HWCalendar.app"
-    CLI="$ROOT/build/hw-calendar-asan"
+    APP="$ROOT/build/asan/hw_calendar.app"
+    CLI="$ROOT/build/hw_calendar-asan"
     set -- -debug -o:none -keep-temp-files -sanitize:address
     ;;
   release)
-    APP="$ROOT/build/release/HWCalendar.app"
-    CLI="$ROOT/build/hw-calendar"
+    APP="$ROOT/build/release/hw_calendar.app"
+    CLI="$ROOT/build/hw_calendar"
     set -- -o:speed
     ;;
   *)
@@ -39,7 +39,7 @@ mkdir -p \
   "$APP/Contents/MacOS" \
   "$APP/Contents/Resources/Icons/Iconoir" \
   "$APP/Contents/Resources/Holidays"
-EXECUTABLE="$APP/Contents/MacOS/HWCalendar"
+EXECUTABLE="$APP/Contents/MacOS/hw_calendar"
 TEMP="$ROOT/build/temp/$MODE"
 mkdir -p "$TEMP"
 cd "$TEMP"
