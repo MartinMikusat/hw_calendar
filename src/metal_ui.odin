@@ -3248,13 +3248,10 @@ calendar_ui_click :: proc(point: Point, click_count: uint = 1) -> bool {
 }
 
 calendar_ui_post_pointer_click :: proc(functional_name: string) -> string {
-	shared_control: ^framework_ui.Control_Record
-	for &control in calendar_shared_view.controls {
-		if control.functional_name == functional_name {
-			shared_control = &control
-			break
-		}
-	}
+	shared_control := framework_ui.control_by_name_in_view(
+		calendar_shared_view,
+		functional_name,
+	)
 	if shared_control == nil {return "The pointer target does not exist."}
 	if !shared_control.enabled ||
 	   .Primary_Press not_in shared_control.capabilities {
