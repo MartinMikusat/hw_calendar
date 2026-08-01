@@ -22,6 +22,9 @@ EXECUTABLE="$APP/Contents/MacOS/hw_calendar"
 LOCK_DIR="$ROOT/build/dev-watcher.lock"
 LOCK_PID="$LOCK_DIR/pid"
 APP_PID=""
+APP_HAS_LAUNCHED=0
+LAUNCH_ACTIVATE=0
+LAUNCH_VISIBLE=1
 
 acquire_lock() {
   mkdir -p "$ROOT/build"
@@ -87,12 +90,24 @@ check_app() {
     "$exited_pid" "$exit_status"
 }
 
+app_is_frontmost() {
+  if [ -z "$APP_PID" ] || ! kill -0 "$APP_PID" 2>/dev/null; then
+    return 1
+  fi
+  front_app=$(lsappinfo front 2>/dev/null) || return 1
+  front_pid=$(lsappinfo info -only pid "$front_app" 2>/dev/null |
+    sed -n 's/.*"pid"=\([0-9][0-9]*\).*/\1/p')
+  [ "$front_pid" = "$APP_PID" ]
+}
+
 launch_app() {
   env \
-    HW_CALENDAR_ACTIVATE_ON_LAUNCH=0 \
+    HW_CALENDAR_ACTIVATE_ON_LAUNCH="$LAUNCH_ACTIVATE" \
+    HW_CALENDAR_VISIBLE_ON_LAUNCH="$LAUNCH_VISIBLE" \
     MTL_DEBUG_LAYER=1 \
     "$EXECUTABLE" &
   APP_PID=$!
+  APP_HAS_LAUNCHED=1
   printf '[hw_calendar] launched pid %s (%s)\n' "$APP_PID" "$MODE"
 }
 
@@ -101,6 +116,15 @@ rebuild_and_launch() {
   if ! "$ROOT/build.sh" "$MODE"; then
     printf '[hw_calendar] build failed; keeping the current app running\n'
     return 1
+  fi
+  if [ "$APP_HAS_LAUNCHED" -eq 1 ]; then
+    if app_is_frontmost; then
+      LAUNCH_ACTIVATE=1
+      LAUNCH_VISIBLE=1
+    else
+      LAUNCH_ACTIVATE=0
+      LAUNCH_VISIBLE=0
+    fi
   fi
   stop_app
   launch_app

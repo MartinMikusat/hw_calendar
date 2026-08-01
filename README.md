@@ -88,8 +88,9 @@ Install Odin and keep the pinned sibling libraries beside this repository.
 ```
 
 The development watcher rebuilds the complete executable. It replaces the
-running process only after a successful build and leaves the application behind
-active windows.
+running process only after a successful build. A replacement restores the
+previous process's frontmost state. A background replacement does not put its
+window onscreen. A failed build leaves the current process running.
 
 The interface requests AppKit's system monospaced font. It does not hard-code
 or bundle the concrete font family.

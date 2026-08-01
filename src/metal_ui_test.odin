@@ -76,6 +76,13 @@ calendar_launch_activation_respects_background_policy_test :: proc(
 	testing.expect(t, !calendar_launch_should_activate("0", true))
 }
 
+@(test)
+calendar_launch_visibility_respects_explicit_policy_test :: proc(t: ^testing.T) {
+	testing.expect(t, calendar_launch_should_show(""))
+	testing.expect(t, calendar_launch_should_show("1"))
+	testing.expect(t, !calendar_launch_should_show("0"))
+}
+
 calendar_icon_points_use_iconoir_viewbox_test :: proc(
 	t: ^testing.T,
 	points: []Calendar_Icon_Point,

@@ -3534,6 +3534,26 @@ calendar_should_terminate :: proc "c" (self: Id, command: Sel, app: Id) -> bool 
 	return true
 }
 
+calendar_should_handle_reopen :: proc "c" (
+	self: Id,
+	command: Sel,
+	app: Id,
+	has_visible_windows: bool,
+) -> bool {
+	context = runtime.default_context()
+	if !has_visible_windows && calendar_ui.window != nil {
+		msg_void_id(calendar_ui.window, sel_registerName("makeKeyAndOrderFront:"), nil)
+	}
+	return true
+}
+
+calendar_did_become_active :: proc "c" (self: Id, command: Sel, notification: Id) {
+	context = runtime.default_context()
+	if calendar_ui.window != nil {
+		msg_void_id(calendar_ui.window, sel_registerName("makeKeyAndOrderFront:"), nil)
+	}
+}
+
 calendar_push_rect :: proc(
 	vertices: ^[dynamic]Calendar_Solid_Vertex,
 	rect: Calendar_UI_Rect,
@@ -5951,6 +5971,18 @@ calendar_register_classes :: proc() -> Id {
 	)
 	class_addMethod(
 		delegate_class,
+		sel_registerName("applicationShouldHandleReopen:hasVisibleWindows:"),
+		rawptr(calendar_should_handle_reopen),
+		"B@:@B",
+	)
+	class_addMethod(
+		delegate_class,
+		sel_registerName("applicationDidBecomeActive:"),
+		rawptr(calendar_did_become_active),
+		"v@:@",
+	)
+	class_addMethod(
+		delegate_class,
 		sel_registerName("userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:"),
 		rawptr(calendar_notification_response),
 		"v@:@@@",
@@ -6138,6 +6170,10 @@ calendar_launch_should_activate :: proc(
 	return !launch_in_background
 }
 
+calendar_launch_should_show :: proc(value: string) -> bool {
+	return len(value) == 0 || value != "0"
+}
+
 calendar_gui_initialize :: proc() -> bool {
 	if !objc_initialize() {
 		fmt.eprintln("hw_calendar could not initialize the Objective-C runtime.")
@@ -6266,7 +6302,9 @@ calendar_gui_initialize :: proc() -> bool {
 	) {
 		msg_void_id(calendar_ui.window, sel_registerName("makeKeyAndOrderFront:"), nil)
 		msg_void_i(app, sel_registerName("activateIgnoringOtherApps:"), 1)
-	} else {
+	} else if calendar_launch_should_show(
+		os.get_env("HW_CALENDAR_VISIBLE_ON_LAUNCH"),
+	) {
 		msg_void_id(calendar_ui.window, sel_registerName("orderBack:"), nil)
 	}
 	if !calendar_cli_ipc_server_start() {
