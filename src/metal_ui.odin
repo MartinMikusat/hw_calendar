@@ -1243,27 +1243,6 @@ calendar_number_digit_for_key_code :: proc(key_code: uint) -> (int, bool) {
 	return slot+1, true
 }
 
-calendar_main_action_for_code :: proc(
-	section, action_digit: int,
-) -> Calendar_UI_Action {
-	switch section {
-	case 1:
-		switch action_digit {
-		case 1: return .Action_Edit
-		case 2: return .Action_Open_URL
-		case 3: return .Action_Archive
-		case 4: return .Action_Complete
-		case 5: return .Action_Confirm_Proposal
-		case 6: return .Action_Reject_Proposal
-		}
-	case 2:
-		switch action_digit {
-		case 1: return .New_Chore
-		}
-	}
-	return .None
-}
-
 calendar_number_time_ms :: proc() -> i64 {
 	return time.to_unix_nanoseconds(time.now()) / 1_000_000
 }
@@ -1291,24 +1270,6 @@ calendar_expire_number_prefix_at :: proc(now_ms: i64) -> bool {
 	calendar_clear_number_prefix()
 	calendar_ui.needs_redraw = true
 	return true
-}
-
-calendar_consume_main_action_digit_at :: proc(
-	digit: int,
-	now_ms: i64,
-) -> (Calendar_UI_Action, bool) {
-	_ = calendar_expire_number_prefix_at(now_ms)
-	if calendar_ui.number_prefix == 0 {
-		if digit != 1 {return .None, false}
-		calendar_ui.number_prefix = digit
-		calendar_ui.number_prefix_deadline_ms = now_ms+1_000
-		calendar_ui.needs_redraw = true
-		return .None, true
-	}
-	section := calendar_ui.number_prefix
-	calendar_clear_number_prefix()
-	calendar_ui.needs_redraw = true
-	return calendar_main_action_for_code(section, digit), true
 }
 
 calendar_archive_action_for_slot :: proc(
@@ -1724,6 +1685,7 @@ calendar_ui_archive_modal_close :: proc() {
 }
 
 calendar_ui_archive_modal_open :: proc() {
+	if calendar_active_modal().kind != .None {return}
 	if !calendar_ui_action_available(.Action_Archive) {return}
 	delete(calendar_ui.archive_error)
 	calendar_ui.archive_error = ""
@@ -1944,6 +1906,14 @@ CALENDAR_PALETTE_DUE_CHORE :: command_palette.Context_Mask(1 << 7)
 CALENDAR_PALETTE_CHORE :: command_palette.Context_Mask(1 << 8)
 CALENDAR_PALETTE_THEME_BASE :: 9
 
+calendar_palette_action_allowed_over_chore :: proc(
+	action: Calendar_UI_Action,
+) -> bool {
+	return action == .Chore_Interval ||
+	       action == .Chore_Save ||
+	       action == .Chore_Cancel
+}
+
 calendar_palette_active_context :: proc() -> command_palette.Context_Mask {
 	bits := u64(0)
 	if calendar_ui.navigation_active &&
@@ -1990,6 +1960,13 @@ calendar_palette_append :: proc(
 	contexts := command_palette.Context_Condition{},
 	unavailable_reason := "",
 ) {
+	resolved_contexts := contexts
+	resolved_unavailable_reason := unavailable_reason
+	if calendar_ui.chore_open &&
+	   !calendar_palette_action_allowed_over_chore(action.kind) {
+		resolved_contexts.none |= CALENDAR_PALETTE_CHORE
+		resolved_unavailable_reason = "Close the active chore editor first"
+	}
 	append(&calendar_ui.palette_actions, action)
 	append(entries, command_palette.Entry{
 		id = command_palette.Entry_ID(len(calendar_ui.palette_actions)),
@@ -1997,8 +1974,8 @@ calendar_palette_append :: proc(
 		subtitle = subtitle,
 		category = category,
 		keywords = keywords,
-		contexts = contexts,
-		unavailable_reason = unavailable_reason,
+		contexts = resolved_contexts,
+		unavailable_reason = resolved_unavailable_reason,
 	})
 }
 
@@ -2025,6 +2002,8 @@ calendar_ui_open_palette :: proc() {
 		calendar_ui.needs_redraw = true
 		return
 	}
+	modal := calendar_active_modal()
+	if modal.kind != .None && modal.kind != .Chore {return}
 	entries := make(
 		[dynamic]command_palette.Entry,
 		context.temp_allocator,
@@ -2671,6 +2650,7 @@ calendar_ui_editor_clear :: proc() {
 }
 
 calendar_ui_editor_open :: proc(event_index := -1) {
+	if calendar_active_modal().kind != .None {return}
 	calendar_ui_editor_clear()
 	calendar_ui.editor_open = true
 	calendar_ui.editor_event_index = event_index
@@ -2763,7 +2743,7 @@ calendar_chore_interval_label :: proc(interval: i64) -> string {
 
 calendar_ui_chore_rect :: proc() -> Calendar_UI_Rect {
 	width := min(560.0, calendar_ui.width-48)
-	height := 236.0
+	height := 272.0
 	return {
 		(calendar_ui.width-width)/2,
 		(calendar_ui.height-height)/2,
@@ -2794,6 +2774,11 @@ calendar_chore_interval_rect :: proc(index: int) -> Calendar_UI_Rect {
 calendar_chore_button_rect :: proc(index: int) -> Calendar_UI_Rect {
 	modal := calendar_ui_chore_rect()
 	return {modal.x+modal.w-232+f64(index)*112, modal.y+20, 100, 34}
+}
+
+calendar_chore_error_rect :: proc() -> Calendar_UI_Rect {
+	modal := calendar_ui_chore_rect()
+	return {modal.x+18, modal.y+60, modal.w-36, 28}
 }
 
 calendar_chore_action_for_slot :: proc(slot: int) -> Calendar_App_Action {
@@ -2854,6 +2839,7 @@ calendar_ui_chore_clear :: proc() {
 }
 
 calendar_ui_chore_open :: proc() {
+	if calendar_active_modal().kind != .None {return}
 	calendar_ui_chore_clear()
 	calendar_ui.chore_open = true
 	calendar_ui.chore_interval = CALENDAR_CHORE_DEFAULT_INTERVAL
@@ -3937,10 +3923,16 @@ calendar_on_key_down :: proc "c" (self: Id, command: Sel, event: Id) {
 	exact_settings_shortcut := command_down && !shift_down && !option_down &&
 	                           !control_down && text == ","
 	if exact_settings_shortcut {
-		if command_palette.is_open(&calendar_ui.palette) {
+		modal := calendar_active_modal()
+		if modal.kind == .Command_Palette && calendar_ui.chore_open {
+			return
+		}
+		if modal.kind == .Command_Palette {
 			calendar_ui_open_palette()
 		}
-		_ = calendar_settings_open()
+		if calendar_active_modal().kind == .None || calendar_ui.settings_open {
+			_ = calendar_settings_open()
+		}
 		return
 	}
 	exact_palette_shortcut := control_down && !shift_down && !option_down &&
@@ -6343,7 +6335,7 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 				ctx,
 				font,
 				calendar_ui.editor_error,
-				{modal.x+18, modal.y+60, modal.w-36, 28},
+				calendar_chore_error_rect(),
 				calendar_color64(theme.destructive),
 				0,
 			)

@@ -408,7 +408,7 @@ calendar_cli_error :: proc(
 calendar_cli_parse :: proc(args: []string) -> (Calendar_CLI_Request, Calendar_CLI_Result, bool) {
 	request := Calendar_CLI_Request{limit=10_000}
 	if len(args) < 2 {
-		return {}, calendar_cli_error(.None, 2, "usage", "Expected an entry, agenda, proposal, reminder, or UI command."), false
+		return {}, calendar_cli_error(.None, 2, "usage", "Expected an entry, agenda, proposal, chore, reminder, or UI command."), false
 	}
 	group, action := args[0], args[1]
 	switch {

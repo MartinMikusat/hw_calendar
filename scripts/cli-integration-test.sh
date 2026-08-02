@@ -79,7 +79,7 @@ VACUUM_ID=$(printf '%s' "$VACUUM" | jq -r '.data.entry.id')
 test "$VACUUM_ID" = 2
 
 "$CLI" chore due |
-  jq -e '.ok and (.data.chores | length) == 1 and .data.chores[0].name == "Vacuum the floors every week" and .data.chores[0].interval_seconds == 604800 and .data.chores[0].overdue_seconds > 0' >/dev/null
+  jq -e '.ok and (.data.chores | length) == 1 and .data.chores[0].name == "Vacuum the floors every week" and .data.chores[0].interval_seconds == 604800 and .data.chores[0].overdue_seconds > 0 and .data.chores[0].revision == 1' >/dev/null
 
 "$CLI" chore done --id "$VACUUM_ID" --if-revision 1 |
   jq -e '.ok and .data.entry.state == "active" and .data.entry.recurrence_seconds == 604800 and .data.entry.revision == 2' >/dev/null

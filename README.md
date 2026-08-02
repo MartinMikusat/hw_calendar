@@ -92,9 +92,10 @@ Every entry mutation uses an expected revision. A proposal also records its
 source revision. The application rejects stale mutations and stale proposals.
 
 `chore due` lists every currently-due recurring entry as JSON, so an external
-local agent can answer `what tasks are due today` directly. `chore done` marks a
-due chore done and advances its next due date. Both commands work through the
-running application's socket or directly against the database.
+local agent can answer `what tasks are due today` directly. Each result includes
+the revision required by `chore done`. This command marks a due chore done and
+advances its next due date. Both commands work through the running application's
+socket or directly against the database.
 
 The GUI owns the SQLite database while it runs. Commands use the GUI's private
 local socket in that state. When the GUI is closed, a command locks and opens

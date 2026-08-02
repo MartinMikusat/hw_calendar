@@ -153,7 +153,7 @@ calendar_chore_geometry_stays_inside_modal_test :: proc(t: ^testing.T) {
 	defer sync.mutex_unlock(&calendar_ui_test_mutex)
 	previous := calendar_ui
 	defer {calendar_ui = previous}
-	widths := [2]f64{640, 1440}
+	widths := [3]f64{640, 900, 1440}
 	for width in widths {
 		calendar_ui = {width = width, height = 760}
 		modal := calendar_ui_chore_rect()
@@ -162,12 +162,42 @@ calendar_chore_geometry_stays_inside_modal_test :: proc(t: ^testing.T) {
 		last_interval := calendar_chore_interval_rect(
 			len(CALENDAR_CHORE_PRESETS)-1,
 		)
+		error_rect := calendar_chore_error_rect()
+		save := calendar_chore_button_rect(0)
 		testing.expect(t, name.x >= modal.x+24)
 		testing.expect(t, name.x+name.w <= modal.x+modal.w-24)
 		testing.expect(t, first_interval.y+first_interval.h < name.y)
 		testing.expect(t, first_interval.x >= modal.x+24)
 		testing.expect(t, last_interval.x+last_interval.w <= modal.x+modal.w-24)
+		testing.expect(t, save.y+save.h < error_rect.y)
+		testing.expect(t, error_rect.y+error_rect.h < first_interval.y)
 	}
+}
+
+@(test)
+calendar_chore_modal_blocks_sibling_modals_test :: proc(t: ^testing.T) {
+	sync.mutex_lock(&calendar_ui_test_mutex)
+	defer sync.mutex_unlock(&calendar_ui_test_mutex)
+	previous := calendar_ui
+	defer {calendar_ui = previous}
+	calendar_ui = {width = 900, height = 700, settings_open = true}
+	calendar_ui_chore_open()
+	testing.expect(t, !calendar_ui.chore_open)
+	calendar_ui.settings_open = false
+	calendar_ui.chore_open = true
+	calendar_ui_editor_open()
+	testing.expect(t, !calendar_ui.editor_open)
+	testing.expect(t, !calendar_settings_open())
+}
+
+@(test)
+calendar_chore_palette_contains_only_chore_actions_test :: proc(t: ^testing.T) {
+	testing.expect(t, calendar_palette_action_allowed_over_chore(.Chore_Interval))
+	testing.expect(t, calendar_palette_action_allowed_over_chore(.Chore_Save))
+	testing.expect(t, calendar_palette_action_allowed_over_chore(.Chore_Cancel))
+	testing.expect(t, !calendar_palette_action_allowed_over_chore(.New_Event))
+	testing.expect(t, !calendar_palette_action_allowed_over_chore(.Open_Settings))
+	testing.expect(t, !calendar_palette_action_allowed_over_chore(.Configure_Flash))
 }
 
 @(test)
@@ -298,15 +328,6 @@ calendar_action_bar_uses_fixed_slots_with_section_gap_test :: proc(t: ^testing.T
 }
 
 @(test)
-calendar_action_bar_maps_complete_code_test :: proc(t: ^testing.T) {
-	testing.expect_value(
-		t,
-		calendar_main_action_for_code(1, 4),
-		Calendar_UI_Action.Action_Complete,
-	)
-}
-
-@(test)
 calendar_day_list_stops_above_action_bar_test :: proc(t: ^testing.T) {
 	count := calendar_ui_visible_day_count_for_height(
 		CALENDAR_DEFAULT_WINDOW_HEIGHT,
@@ -359,30 +380,6 @@ calendar_number_keys_map_to_action_slots_test :: proc(t: ^testing.T) {
 }
 
 @(test)
-calendar_main_action_codes_use_event_section_test :: proc(t: ^testing.T) {
-	testing.expect_value(
-		t,
-		calendar_main_action_for_code(1, 1),
-		Calendar_UI_Action.Action_Edit,
-	)
-	testing.expect_value(
-		t,
-		calendar_main_action_for_code(1, 2),
-		Calendar_UI_Action.Action_Open_URL,
-	)
-	testing.expect_value(
-		t,
-		calendar_main_action_for_code(1, 3),
-		Calendar_UI_Action.Action_Archive,
-	)
-	testing.expect_value(
-		t,
-		calendar_main_action_for_code(2, 1),
-		Calendar_UI_Action.New_Chore,
-	)
-}
-
-@(test)
 calendar_number_prefix_highlights_only_its_section_test :: proc(t: ^testing.T) {
 	testing.expect(t, calendar_action_number_section_active(
 		.Action_Edit, 1, 11_000, 10_000,
@@ -422,46 +419,6 @@ calendar_chore_modal_actions_use_single_digit_codes_test :: proc(t: ^testing.T) 
 		).first,
 		i8(7),
 	)
-}
-
-@(test)
-calendar_main_action_prefix_waits_expires_and_clears_test :: proc(
-	t: ^testing.T,
-) {
-	sync.mutex_lock(&calendar_ui_test_mutex)
-	defer sync.mutex_unlock(&calendar_ui_test_mutex)
-	old_prefix := calendar_ui.number_prefix
-	old_deadline := calendar_ui.number_prefix_deadline_ms
-	old_redraw := calendar_ui.needs_redraw
-	defer {
-		calendar_ui.number_prefix = old_prefix
-		calendar_ui.number_prefix_deadline_ms = old_deadline
-		calendar_ui.needs_redraw = old_redraw
-	}
-	calendar_clear_number_prefix()
-	action, handled := calendar_consume_main_action_digit_at(1, 10_000)
-	testing.expect(t, handled)
-	testing.expect_value(t, action, Calendar_UI_Action.None)
-	testing.expect_value(t, calendar_ui.number_prefix, 1)
-
-	action, handled = calendar_consume_main_action_digit_at(2, 10_500)
-	testing.expect(t, handled)
-	testing.expect_value(t, action, Calendar_UI_Action.Action_Open_URL)
-	testing.expect_value(t, calendar_ui.number_prefix, 0)
-
-	action, handled = calendar_consume_main_action_digit_at(1, 20_000)
-	testing.expect(t, handled)
-	action, handled = calendar_consume_main_action_digit_at(3, 21_000)
-	testing.expect(t, !handled)
-	testing.expect_value(t, action, Calendar_UI_Action.None)
-	testing.expect_value(t, calendar_ui.number_prefix, 0)
-
-	action, handled = calendar_consume_main_action_digit_at(1, 30_000)
-	testing.expect(t, handled)
-	action, handled = calendar_consume_main_action_digit_at(9, 30_100)
-	testing.expect(t, handled)
-	testing.expect_value(t, action, Calendar_UI_Action.None)
-	testing.expect_value(t, calendar_ui.number_prefix, 0)
 }
 
 @(test)
@@ -749,4 +706,43 @@ calendar_shared_registry_preserves_control_identity_and_capabilities_test :: pro
 	testing.expect(t, .Accessibility in control.capabilities)
 	testing.expect(t, .Flash in control.capabilities)
 	testing.expect(t, .CLI in control.capabilities)
+}
+
+@(test)
+calendar_shared_numbered_dispatch_activates_new_chore_test :: proc(
+	t: ^testing.T,
+) {
+	sync.mutex_lock(&calendar_ui_test_mutex)
+	defer sync.mutex_unlock(&calendar_ui_test_mutex)
+	previous_ui := calendar_ui
+	calendar_ui = {width = 800, height = 600}
+	defer {
+		calendar_ui_clear_controls()
+		delete(calendar_ui.controls)
+		framework_ui.registry_reset(&calendar_shared_registry, 0)
+		calendar_shared_view = {}
+		calendar_ui = previous_ui
+	}
+	calendar_ui_add_control(
+		"new chore",
+		"new chore",
+		{10, 10, 80, 30},
+		.New_Chore,
+	)
+	calendar_publish_shared_registry()
+	control_id, activated, handled := calendar_consume_shared_numbered_digit(
+		2,
+		10_000,
+	)
+	testing.expect(t, handled)
+	testing.expect(t, !activated)
+	testing.expect_value(t, calendar_ui.number_prefix, 2)
+	control_id, activated, handled = calendar_consume_shared_numbered_digit(
+		1,
+		10_500,
+	)
+	testing.expect(t, handled)
+	testing.expect(t, activated)
+	testing.expect_value(t, control_id, calendar_control_id("new chore"))
+	testing.expect_value(t, calendar_ui.number_prefix, 0)
 }

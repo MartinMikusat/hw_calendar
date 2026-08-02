@@ -81,3 +81,11 @@ calendar_cli_parses_chore_commands_test :: proc(t: ^testing.T) {
 	testing.expect_value(t, request.if_revision, 2)
 	testing.expect(t, calendar_cli_command_mutates_database(request.command))
 }
+
+@(test)
+calendar_cli_usage_lists_chore_commands_test :: proc(t: ^testing.T) {
+	_, result, parsed := calendar_cli_parse(nil)
+	defer delete(result.output)
+	testing.expect(t, !parsed)
+	testing.expect(t, strings.contains(result.output, "chore"))
+}

@@ -18,6 +18,7 @@ Agenda_CLI_Chore :: struct {
 	due_at: string,
 	overdue_seconds: i64,
 	state: string,
+	revision: int,
 }
 Agenda_CLI_Chores_Data :: struct {chores: []Agenda_CLI_Chore}
 Agenda_CLI_Chores_Response :: struct {ok: bool, command: string, data: Agenda_CLI_Chores_Data}
@@ -148,6 +149,7 @@ agenda_cli_execute :: proc(request: Calendar_CLI_Request) -> Calendar_CLI_Result
 				due_at = strings.clone(entry.due_at),
 				overdue_seconds = overdue_seconds,
 				state = strings.clone(entry.state),
+				revision = entry.revision,
 			}
 		}
 		encoded := calendar_cli_encode(Agenda_CLI_Chores_Response{

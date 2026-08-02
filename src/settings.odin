@@ -294,6 +294,7 @@ calendar_settings_open :: proc() -> bool {
 		calendar_ui.needs_redraw = true
 		return true
 	}
+	if calendar_active_modal().kind != .None {return false}
 	entries := calendar_settings_entries()
 	if error := command_palette.open(&calendar_ui.settings_search, entries[:], 0);
 	   error != .None {
