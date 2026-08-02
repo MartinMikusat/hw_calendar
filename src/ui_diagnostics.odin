@@ -134,6 +134,12 @@ calendar_ui_diagnostic_action_name :: proc(action: Calendar_UI_Action) -> string
 	case .Action_Complete: return "action-complete"
 	case .Action_Confirm_Proposal: return "action-confirm-proposal"
 	case .Action_Reject_Proposal: return "action-reject-proposal"
+	case .Complete_Chore: return "complete-chore"
+	case .New_Chore: return "new-chore"
+	case .Chore_Name: return "chore-name"
+	case .Chore_Interval: return "chore-interval"
+	case .Chore_Save: return "chore-save"
+	case .Chore_Cancel: return "chore-cancel"
 	case .Action_Copy_To_Connected: return "action-copy-to-connected"
 	case .Action_Open_In_Apple_Calendar: return "action-open-in-apple-calendar"
 	case .Archive_Cancel: return "archive-cancel"
@@ -154,11 +160,11 @@ calendar_ui_diagnostic_action_name :: proc(action: Calendar_UI_Action) -> string
 
 calendar_ui_diagnostic_role :: proc(action: Calendar_UI_Action) -> string {
 	if action == .Editor_Field || action == .Settings_Search ||
-	   action == .Command_Palette_Search {
+	   action == .Command_Palette_Search || action == .Chore_Name {
 		return "AXTextField"
 	}
 	if action == .Set_Theme || action == .Settings_Category ||
-	   action == .Set_Default_Connected_Calendar {
+	   action == .Set_Default_Connected_Calendar || action == .Chore_Interval {
 		return "AXRadioButton"
 	}
 	if action == .Toggle_Connected_Calendar {return "AXCheckBox"}

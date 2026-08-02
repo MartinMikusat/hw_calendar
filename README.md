@@ -32,10 +32,23 @@ The main interface shows a chronological period. Dated entries, due recurring
 work, and enabled holidays share this view. An entry without a confirmed date
 remains available through search and the structured command interface.
 
+A recurring entry works as a chore. Define it once with an interval, for example
+`vacuum every week`, and it becomes due immediately. Marking it done starts the
+interval clock from that moment, so the next due date is `completion time +
+interval`. An overdue chore stays in the due list until it is marked done; it
+does not expire or re-enter the list on a fixed schedule. While the view is on
+today, a `DUE TASKS` list is pinned at the top of the details panel and shows
+every currently-due recurring entry, each with a `DONE` control. The list
+disappears when the view moves to another day.
+
 The entry editor keeps natural-language text as its primary field. The shared
 control registry routes pointer, numbered keyboard, Accessibility, and Flash
 through typed application actions. It also exports command-menu and CLI
 capability metadata.
+
+The `NEW CHORE` action (numbered code `21`, also available from the command
+palette) opens a chore editor with a name field and interval presets. Saving
+creates a recurring entry that is due immediately.
 
 Use the gear control or `Command-,` to open Settings. Settings contains theme
 and Flash shortcut configuration. The theme catalog contains HW Light and HW
@@ -65,6 +78,8 @@ build/hw_calendar proposal submit < proposal.json
 build/hw_calendar proposal get --id 1
 build/hw_calendar proposal confirm --id 1
 build/hw_calendar proposal reject --id 1
+build/hw_calendar chore due
+build/hw_calendar chore done --id 1 --if-revision 2
 build/hw_calendar reminder status
 build/hw_calendar ui snapshot
 build/hw_calendar ui check --baseline /path/to/snapshot.json
@@ -75,6 +90,11 @@ build/hw_calendar ui bridge-pointer --control "settings"
 
 Every entry mutation uses an expected revision. A proposal also records its
 source revision. The application rejects stale mutations and stale proposals.
+
+`chore due` lists every currently-due recurring entry as JSON, so an external
+local agent can answer `what tasks are due today` directly. `chore done` marks a
+due chore done and advances its next due date. Both commands work through the
+running application's socket or directly against the database.
 
 The GUI owns the SQLite database while it runs. Commands use the GUI's private
 local socket in that state. When the GUI is closed, a command locks and opens

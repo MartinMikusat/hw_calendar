@@ -61,3 +61,23 @@ calendar_cli_requires_pointer_bridge_control_test :: proc(t: ^testing.T) {
 	testing.expect(t, !parsed)
 	testing.expect(t, strings.contains(result.output, "requires --control"))
 }
+
+@(test)
+calendar_cli_parses_chore_commands_test :: proc(t: ^testing.T) {
+	request, result, parsed := calendar_cli_parse([]string{"chore", "due"})
+	defer delete(result.output)
+	testing.expect(t, parsed)
+	testing.expect_value(t, request.command, Calendar_CLI_Command.Chore_Due)
+	testing.expect(t, !calendar_cli_command_mutates_database(request.command))
+	testing.expect(t, calendar_cli_command_uses_database(request.command))
+
+	request, result, parsed = calendar_cli_parse([]string{
+		"chore", "done", "--id", "4", "--if-revision", "2",
+	})
+	defer delete(result.output)
+	testing.expect(t, parsed)
+	testing.expect_value(t, request.command, Calendar_CLI_Command.Chore_Done)
+	testing.expect_value(t, request.id, "4")
+	testing.expect_value(t, request.if_revision, 2)
+	testing.expect(t, calendar_cli_command_mutates_database(request.command))
+}

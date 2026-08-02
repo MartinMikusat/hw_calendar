@@ -204,6 +204,36 @@ agenda_entries_list :: proc(from, to, query: string, allocator := context.alloca
 	return result
 }
 
+agenda_due_entries :: proc(now_unix: i64, allocator := context.allocator) -> [dynamic]Agenda_Entry {
+	result := make([dynamic]Agenda_Entry, allocator)
+	statement, prepared := sqlite_prepare(calendar_database, AGENDA_ENTRY_SELECT+
+		` WHERE state='active' AND recurrence_seconds > 0 AND due_at != ''
+		AND CAST(due_at AS INTEGER) <= ?
+		ORDER BY CAST(due_at AS INTEGER), id;`)
+	if !prepared {return result}
+	defer sqlite3_finalize(statement)
+	if sqlite3_bind_int64(statement, 1, now_unix) != SQLITE_OK {return result}
+	for sqlite3_step(statement) == SQLITE_ROW {append(&result, agenda_entry_from_statement(statement, allocator))}
+	return result
+}
+
+agenda_chore_complete_at :: proc(
+	id: i64,
+	expected_revision: int,
+	now_unix: i64,
+) -> (Agenda_Entry, string) {
+	entry, found := agenda_entry_get(id, context.temp_allocator)
+	if !found {return {}, "not_found"}
+	defer agenda_entry_destroy(&entry, context.temp_allocator)
+	if entry.revision != expected_revision {return {}, "revision_conflict"}
+	if entry.state != "active" || entry.recurrence_seconds <= 0 {
+		return {}, "not_chore"
+	}
+	due_at, parsed := strconv.parse_i64(entry.due_at)
+	if !parsed || due_at > now_unix {return {}, "not_due"}
+	return agenda_entry_set_state(id, expected_revision, "completed")
+}
+
 agenda_entry_set_state :: proc(id: i64, expected_revision: int, state: string) -> (Agenda_Entry, string) {
 	if !agenda_state_valid(state) {return {}, "invalid_state"}
 	if state == "completed" {
@@ -218,27 +248,25 @@ agenda_entry_set_state :: proc(id: i64, expected_revision: int, state: string) -
 		history, ready := sqlite_prepare(calendar_database, `INSERT INTO agenda_completion_history
 			(entry_id, completed_at, previous_due_at) VALUES (?, ?, ?);`)
 		if !ready {_ = sqlite_execute(calendar_database, "ROLLBACK;"); return {}, "storage_failed"}
-		now_text := fmt.tprintf("%d", time.to_unix_seconds(time.now()))
+		now_seconds := time.to_unix_seconds(time.now())
+		now_text := fmt.tprintf("%d", now_seconds)
 		ok := sqlite3_bind_int64(history, 1, id) == SQLITE_OK &&
 		      sqlite_bind_text_value(history, 2, now_text) &&
 		      sqlite_bind_text_value(history, 3, entry.due_at) &&
 		      sqlite3_step(history) == SQLITE_DONE
 		sqlite3_finalize(history)
 		if !ok {_ = sqlite_execute(calendar_database, "ROLLBACK;"); return {}, "storage_failed"}
-		if entry.recurrence_seconds > 0 && len(entry.due_at) > 0 {
-			due, parsed := strconv.parse_i64(entry.due_at)
-			if parsed {
-				next_due := fmt.tprintf("%d", due+entry.recurrence_seconds)
-				statement, ready := sqlite_prepare(calendar_database, `UPDATE agenda_entries SET
-					due_at=?, state='active', revision=revision+1, updated_at_ms=? WHERE id=? AND revision=?;`)
-				if ready {
-					ok = sqlite_bind_text_value(statement, 1, next_due) &&
-					     sqlite3_bind_int64(statement, 2, agenda_now_ms()) == SQLITE_OK &&
-					     sqlite3_bind_int64(statement, 3, id) == SQLITE_OK &&
-					     sqlite3_bind_int(statement, 4, i32(expected_revision)) == SQLITE_OK &&
-					     sqlite3_step(statement) == SQLITE_DONE
-					sqlite3_finalize(statement)
-				}
+		if entry.recurrence_seconds > 0 {
+			next_due := fmt.tprintf("%d", now_seconds+entry.recurrence_seconds)
+			statement, ready := sqlite_prepare(calendar_database, `UPDATE agenda_entries SET
+				due_at=?, state='active', revision=revision+1, updated_at_ms=? WHERE id=? AND revision=?;`)
+			if ready {
+				ok = sqlite_bind_text_value(statement, 1, next_due) &&
+				     sqlite3_bind_int64(statement, 2, agenda_now_ms()) == SQLITE_OK &&
+				     sqlite3_bind_int64(statement, 3, id) == SQLITE_OK &&
+				     sqlite3_bind_int(statement, 4, i32(expected_revision)) == SQLITE_OK &&
+				     sqlite3_step(statement) == SQLITE_DONE
+				sqlite3_finalize(statement)
 			}
 		} else {
 			statement, ready := sqlite_prepare(calendar_database, `UPDATE agenda_entries SET

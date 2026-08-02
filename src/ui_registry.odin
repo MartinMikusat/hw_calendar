@@ -86,9 +86,9 @@ calendar_ui_find_control :: proc(id: u64) -> ^Calendar_UI_Control {
 
 calendar_framework_role :: proc(action: Calendar_App_Action) -> framework_ui.Accessibility_Role {
 	#partial switch action.kind {
-	case .Settings_Search, .Command_Palette_Search, .Editor_Field:
+	case .Settings_Search, .Command_Palette_Search, .Editor_Field, .Chore_Name:
 		return .Text_Field
-	case .Set_Theme, .Settings_Category, .Set_Default_Connected_Calendar:
+	case .Set_Theme, .Settings_Category, .Set_Default_Connected_Calendar, .Chore_Interval:
 		return .Radio_Button
 	case .Toggle_Connected_Calendar, .Editor_Important, .Editor_All_Day:
 		return .Check_Box
@@ -104,6 +104,13 @@ calendar_framework_number_code :: proc(action: Calendar_App_Action) -> framework
 	case .Action_Complete: return {1, 4, 2}
 	case .Action_Confirm_Proposal: return {1, 5, 2}
 	case .Action_Reject_Proposal: return {1, 6, 2}
+	case .New_Chore: return {2, 1, 2}
+	case .Chore_Interval:
+		if action.index >= 0 && action.index < len(CALENDAR_CHORE_PRESETS) {
+			return {i8(action.index+1), 0, 1}
+		}
+	case .Chore_Save: return {6, 0, 1}
+	case .Chore_Cancel: return {7, 0, 1}
 	case .Archive_Occurrence: return {1, 0, 1}
 	case .Archive_Series: return {2, 0, 1}
 	case .Archive_Cancel: return {3, 0, 1}
@@ -122,7 +129,7 @@ calendar_framework_capabilities :: proc(
 		.CLI,
 	}
 	#partial switch control.action.kind {
-	case .Settings_Search, .Command_Palette_Search, .Editor_Field:
+	case .Settings_Search, .Command_Palette_Search, .Editor_Field, .Chore_Name:
 		result += {.Editable, .Drag, .Direct_Keyboard}
 	}
 	code := calendar_framework_number_code(control.action)
@@ -169,6 +176,15 @@ calendar_control_in_active_scope :: proc(control: ^Calendar_UI_Control) -> bool 
 		       control.action.kind == .Editor_Save ||
 		       control.action.kind == .Editor_Delete ||
 		       control.action.kind == .Editor_Cancel
+	}
+	if calendar_ui.chore_open && command_palette.is_open(&calendar_ui.palette) {
+		return control.action.kind == .Command_Palette_Search
+	}
+	if calendar_ui.chore_open {
+		return control.action.kind == .Chore_Name ||
+		       control.action.kind == .Chore_Interval ||
+		       control.action.kind == .Chore_Save ||
+		       control.action.kind == .Chore_Cancel
 	}
 	if command_palette.is_open(&calendar_ui.palette) {
 		return control.action.kind == .Command_Palette_Search

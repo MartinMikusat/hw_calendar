@@ -33,6 +33,7 @@ calendar_text_target :: proc(field: Calendar_Text_Field) -> ^string {
 	case .Editor_Time_Zone: return &calendar_ui.editor_time_zone
 	case .Editor_Alarms: return &calendar_ui.editor_alarms
 	case .Editor_RRule: return &calendar_ui.editor_rrule
+	case .Chore_Name: return &calendar_ui.chore_name
 	case .None:
 	}
 	return nil
@@ -59,6 +60,8 @@ calendar_text_field_rect :: proc(field: Calendar_Text_Field) -> Calendar_UI_Rect
 		return calendar_ui_editor_field_rect(
 			int(field)-int(Calendar_Text_Field.Editor_Summary),
 		)
+	case .Chore_Name:
+		return calendar_chore_name_rect()
 	case .None:
 	}
 	return {}
@@ -124,7 +127,7 @@ calendar_text_changed :: proc(field: Calendar_Text_Field) {
 	case .None, .Editor_Summary, .Editor_Start, .Editor_End,
 	     .Editor_Location, .Editor_URL, .Editor_Categories,
 	     .Editor_Description, .Editor_Time_Zone, .Editor_Alarms,
-	     .Editor_RRule:
+	     .Editor_RRule, .Chore_Name:
 	}
 	calendar_ui.needs_redraw = true
 }
@@ -346,6 +349,8 @@ calendar_on_text_command :: proc "c" (
 			calendar_ui_activate_palette()
 		} else if field >= .Editor_Summary && field <= .Editor_RRule {
 			calendar_ui_editor_commit()
+		} else if field == .Chore_Name {
+			calendar_chore_commit()
 		}
 		return
 	} else if selector == sel_registerName("insertTab:") {

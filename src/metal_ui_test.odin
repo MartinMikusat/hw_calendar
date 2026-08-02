@@ -1,8 +1,11 @@
 package main
 
 import "core:testing"
+import "core:sync"
 import flash "flash:."
 import framework_ui "ui_framework:core"
+
+calendar_ui_test_mutex: sync.Mutex
 
 @(test)
 calendar_text_styles_bind_size_and_tracking_test :: proc(t: ^testing.T) {
@@ -108,6 +111,8 @@ calendar_modal_backdrop_uses_eighty_percent_opacity_test :: proc(t: ^testing.T) 
 
 @(test)
 calendar_discard_confirmation_owns_modal_input_test :: proc(t: ^testing.T) {
+	sync.mutex_lock(&calendar_ui_test_mutex)
+	defer sync.mutex_unlock(&calendar_ui_test_mutex)
 	previous := calendar_ui
 	defer {calendar_ui = previous}
 	calendar_ui = Calendar_UI_State{
@@ -119,6 +124,87 @@ calendar_discard_confirmation_owns_modal_input_test :: proc(t: ^testing.T) {
 	modal := calendar_active_modal()
 	testing.expect_value(t, modal.kind, Calendar_Modal_Kind.Discard_Changes)
 	testing.expect_value(t, modal.dismissal, Calendar_Modal_Dismissal.Blocking)
+}
+
+@(test)
+calendar_chore_cancel_requests_dirty_confirmation_test :: proc(t: ^testing.T) {
+	sync.mutex_lock(&calendar_ui_test_mutex)
+	defer sync.mutex_unlock(&calendar_ui_test_mutex)
+	previous := calendar_ui
+	defer {calendar_ui = previous}
+	calendar_ui = {
+		width = 900,
+		height = 700,
+		chore_open = true,
+		chore_interval = CALENDAR_CHORE_DEFAULT_INTERVAL,
+		chore_focus_slot = -1,
+	}
+	calendar_ui.chore_initial_hash = calendar_chore_fingerprint()
+	calendar_ui.chore_interval = CALENDAR_CHORE_PRESETS[0]
+	calendar_ui_execute_action(Calendar_App_Action{kind = .Chore_Cancel})
+	testing.expect(t, calendar_ui.chore_open)
+	testing.expect(t, calendar_ui.discard_changes_open)
+	testing.expect_value(t, calendar_ui.discard_target, Calendar_Modal_Kind.Chore)
+}
+
+@(test)
+calendar_chore_geometry_stays_inside_modal_test :: proc(t: ^testing.T) {
+	sync.mutex_lock(&calendar_ui_test_mutex)
+	defer sync.mutex_unlock(&calendar_ui_test_mutex)
+	previous := calendar_ui
+	defer {calendar_ui = previous}
+	widths := [2]f64{640, 1440}
+	for width in widths {
+		calendar_ui = {width = width, height = 760}
+		modal := calendar_ui_chore_rect()
+		name := calendar_chore_name_rect()
+		first_interval := calendar_chore_interval_rect(0)
+		last_interval := calendar_chore_interval_rect(
+			len(CALENDAR_CHORE_PRESETS)-1,
+		)
+		testing.expect(t, name.x >= modal.x+24)
+		testing.expect(t, name.x+name.w <= modal.x+modal.w-24)
+		testing.expect(t, first_interval.y+first_interval.h < name.y)
+		testing.expect(t, first_interval.x >= modal.x+24)
+		testing.expect(t, last_interval.x+last_interval.w <= modal.x+modal.w-24)
+	}
+}
+
+@(test)
+calendar_next_chore_deadline_uses_earliest_future_due_test :: proc(t: ^testing.T) {
+	entries := [4]Agenda_Entry{
+		{state = "active", recurrence_seconds = 60, due_at = "90"},
+		{state = "active", recurrence_seconds = 60, due_at = "140"},
+		{state = "active", recurrence_seconds = 60, due_at = "120"},
+		{state = "active", due_at = "110"},
+	}
+	testing.expect_value(t, calendar_next_chore_due_stamp(entries[:], 100), i64(120))
+	testing.expect_value(t, calendar_next_chore_due_stamp(entries[:], 140), i64(0))
+}
+
+@(test)
+calendar_due_section_is_top_pinned_and_bounded_test :: proc(t: ^testing.T) {
+	sync.mutex_lock(&calendar_ui_test_mutex)
+	defer sync.mutex_unlock(&calendar_ui_test_mutex)
+	previous := calendar_ui
+	defer {calendar_ui = previous}
+	calendar_ui = {width = 640, height = 480}
+	calendar_ui.due_entries = make([dynamic]Agenda_Entry, 30)
+	defer delete(calendar_ui.due_entries)
+	panel := calendar_ui_details_rect()
+	section := calendar_ui_due_section_rect()
+	testing.expect_value(t, section.y+section.h, panel.y+panel.h)
+	testing.expect(t, section.h <= panel.h/2)
+	start, end := calendar_ui_due_visible_range()
+	testing.expect_value(t, start, 0)
+	testing.expect(t, end < len(calendar_ui.due_entries))
+	first := calendar_ui_due_row_rect(start)
+	last := calendar_ui_due_row_rect(end-1)
+	testing.expect(t, first.y+first.h <= section.y+section.h-CALENDAR_DUE_HEADER_HEIGHT)
+	testing.expect(t, last.y >= section.y+CALENDAR_DUE_FOOTER_HEIGHT)
+	calendar_ui_scroll_due_rows(-24)
+	start, _ = calendar_ui_due_visible_range()
+	testing.expect(t, start > 0)
 }
 
 calendar_icon_points_use_iconoir_viewbox_test :: proc(
@@ -187,13 +273,14 @@ calendar_details_layout_splits_default_content_width_test :: proc(t: ^testing.T)
 }
 
 @(test)
-calendar_action_bar_uses_five_fixed_slots_test :: proc(t: ^testing.T) {
+calendar_action_bar_uses_fixed_slots_with_section_gap_test :: proc(t: ^testing.T) {
 	first := calendar_ui_action_rect_for_width(0, 1280)
 	second := calendar_ui_action_rect_for_width(1, 1280)
 	third := calendar_ui_action_rect_for_width(2, 1280)
 	fourth := calendar_ui_action_rect_for_width(3, 1280)
 	fifth := calendar_ui_action_rect_for_width(4, 1280)
 	sixth := calendar_ui_action_rect_for_width(5, 1280)
+	seventh := calendar_ui_action_rect_for_width(6, 1280)
 	testing.expect_value(t, first.x, CALENDAR_LAYOUT_MARGIN)
 	testing.expect_value(t, first.y, CALENDAR_ACTION_BAR_BOTTOM)
 	testing.expect_value(t, first.h, CALENDAR_ACTION_BAR_HEIGHT)
@@ -202,7 +289,12 @@ calendar_action_bar_uses_five_fixed_slots_test :: proc(t: ^testing.T) {
 	testing.expect_value(t, fourth.x-(third.x+third.w), CALENDAR_ACTION_BAR_GAP)
 	testing.expect_value(t, fifth.x-(fourth.x+fourth.w), CALENDAR_ACTION_BAR_GAP)
 	testing.expect_value(t, sixth.x-(fifth.x+fifth.w), CALENDAR_ACTION_BAR_GAP)
-	testing.expect_value(t, sixth.x+sixth.w, 1274.0)
+	testing.expect_value(
+		t,
+		seventh.x-(sixth.x+sixth.w),
+		CALENDAR_ACTION_BAR_GAP*2,
+	)
+	testing.expect_value(t, seventh.x+seventh.w, 1274.0)
 }
 
 @(test)
@@ -286,7 +378,49 @@ calendar_main_action_codes_use_event_section_test :: proc(t: ^testing.T) {
 	testing.expect_value(
 		t,
 		calendar_main_action_for_code(2, 1),
-		Calendar_UI_Action.None,
+		Calendar_UI_Action.New_Chore,
+	)
+}
+
+@(test)
+calendar_number_prefix_highlights_only_its_section_test :: proc(t: ^testing.T) {
+	testing.expect(t, calendar_action_number_section_active(
+		.Action_Edit, 1, 11_000, 10_000,
+	))
+	testing.expect(t, !calendar_action_number_section_active(
+		.New_Chore, 1, 11_000, 10_000,
+	))
+	testing.expect(t, calendar_action_number_section_active(
+		.New_Chore, 2, 11_000, 10_000,
+	))
+	testing.expect(t, !calendar_action_number_section_active(
+		.New_Chore, 2, 10_000, 10_000,
+	))
+}
+
+@(test)
+calendar_chore_modal_actions_use_single_digit_codes_test :: proc(t: ^testing.T) {
+	for index in 0..<len(CALENDAR_CHORE_PRESETS) {
+		code := calendar_framework_number_code(Calendar_App_Action{
+			kind = .Chore_Interval,
+			index = index,
+		})
+		testing.expect_value(t, code.first, i8(index+1))
+		testing.expect_value(t, code.digits, i8(1))
+	}
+	testing.expect_value(
+		t,
+		calendar_framework_number_code(
+			Calendar_App_Action{kind = .Chore_Save},
+		).first,
+		i8(6),
+	)
+	testing.expect_value(
+		t,
+		calendar_framework_number_code(
+			Calendar_App_Action{kind = .Chore_Cancel},
+		).first,
+		i8(7),
 	)
 }
 
@@ -294,6 +428,8 @@ calendar_main_action_codes_use_event_section_test :: proc(t: ^testing.T) {
 calendar_main_action_prefix_waits_expires_and_clears_test :: proc(
 	t: ^testing.T,
 ) {
+	sync.mutex_lock(&calendar_ui_test_mutex)
+	defer sync.mutex_unlock(&calendar_ui_test_mutex)
 	old_prefix := calendar_ui.number_prefix
 	old_deadline := calendar_ui.number_prefix_deadline_ms
 	old_redraw := calendar_ui.needs_redraw
@@ -587,6 +723,8 @@ calendar_flash_badges_clamp_to_view_test :: proc(t: ^testing.T) {
 calendar_shared_registry_preserves_control_identity_and_capabilities_test :: proc(
 	t: ^testing.T,
 ) {
+	sync.mutex_lock(&calendar_ui_test_mutex)
+	defer sync.mutex_unlock(&calendar_ui_test_mutex)
 	previous_ui := calendar_ui
 	calendar_ui = {width = 800, height = 600}
 	defer {

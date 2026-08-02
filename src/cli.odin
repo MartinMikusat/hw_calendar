@@ -44,6 +44,8 @@ Calendar_CLI_Command :: enum {
 	Proposal_Get,
 	Proposal_Confirm,
 	Proposal_Reject,
+	Chore_Due,
+	Chore_Done,
 }
 
 Calendar_CLI_Request :: struct {
@@ -83,7 +85,7 @@ calendar_cli_command_mutates_database :: proc(command: Calendar_CLI_Command) -> 
 	       command == .Entry_Complete || command == .Entry_Reopen ||
 	       command == .Entry_Dismiss || command == .Entry_Restore ||
 	       command == .Proposal_Submit || command == .Proposal_Confirm ||
-	       command == .Proposal_Reject
+	       command == .Proposal_Reject || command == .Chore_Done
 }
 
 calendar_cli_command_requires_gui :: proc(command: Calendar_CLI_Command) -> bool {
@@ -372,6 +374,8 @@ calendar_cli_command_name :: proc(command: Calendar_CLI_Command) -> string {
 	case .Proposal_Get: return "proposal get"
 	case .Proposal_Confirm: return "proposal confirm"
 	case .Proposal_Reject: return "proposal reject"
+	case .Chore_Due: return "chore due"
+	case .Chore_Done: return "chore done"
 	case .None: return "unknown"
 	}
 	return "unknown"
@@ -428,6 +432,8 @@ calendar_cli_parse :: proc(args: []string) -> (Calendar_CLI_Request, Calendar_CL
 	case group == "proposal" && action == "get": request.command = .Proposal_Get
 	case group == "proposal" && action == "confirm": request.command = .Proposal_Confirm
 	case group == "proposal" && action == "reject": request.command = .Proposal_Reject
+	case group == "chore" && action == "due": request.command = .Chore_Due
+	case group == "chore" && action == "done": request.command = .Chore_Done
 	case:
 		return {}, calendar_cli_error(.None, 2, "usage", "Unknown command."), false
 	}
@@ -1651,7 +1657,7 @@ calendar_cli_event_mutate :: proc(
 }
 
 calendar_cli_execute :: proc(request: Calendar_CLI_Request) -> Calendar_CLI_Result {
-	if request.command >= .Entry_Create && request.command <= .Proposal_Reject {
+	if request.command >= .Entry_Create && request.command <= .Chore_Done {
 		return agenda_cli_execute(request)
 	}
 	#partial switch request.command {
