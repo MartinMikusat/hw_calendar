@@ -289,7 +289,8 @@ calendar_ui_diagnostic_prune :: proc(directory: string) {
 		context.temp_allocator,
 	)
 	for entry in entries {
-		if entry.is_dir || !strings.has_suffix(entry.name, ".json") {continue}
+		if entry.type == .Directory ||
+		   !strings.has_suffix(entry.name, ".json") {continue}
 		append(&files, Calendar_UI_Diagnostic_Artifact_File{
 			path = entry.fullpath,
 			name = entry.name,
@@ -315,8 +316,9 @@ calendar_ui_diagnostic_write :: proc(path: string, value: $T) -> bool {
 		{pretty=true, use_spaces=true, spaces=2},
 		context.temp_allocator,
 	)
-	if encode_error != nil || !os.write_entire_file(path, bytes) {return false}
-	calendar_ui_diagnostic_prune(filepath.dir(path, context.temp_allocator))
+	if encode_error != nil {return false}
+	if os.write_entire_file(path, bytes) != nil {return false}
+	calendar_ui_diagnostic_prune(filepath.dir(path))
 	return true
 }
 
@@ -380,11 +382,11 @@ calendar_ui_diagnostic_check_command :: proc(
 			"ui check requires --baseline.",
 		)
 	}
-	bytes, read := os.read_entire_file(
+	bytes, read_error := os.read_entire_file(
 		request.baseline,
 		context.temp_allocator,
 	)
-	if !read {
+	if read_error != nil {
 		return calendar_cli_error(
 			request.command,
 			3,

@@ -713,7 +713,7 @@ calendar_cli_export :: proc(request: Calendar_CLI_Request) -> Calendar_CLI_Resul
 		return calendar_cli_error(request.command, 6, "storage_failed", sqlite_error(calendar_database))
 	}
 	defer delete(contents)
-	if !os.write_entire_file(request.output, transmute([]u8)contents) {
+	if os.write_entire_file(request.output, transmute([]u8)contents) != nil {
 		return calendar_cli_error(request.command, 6, "write_failed", "The output file could not be written.")
 	}
 	return {

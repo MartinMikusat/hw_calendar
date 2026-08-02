@@ -7283,7 +7283,7 @@ calendar_launch_should_show :: proc(value: string) -> bool {
 }
 
 calendar_automation_enabled :: proc() -> bool {
-	return os.get_env("HW_CALENDAR_AUTOMATION") == "1"
+	return os.get_env("HW_CALENDAR_AUTOMATION", context.temp_allocator) == "1"
 }
 
 CALENDAR_APPLICATION_ACTIVATION_POLICY_REGULAR :: 0
@@ -7422,12 +7422,18 @@ calendar_gui_initialize :: proc() -> bool {
 	)
 	msg_void_id(calendar_ui.window, sel_registerName("makeFirstResponder:"), calendar_ui.view)
 	if calendar_launch_should_activate(
-		os.get_env("HW_CALENDAR_ACTIVATE_ON_LAUNCH"),
+		os.get_env(
+			"HW_CALENDAR_ACTIVATE_ON_LAUNCH",
+			context.temp_allocator,
+		),
 	) {
 		msg_void_id(calendar_ui.window, sel_registerName("makeKeyAndOrderFront:"), nil)
 		msg_void_i(app, sel_registerName("activateIgnoringOtherApps:"), 1)
 	} else if calendar_launch_should_show(
-		os.get_env("HW_CALENDAR_VISIBLE_ON_LAUNCH"),
+		os.get_env(
+			"HW_CALENDAR_VISIBLE_ON_LAUNCH",
+			context.temp_allocator,
+		),
 	) {
 		msg_void_id(calendar_ui.window, sel_registerName("orderBack:"), nil)
 	}

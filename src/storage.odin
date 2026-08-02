@@ -3,7 +3,6 @@ package main
 import "core:fmt"
 import "core:hash"
 import "core:os"
-import os2 "core:os/os2"
 import "core:strings"
 import "core:time"
 
@@ -159,7 +158,7 @@ calendar_database_path :: proc() -> string {
 calendar_database_open :: proc() -> bool {
 	if calendar_database != nil {return true}
 	support := calendar_support_dir()
-	if os2.make_directory(support) != nil && !os.exists(support) {return false}
+	if os.make_directory(support) != nil && !os.exists(support) {return false}
 	calendar_archive_unused_database(support)
 	path := calendar_database_path()
 	path_c := strings.clone_to_cstring(path, context.temp_allocator)

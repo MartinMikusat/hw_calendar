@@ -212,8 +212,8 @@ calendar_holiday_countries_load :: proc(
 			fmt.eprintf("[hw_calendar] could not resolve holiday resource %s\n", filename)
 			continue
 		}
-		bytes, read := os.read_entire_file(path, allocator)
-		if !read {
+		bytes, read_error := os.read_entire_file(path, allocator)
+		if read_error != nil {
 			fmt.eprintf("[hw_calendar] could not read holiday resource %s\n", filename)
 			continue
 		}

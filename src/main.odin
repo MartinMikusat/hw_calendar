@@ -12,7 +12,10 @@ calendar_process_main :: proc(args := os.args) {
 		if parsed {
 			input_bytes: []u8
 			if calendar_cli_command_reads_input(request.command) {
-				input_bytes, _ = os.read_entire_file(os.stdin)
+				input_bytes, _ = os.read_entire_file(
+					os.stdin,
+					context.allocator,
+				)
 				request.input = string(input_bytes)
 			}
 			defer delete(input_bytes)

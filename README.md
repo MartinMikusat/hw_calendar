@@ -111,7 +111,8 @@ not read or migrate records from that file.
 
 ## Development
 
-Install Odin and keep the sibling repositories from
+Install Odin dev-2026-07 or newer with LLVM and LLD 22 or newer. LLVM 21's
+AddressSanitizer runtime deadlocks before `main` on macOS 26. Keep the sibling repositories from
 [`dependencies.lock`](dependencies.lock) beside this repository. Each build
 rejects a sibling checkout whose origin, commit, or worktree differs from the
 lock.

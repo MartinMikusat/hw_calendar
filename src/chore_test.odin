@@ -2,7 +2,6 @@ package main
 
 import "core:fmt"
 import "core:os"
-import os2 "core:os/os2"
 import "core:strconv"
 import "core:strings"
 import "core:testing"
@@ -19,7 +18,7 @@ chore_due_and_rolling_completion_test :: proc(t: ^testing.T) {
 		fmt.tprintf("%d", time.to_unix_nanoseconds(time.now())),
 	})
 	defer delete(support)
-	defer _ = os2.remove_all(support)
+	defer _ = os.remove_all(support)
 	if os.set_env("HW_CALENDAR_SUPPORT_DIR", support) != 0 {
 		testing.fail_now(t, "could not set the support directory")
 	}

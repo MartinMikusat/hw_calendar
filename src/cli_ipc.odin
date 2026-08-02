@@ -5,7 +5,6 @@ import "core:c"
 import "core:encoding/json"
 import "core:fmt"
 import "core:os"
-import os2 "core:os/os2"
 import "core:strings"
 import "core:sys/posix"
 import "core:thread"
@@ -22,7 +21,7 @@ CALENDAR_CLI_LOCK_UN :: 8
 CALENDAR_CLI_MODE_USER_READ_WRITE :: posix.mode_t{.IRUSR, .IWUSR}
 
 Calendar_CLI_Database_Owner :: struct {
-	file: ^os2.File,
+	file: ^os.File,
 	held: bool,
 }
 
@@ -57,21 +56,21 @@ calendar_cli_socket_path :: proc() -> string {
 calendar_cli_database_try_acquire :: proc() -> bool {
 	if calendar_cli_database_owner.held {return true}
 	_ = os.make_directory(calendar_support_dir())
-	file, open_error := os2.open(
+	file, open_error := os.open(
 		calendar_cli_lock_path(),
 		{.Read, .Write, .Create},
 	)
 	if open_error != nil {return false}
 	if posix.fchmod(
-		posix.FD(os2.fd(file)),
+		posix.FD(os.fd(file)),
 		CALENDAR_CLI_MODE_USER_READ_WRITE,
 	) != .OK {
-		_ = os2.close(file)
+		_ = os.close(file)
 		return false
 	}
-	fd := c.int(os2.fd(file))
+	fd := c.int(os.fd(file))
 	if flock(fd, CALENDAR_CLI_LOCK_EX|CALENDAR_CLI_LOCK_NB) != 0 {
-		_ = os2.close(file)
+		_ = os.close(file)
 		return false
 	}
 	calendar_cli_database_owner = {file=file, held=true}
@@ -81,10 +80,10 @@ calendar_cli_database_try_acquire :: proc() -> bool {
 calendar_cli_database_release :: proc() {
 	if !calendar_cli_database_owner.held {return}
 	_ = flock(
-		c.int(os2.fd(calendar_cli_database_owner.file)),
+		c.int(os.fd(calendar_cli_database_owner.file)),
 		CALENDAR_CLI_LOCK_UN,
 	)
-	_ = os2.close(calendar_cli_database_owner.file)
+	_ = os.close(calendar_cli_database_owner.file)
 	calendar_cli_database_owner = {}
 }
 
