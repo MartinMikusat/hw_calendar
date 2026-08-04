@@ -16,6 +16,7 @@ import text_input "components:text_input"
 import framework_coretext "ui_framework:coretext"
 import framework_ui "ui_framework:core"
 import framework_draw "ui_framework:draw"
+import framework_macos "ui_framework:macos"
 import framework_metal "ui_framework:metal"
 
 foreign import metal "system:Metal.framework"
@@ -261,6 +262,7 @@ Calendar_UI_State :: struct {
 	layer: Id,
 	device: Id,
 	queue: Id,
+	frame_timer: framework_macos.Frame_Timer,
 	width: f64,
 	height: f64,
 	scale: f64,
@@ -7233,6 +7235,7 @@ calendar_register_window_class :: proc() -> Id {
 }
 
 calendar_ui_destroy :: proc() {
+	framework_macos.frame_timer_stop(&calendar_ui.frame_timer)
 	calendar_ordered_destroy()
 	calendar_events_destroy(&calendar_ui.events)
 	calendar_occurrences_destroy(&calendar_ui.occurrences)
@@ -7398,28 +7401,14 @@ calendar_gui_initialize :: proc() -> bool {
 		fmt.eprintln("hw_calendar could not initialize its ordered Metal renderer.")
 		return false
 	}
-	timer_send := transmute(proc "c" (
-		Id, Sel, f64, Id, Sel, Id, bool,
-	) -> Id)objc_send_address
-	frame_timer := timer_send(
-		objc_getClass("NSTimer"),
-		sel_registerName("scheduledTimerWithTimeInterval:target:selector:userInfo:repeats:"),
-		1.0/60.0,
+	if !framework_macos.frame_timer_start(
+		&calendar_ui.frame_timer,
 		calendar_ui.delegate,
-		sel_registerName("calendarFrame:"),
-		nil,
-		true,
-	)
-	main_run_loop := msg_id(
-		objc_getClass("NSRunLoop"),
-		sel_registerName("mainRunLoop"),
-	)
-	msg_void_id_id(
-		main_run_loop,
-		sel_registerName("addTimer:forMode:"),
-		frame_timer,
-		nsstring("NSEventTrackingRunLoopMode"),
-	)
+		"calendarFrame:",
+	) {
+		fmt.eprintln("hw_calendar could not start its interface frame timer.")
+		return false
+	}
 	msg_void_id(calendar_ui.window, sel_registerName("makeFirstResponder:"), calendar_ui.view)
 	if calendar_launch_should_activate(
 		os.get_env(
