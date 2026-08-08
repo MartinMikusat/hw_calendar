@@ -39,6 +39,7 @@ load_lock() {
   ODIN_URL=
   ODIN_SHA=
   ODIN_PLATFORM=
+  ODIN_BINARY_COMMIT=
   LLVM_VERSION=
   LLVM_URL=
   LLVM_SHA=
@@ -74,6 +75,13 @@ load_lock() {
         ODIN_URL=$c
         ODIN_SHA=$d
         ODIN_PLATFORM=$e
+        ;;
+      odin-binary)
+        [ -n "$a" ] && [ -z "$b" ] && [ -z "$c" ] &&
+          [ -z "$d" ] && [ -z "$e" ] && [ -z "$extra" ] ||
+          fail "invalid Odin binary entry"
+        [ -z "$ODIN_BINARY_COMMIT" ] || fail "duplicate Odin binary entry"
+        ODIN_BINARY_COMMIT=$a
         ;;
       llvm)
         [ -n "$a" ] && [ -n "$b" ] && [ -n "$c" ] &&
@@ -137,6 +145,7 @@ load_lock() {
 
   [ "$LOCK_VERSION" = 2 ] || fail "unsupported dependency lock version: ${LOCK_VERSION:-<missing>}"
   [ -n "$ODIN_TAG" ] || fail "dependency lock does not contain Odin"
+  [ -n "$ODIN_BINARY_COMMIT" ] || fail "dependency lock does not contain the Odin binary commit"
   [ "$ODIN_PLATFORM" = macos-arm64 ] || fail "unsupported Odin platform: $ODIN_PLATFORM"
   [ -n "$LLVM_VERSION" ] || fail "dependency lock does not contain LLVM"
   [ "$LLVM_PLATFORM" = homebrew-arm64 ] || fail "unsupported LLVM platform: $LLVM_PLATFORM"
@@ -171,7 +180,7 @@ odin_is_valid() {
   [ -x "$executable" ] || return 1
   [ "$(uname -m)" = arm64 ] || return 1
   version=$($executable version 2>/dev/null || true)
-  short_commit=$(printf '%.7s' "$ODIN_COMMIT")
+  short_commit=$(printf '%.7s' "$ODIN_BINARY_COMMIT")
   case "$version" in
     *"$short_commit"*) return 0 ;;
     *) return 1 ;;

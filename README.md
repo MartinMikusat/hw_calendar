@@ -114,8 +114,9 @@ not read or migrate records from that file.
 Install the Xcode command-line tools and Homebrew LLVM. Install the optional
 Metal toolchain for release builds. The dependency script downloads the locked
 Odin macOS ARM64 release and creates isolated sibling checkouts in the user
-cache. Each build verifies the LLVM version and the checksums of the compiler and AddressSanitizer runtime.
-It also rejects an Odin release, repository, or bundled icon that differs from
+cache. Each build verifies the Odin archive and its embedded source revision.
+It also verifies the LLVM version and the checksums of the compiler and AddressSanitizer runtime.
+The build rejects a repository or bundled icon that differs from
 [`dependencies.lock`](dependencies.lock).
 
 ```sh

@@ -85,11 +85,45 @@ ODIN_COMMIT=$(tag_commit https://github.com/odin-lang/Odin.git "$ODIN_TAG")
 ODIN_SHA=$(jq -r --arg tag "$ODIN_TAG" --arg asset "$ODIN_ASSET" \
   '.[] | select(.tag_name == $tag) | .assets[] | select(.name == $asset) | .digest // empty' \
   "$ODIN_RELEASES" | sed 's/^sha256://')
-if [ -z "$ODIN_SHA" ]; then
+mkdir -p "$DEPS_DIR/downloads"
+if [ -n "$ODIN_SHA" ]; then
+  ODIN_ARCHIVE="$DEPS_DIR/downloads/odin-$ODIN_TAG-$ODIN_SHA.tar.gz"
+  if [ ! -f "$ODIN_ARCHIVE" ] || [ "$(checksum "$ODIN_ARCHIVE")" != "$ODIN_SHA" ]; then
+    ODIN_DOWNLOAD="$TEMP_ROOT/$ODIN_ASSET"
+    curl -fL --retry 3 -o "$ODIN_DOWNLOAD" "$ODIN_URL"
+    [ "$(checksum "$ODIN_DOWNLOAD")" = "$ODIN_SHA" ] || {
+      echo '[dependency-update] Odin archive checksum mismatch' >&2
+      exit 1
+    }
+    mv "$ODIN_DOWNLOAD" "$ODIN_ARCHIVE"
+  fi
+else
   ODIN_ARCHIVE="$TEMP_ROOT/$ODIN_ASSET"
   curl -fL --retry 3 -o "$ODIN_ARCHIVE" "$ODIN_URL"
   ODIN_SHA=$(checksum "$ODIN_ARCHIVE")
 fi
+ODIN_EXTRACT="$TEMP_ROOT/odin"
+mkdir -p "$ODIN_EXTRACT"
+tar -xzf "$ODIN_ARCHIVE" -C "$ODIN_EXTRACT"
+ODIN_ROOT=$(find "$ODIN_EXTRACT" -mindepth 1 -maxdepth 1 -type d -print -quit)
+[ -n "$ODIN_ROOT" ] && [ -x "$ODIN_ROOT/odin" ] || {
+  echo '[dependency-update] Odin archive has an invalid layout' >&2
+  exit 1
+}
+ODIN_BINARY_SHORT=$("$ODIN_ROOT/odin" version | sed -n 's/.*:\([0-9a-f][0-9a-f]*\)$/\1/p')
+[ -n "$ODIN_BINARY_SHORT" ] || {
+  echo '[dependency-update] Odin binary does not report its source commit' >&2
+  exit 1
+}
+ODIN_BINARY_METADATA="$TEMP_ROOT/odin-binary-commit.json"
+curl -fsSL --retry 3 \
+  "https://api.github.com/repos/odin-lang/Odin/commits/$ODIN_BINARY_SHORT" \
+  -o "$ODIN_BINARY_METADATA"
+ODIN_BINARY_COMMIT=$(jq -r '.sha // empty' "$ODIN_BINARY_METADATA")
+[ -n "$ODIN_BINARY_COMMIT" ] || {
+  echo '[dependency-update] Odin binary commit does not resolve in the official repository' >&2
+  exit 1
+}
 
 LLVM_FORMULA="$TEMP_ROOT/llvm-formula.json"
 brew info --json=v2 llvm > "$LLVM_FORMULA"
@@ -158,8 +192,9 @@ CANDIDATE_LOCK="$WORKTREE/dependencies.lock"
   printf '# hw_calendar dependency lock, format 2.\n'
   printf 'lock-version 2\n\n'
   printf '# Official Odin monthly release for macOS ARM64.\n'
-  printf 'odin %s %s %s %s macos-arm64\n\n' \
+  printf 'odin %s %s %s %s macos-arm64\n' \
     "$ODIN_TAG" "$ODIN_COMMIT" "$ODIN_URL" "$ODIN_SHA"
+  printf 'odin-binary %s\n\n' "$ODIN_BINARY_COMMIT"
   printf 'llvm %s %s %s homebrew-arm64\n\n' \
     "$LLVM_VERSION" "$LLVM_URL" "$LLVM_SHA"
   printf 'llvm-file clang %s\n' "$LLVM_CLANG_SHA"

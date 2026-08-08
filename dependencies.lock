@@ -3,6 +3,7 @@ lock-version 2
 
 # Official Odin monthly release for macOS ARM64.
 odin dev-2026-07a 819fdc7a80667498b8b365999f1475a66c358640 https://github.com/odin-lang/Odin/releases/download/dev-2026-07a/odin-macos-arm64-dev-2026-07a.tar.gz 40e9f5970bdce1938769a792ebda7ac39d3d10bfe703a721ac5b578bc8dd3458 macos-arm64
+odin-binary 819fdc7a80667498b8b365999f1475a66c358640
 
 llvm 22.1.8 https://ghcr.io/v2/homebrew/core/llvm/blobs/sha256:d83ee9d03be9f9a5e5795b3ada6b67847735615f4721d19f424dce3632075d19 d83ee9d03be9f9a5e5795b3ada6b67847735615f4721d19f424dce3632075d19 homebrew-arm64
 llvm-file clang 305697d3868243dca6e4aabf4f628df7de135d701eb4fd78f6a5d7528fef4395
