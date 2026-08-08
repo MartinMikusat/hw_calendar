@@ -1,8 +1,24 @@
-# Sibling repository, origin URL, and tested commit.
-hw_odin_matchSorter https://github.com/MartinMikusat/hw_odin_matchSorter.git 52bbe319503752881ebd777e0f3340fce027e017
-hw_odin_ui_flash https://github.com/MartinMikusat/hw_odin_ui_flash.git d06e98a40640b13eea5b979319022aad0a470d72
-hw_odin_ui_commandPalette https://github.com/MartinMikusat/hw_odin_ui_commandPalette.git 72312d2f67cfc3d2ebc6a62fdbb1ba5bbc4e335f
-hw_odin_ui_components https://github.com/MartinMikusat/hw_odin_ui_components.git fddcea1b1a2dbccab7fdd7f130688d5af273a8d2
-hw_odin_ui_framework https://github.com/MartinMikusat/hw_odin_ui_framework.git 7c6e42562b08f8b9732f5b3dbc5b8d0a9bf3d71a
-# Test-only RFC differential oracle.
-libical https://github.com/libical/libical.git 0a1a1d81304ae63ffe24e43b8d1fb1e9b03c635c
+# hw_calendar dependency lock, format 2.
+lock-version 2
+
+# Official Odin monthly release for macOS ARM64.
+odin dev-2026-07a 819fdc7a80667498b8b365999f1475a66c358640 https://github.com/odin-lang/Odin/releases/download/dev-2026-07a/odin-macos-arm64-dev-2026-07a.tar.gz 40e9f5970bdce1938769a792ebda7ac39d3d10bfe703a721ac5b578bc8dd3458 macos-arm64
+
+llvm 22.1.8 https://ghcr.io/v2/homebrew/core/llvm/blobs/sha256:d83ee9d03be9f9a5e5795b3ada6b67847735615f4721d19f424dce3632075d19 d83ee9d03be9f9a5e5795b3ada6b67847735615f4721d19f424dce3632075d19 homebrew-arm64
+llvm-file clang 305697d3868243dca6e4aabf4f628df7de135d701eb4fd78f6a5d7528fef4395
+llvm-file asan-runtime a2d0cf6db6a330a68ab592689608e904059fa9d77d4d063845c5c757b5b2fd2c
+
+# Sibling repository, tracked branch, and tested commit.
+git hw_odin_matchSorter https://github.com/MartinMikusat/hw_odin_matchSorter.git main 52bbe319503752881ebd777e0f3340fce027e017
+git hw_odin_ui_flash https://github.com/MartinMikusat/hw_odin_ui_flash.git main d06e98a40640b13eea5b979319022aad0a470d72
+git hw_odin_ui_commandPalette https://github.com/MartinMikusat/hw_odin_ui_commandPalette.git main 72312d2f67cfc3d2ebc6a62fdbb1ba5bbc4e335f
+git hw_odin_ui_components https://github.com/MartinMikusat/hw_odin_ui_components.git main fddcea1b1a2dbccab7fdd7f130688d5af273a8d2
+git hw_odin_ui_framework https://github.com/MartinMikusat/hw_odin_ui_framework.git main 7c6e42562b08f8b9732f5b3dbc5b8d0a9bf3d71a
+
+# Bundled Iconoir release and file checksums.
+iconoir v7.11.1 3497016dcb93122b5a64a2df1221598a14ecf4f3 https://github.com/iconoir-icons/iconoir/archive/refs/tags/v7.11.1.tar.gz 6a22cb1c3eaa49485a5f40cf276c0d063af0792d7bfed8b4bec4fbfc8866e5b2
+iconoir-file maximize.svg 3a3048cdc0e8e4aef5d68353b5434f0c0e074dc672b6c0abf25a5a64bc5cc8f4
+iconoir-file minus.svg babb05bca016bffdd38cbd1dcaeef6ccdf42fc8654124dee169a412eeed6d425
+iconoir-file settings.svg 437c253a1c11ff214c490c766f2a3cdcf8547399fd0be48a7d222bf0703aefb5
+iconoir-file xmark.svg 61aa0a4913a440aaafcc45064a87e24fe8eb22ba4abc4c5ef020530928ed8daf
+iconoir-file LICENSE 869b60da1ada5b896d1f285c3c24ca193d612e308d1710a77a58f2f572eb4fa2

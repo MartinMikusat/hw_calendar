@@ -2,15 +2,19 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-MATCH_SORTER_ROOT="$ROOT/../hw_odin_matchSorter"
-UI_FLASH_ROOT="$ROOT/../hw_odin_ui_flash"
-COMMAND_PALETTE_ROOT="$ROOT/../hw_odin_ui_commandPalette"
-COMPONENTS_ROOT="$ROOT/../hw_odin_ui_components"
-UI_FRAMEWORK_ROOT="$ROOT/../hw_odin_ui_framework"
 ICON_ROOT="$ROOT/resources/icons/iconoir"
 HOLIDAY_ROOT="$ROOT/resources/holidays"
 
 "$ROOT/scripts/dependencies.sh" check
+ODIN=$("$ROOT/scripts/dependencies.sh" path odin)
+LLVM_BIN=$("$ROOT/scripts/dependencies.sh" path llvm-bin)
+PATH="$LLVM_BIN:$PATH"
+export PATH
+MATCH_SORTER_ROOT=$("$ROOT/scripts/dependencies.sh" path repo hw_odin_matchSorter)
+UI_FLASH_ROOT=$("$ROOT/scripts/dependencies.sh" path repo hw_odin_ui_flash)
+COMMAND_PALETTE_ROOT=$("$ROOT/scripts/dependencies.sh" path repo hw_odin_ui_commandPalette)
+COMPONENTS_ROOT=$("$ROOT/scripts/dependencies.sh" path repo hw_odin_ui_components)
+UI_FRAMEWORK_ROOT=$("$ROOT/scripts/dependencies.sh" path repo hw_odin_ui_framework)
 
 MODE=${1:-debug}
 case "$MODE" in
@@ -53,7 +57,7 @@ EXECUTABLE="$APP/Contents/MacOS/hw_calendar"
 TEMP="$ROOT/build/temp/$MODE"
 mkdir -p "$TEMP"
 cd "$TEMP"
-odin build "$ROOT/src" -out:"$EXECUTABLE" "$@" \
+"$ODIN" build "$ROOT/src" -out:"$EXECUTABLE" "$@" \
   -collection:match_sorter="$MATCH_SORTER_ROOT" \
   -collection:flash="$UI_FLASH_ROOT" \
   -collection:command_palette="$COMMAND_PALETTE_ROOT" \

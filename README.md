@@ -111,17 +111,45 @@ not read or migrate records from that file.
 
 ## Development
 
-Install Odin dev-2026-07 or newer with LLVM and LLD 22 or newer. LLVM 21's
-AddressSanitizer runtime deadlocks before `main` on macOS 26. Keep the sibling repositories from
-[`dependencies.lock`](dependencies.lock) beside this repository. Each build
-rejects a sibling checkout whose origin, commit, or worktree differs from the
-lock.
+Install the Xcode command-line tools and Homebrew LLVM. Install the optional
+Metal toolchain for release builds. The dependency script downloads the locked
+Odin macOS ARM64 release and creates isolated sibling checkouts in the user
+cache. Each build verifies the LLVM version and the checksums of the compiler and AddressSanitizer runtime.
+It also rejects an Odin release, repository, or bundled icon that differs from
+[`dependencies.lock`](dependencies.lock).
 
 ```sh
+./scripts/dependencies.sh sync
+./scripts/dependencies.sh doctor
 ./test.sh
 ./build.sh
 ./dev.sh
 ./dev.sh asan
+```
+
+Normal builds do not resolve Odin from `PATH`. Run `sync` after a lock change
+or on a new machine. Run `brew upgrade llvm` when an update report requires a
+new locked LLVM version. Set `HW_CALENDAR_DEPS_DIR` to relocate the cache.
+
+Run the complete update gate manually with:
+
+```sh
+./scripts/dependencies.sh update-candidate
+```
+
+The updater checks the newest official Odin monthly release, Homebrew LLVM,
+sibling `main` branches, and stable Iconoir release. It validates candidates
+only when every sibling branch resolves from its locked remote URL. Validation uses an isolated worktree.
+A passing update creates a local
+`chore/dependency-update-YYYY-MM-DD` branch. A failed update preserves `main`
+and writes its report below the dependency cache.
+
+Install the daily 06:00 local update with:
+
+```sh
+./scripts/dependency-schedule.sh install
+./scripts/dependency-schedule.sh status
+./scripts/dependency-schedule.sh uninstall
 ```
 
 The application emits base content, the modal backdrop, and modal content into
@@ -160,8 +188,10 @@ or bundle the concrete font family.
 
 Bundled icons:
 
-- Iconoir Regular 7.11.1 at commit `59e3d5d969c59b3fb652a556795e08c1b3371c5b`
+- Iconoir Regular 7.11.1 at commit `3497016dcb93122b5a64a2df1221598a14ecf4f3`
 - Source: <https://github.com/iconoir-icons/iconoir/tree/v7.11.1/icons/regular>
+- Archive SHA-256: `6a22cb1c3eaa49485a5f40cf276c0d063af0792d7bfed8b4bec4fbfc8866e5b2`
+- Bundled file checksums: [dependencies.lock](dependencies.lock)
 - License: [MIT](resources/icons/iconoir/LICENSE)
 
 Bundled holiday data:
