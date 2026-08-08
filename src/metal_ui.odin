@@ -70,9 +70,6 @@ foreign core_text {
 		position: Point,
 	) -> int ---
 	CTLineDraw :: proc "c" (line, ctx: rawptr) ---
-	kCTFontAttributeName: rawptr
-	kCTKernAttributeName: rawptr
-	kCTForegroundColorFromContextAttributeName: rawptr
 }
 
 foreign import calendar_core_foundation "system:CoreFoundation.framework"
@@ -5524,7 +5521,12 @@ calendar_text_run :: proc(
 	defer CFRelease(attributed)
 	CFAttributedStringReplaceString(attributed, {0, 0}, string_ref)
 	range := CF.Range{0, CF.Index(CFStringGetLength(string_ref))}
-	CFAttributedStringSetAttribute(attributed, range, kCTFontAttributeName, font)
+	CFAttributedStringSetAttribute(
+		attributed,
+		range,
+		framework_coretext.kCTFontAttributeName,
+		font,
+	)
 	tracking := calendar_text_style_spec(style).tracking*calendar_ui.scale
 	tracking_number := CFNumberCreate(nil, 13, &tracking)
 	if tracking_number != nil {
@@ -5532,14 +5534,14 @@ calendar_text_run :: proc(
 		CFAttributedStringSetAttribute(
 			attributed,
 			range,
-			kCTKernAttributeName,
+			framework_coretext.kCTKernAttributeName,
 			tracking_number,
 		)
 	}
 	CFAttributedStringSetAttribute(
 		attributed,
 		range,
-		kCTForegroundColorFromContextAttributeName,
+		framework_coretext.kCTForegroundColorFromContextAttributeName,
 		kCFBooleanTrue,
 	)
 	result: Calendar_Text_Run
