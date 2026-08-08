@@ -1,5 +1,7 @@
 package main
 
+import hal_ui "ui_framework:hal_wayland"
+
 Calendar_Theme_ID :: enum {
 	HW_Light,
 	HW_Dark,
@@ -44,66 +46,36 @@ calendar_color64 :: proc(color: [4]f32) -> [4]f64 {
 }
 
 calendar_theme :: proc(id: Calendar_Theme_ID) -> Calendar_UI_Theme {
-	switch id {
-	case .HW_Dark:
-		return {
-			id = id,
-			name = "HW Dark",
-			storage_id = "hw-dark",
-			dark = true,
-			canvas = calendar_color(10, 11, 10),
-			header = calendar_color(8, 9, 8),
-			surface = calendar_color(14, 15, 14),
-			raised = calendar_color(17, 18, 17),
-			control = calendar_color(17, 18, 17),
-			modal = calendar_color(14, 15, 14),
-			overlay = {5.0/255, 6.0/255, 5.0/255, 0.80},
-			text = calendar_color(247, 242, 224),
-			text_soft = calendar_color(173, 171, 158),
-			muted = calendar_color(120, 125, 117),
-			inverse = calendar_color(247, 242, 224),
-			warm = calendar_color(178, 125, 87),
-			warm_strong = calendar_color(127, 75, 48),
-			cool = calendar_color(125, 135, 105),
-			cool_strong = calendar_color(23, 49, 37),
-			focus = calendar_color(125, 135, 105),
-			personal = calendar_color(127, 75, 48),
-			work = calendar_color(23, 49, 37),
-			important = calendar_color(127, 75, 48),
-			holiday = calendar_color(178, 125, 87),
-			memorial = calendar_color(125, 135, 105),
-			positive = calendar_color(66, 76, 33),
-			destructive = calendar_color(127, 75, 48),
-		}
-	case .HW_Light:
-	}
+	shared_id := id == .HW_Dark ? hal_ui.Theme_ID.HW_Dark : hal_ui.Theme_ID.HW_Light
+	shared := hal_ui.palette(shared_id)
 	return {
-		id = .HW_Light,
-		name = "HW Light",
-		storage_id = "hw-light",
-		canvas = calendar_color(204, 199, 184),
-		header = calendar_color(232, 227, 209),
-		surface = calendar_color(224, 219, 201),
-		raised = calendar_color(217, 212, 194),
-		control = calendar_color(212, 207, 189),
-		modal = calendar_color(232, 227, 209),
-		overlay = {174.0/255, 169.0/255, 155.0/255, 0.80},
-		text = calendar_color(38, 37, 40),
-		text_soft = calendar_color(69, 66, 71),
-		muted = calendar_color(122, 117, 107),
+		id = id,
+		name = id == .HW_Dark ? "HW Dark" : "HW Light",
+		storage_id = id == .HW_Dark ? "hw-dark" : "hw-light",
+		dark = id == .HW_Dark,
+		canvas = shared.canvas,
+		header = shared.header,
+		surface = shared.surface,
+		raised = shared.raised,
+		control = shared.field,
+		modal = shared.modal,
+		overlay = shared.backdrop,
+		text = shared.text,
+		text_soft = shared.text_soft,
+		muted = shared.muted,
 		inverse = calendar_color(247, 242, 224),
-		warm = calendar_color(178, 125, 87),
-		warm_strong = calendar_color(127, 75, 48),
-		cool = calendar_color(125, 135, 105),
-		cool_strong = calendar_color(23, 49, 37),
-		focus = calendar_color(23, 49, 37),
+		warm = shared.primary,
+		warm_strong = shared.destructive,
+		cool = shared.alternate,
+		cool_strong = shared.focus,
+		focus = shared.focus,
 		personal = calendar_color(127, 75, 48),
 		work = calendar_color(23, 49, 37),
 		important = calendar_color(178, 125, 87),
 		holiday = calendar_color(178, 125, 87),
 		memorial = calendar_color(125, 135, 105),
-		positive = calendar_color(66, 76, 33),
-		destructive = calendar_color(127, 75, 48),
+		positive = shared.positive,
+		destructive = shared.destructive,
 	}
 }
 

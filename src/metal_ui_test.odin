@@ -279,6 +279,12 @@ calendar_detail_dates_use_readable_display_format_test :: proc(t: ^testing.T) {
 	)
 }
 
+@(test)
+calendar_chore_interval_label_supports_custom_day_counts_test :: proc(t: ^testing.T) {
+	testing.expect_value(t, calendar_chore_interval_label(259200), "3 days")
+	testing.expect_value(t, calendar_chore_interval_label(345600), "4 days")
+}
+
 calendar_icon_points_use_iconoir_viewbox_test :: proc(
 	t: ^testing.T,
 	points: []Calendar_Icon_Point,
@@ -341,11 +347,20 @@ calendar_details_layout_splits_default_content_width_test :: proc(t: ^testing.T)
 		CALENDAR_PANEL_GAP,
 	)
 	testing.expect_value(t, details.x+details.w, 1274.0)
-	testing.expect_value(t, calendar.h, 674.0)
+	testing.expect_value(
+		t,
+		calendar.h,
+		CALENDAR_DEFAULT_WINDOW_HEIGHT-CALENDAR_HEADER_HEIGHT-
+			calendar_ui_content_bottom_for_width(CALENDAR_DEFAULT_WINDOW_WIDTH)-
+			CALENDAR_DAY_TOP_GAP,
+	)
 }
 
 @(test)
-calendar_action_bar_uses_fixed_slots_with_section_gap_test :: proc(t: ^testing.T) {
+calendar_action_bar_uses_one_row_with_section_gap_when_wide_test :: proc(t: ^testing.T) {
+	_, layout := calendar_ui_action_bar_layout_for_width(1280)
+	testing.expect(t, layout.fits)
+	testing.expect_value(t, layout.row_count, 1)
 	first := calendar_ui_action_rect_for_width(0, 1280)
 	second := calendar_ui_action_rect_for_width(1, 1280)
 	third := calendar_ui_action_rect_for_width(2, 1280)
@@ -370,15 +385,34 @@ calendar_action_bar_uses_fixed_slots_with_section_gap_test :: proc(t: ^testing.T
 }
 
 @(test)
+calendar_action_bar_wraps_four_plus_three_when_narrow_test :: proc(t: ^testing.T) {
+	rects, layout := calendar_ui_action_bar_layout_for_width(CALENDAR_WINDOW_MIN_WIDTH)
+	testing.expect(t, layout.fits)
+	testing.expect_value(t, layout.row_count, 2)
+	testing.expect_value(t, layout.first_row_count, 4)
+	for index in 0..<3 {
+		testing.expect(t, rects[index].x+rects[index].w < rects[index+1].x)
+	}
+	testing.expect(t, rects[0].y > rects[4].y)
+	testing.expect_value(
+		t,
+		calendar_ui_content_bottom_for_width(CALENDAR_WINDOW_MIN_WIDTH),
+		CALENDAR_ACTION_BAR_BOTTOM+CALENDAR_ACTION_BAR_HEIGHT*2+
+			CALENDAR_ACTION_BAR_ROW_GAP+CALENDAR_LAYOUT_MARGIN,
+	)
+}
+
+@(test)
 calendar_day_list_stops_above_action_bar_test :: proc(t: ^testing.T) {
-	count := calendar_ui_visible_day_count_for_height(
+	count := calendar_ui_visible_day_count_for_size(
+		CALENDAR_DEFAULT_WINDOW_WIDTH,
 		CALENDAR_DEFAULT_WINDOW_HEIGHT,
 	)
 	testing.expect_value(t, count, 22)
 	last_y := CALENDAR_DEFAULT_WINDOW_HEIGHT-CALENDAR_HEADER_HEIGHT-
 	          CALENDAR_DAY_TOP_GAP-
 	          CALENDAR_DAY_ROW_PITCH*f64(count-1)-CALENDAR_DAY_ROW_HEIGHT
-	testing.expect(t, last_y >= CALENDAR_CONTENT_BOTTOM)
+	testing.expect(t, last_y >= calendar_ui_content_bottom_for_width(CALENDAR_DEFAULT_WINDOW_WIDTH))
 }
 
 @(test)

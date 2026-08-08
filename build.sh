@@ -14,7 +14,7 @@ MATCH_SORTER_ROOT=$("$ROOT/scripts/dependencies.sh" path repo hw_odin_matchSorte
 UI_FLASH_ROOT=$("$ROOT/scripts/dependencies.sh" path repo hw_odin_ui_flash)
 COMMAND_PALETTE_ROOT=$("$ROOT/scripts/dependencies.sh" path repo hw_odin_ui_commandPalette)
 COMPONENTS_ROOT=$("$ROOT/scripts/dependencies.sh" path repo hw_odin_ui_components)
-UI_FRAMEWORK_ROOT=$("$ROOT/scripts/dependencies.sh" path repo hw_odin_ui_framework)
+UI_FRAMEWORK_ROOT=${HW_CALENDAR_UI_FRAMEWORK_ROOT:-$("$ROOT/scripts/dependencies.sh" path repo hw_odin_ui_framework)}
 
 MODE=${1:-debug}
 case "$MODE" in

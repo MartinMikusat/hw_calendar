@@ -18,6 +18,7 @@ import framework_ui "ui_framework:core"
 import framework_draw "ui_framework:draw"
 import framework_macos "ui_framework:macos"
 import framework_metal "ui_framework:metal"
+import hal_ui "ui_framework:hal_wayland"
 
 foreign import metal "system:Metal.framework"
 foreign metal {
@@ -421,8 +422,8 @@ calendar_ordered_destroy :: proc() {
 	calendar_ordered_ready = false
 }
 
-CALENDAR_HEADER_HEIGHT :: 40.0
-CALENDAR_HEADER_CONTROL_HEIGHT :: 30.0
+CALENDAR_HEADER_HEIGHT :: f64(hal_ui.METRICS.header_height)
+CALENDAR_HEADER_CONTROL_HEIGHT :: f64(hal_ui.METRICS.window_control)
 CALENDAR_EVENT_MODIFIER_SHIFT :: uint(1 << 17)
 CALENDAR_EVENT_MODIFIER_OPTION :: uint(1 << 19)
 CALENDAR_EVENT_MODIFIER_COMMAND :: uint(1 << 20)
@@ -430,15 +431,13 @@ CALENDAR_DEFAULT_WINDOW_WIDTH :: 1280.0
 CALENDAR_DEFAULT_WINDOW_HEIGHT :: 760.0
 CALENDAR_DAY_ROW_HEIGHT :: 28.0
 CALENDAR_DAY_ROW_PITCH :: 30.0
-CALENDAR_LAYOUT_MARGIN :: 6.0
-CALENDAR_PANEL_GAP :: 4.0
+CALENDAR_LAYOUT_MARGIN :: f64(hal_ui.METRICS.margin)
+CALENDAR_PANEL_GAP :: f64(hal_ui.METRICS.gap)
 CALENDAR_DAY_TOP_GAP :: CALENDAR_LAYOUT_MARGIN
 CALENDAR_ACTION_BAR_HEIGHT :: 28.0
 CALENDAR_ACTION_BAR_GAP :: 6.0
+CALENDAR_ACTION_BAR_ROW_GAP :: 6.0
 CALENDAR_ACTION_BAR_BOTTOM :: CALENDAR_LAYOUT_MARGIN
-CALENDAR_CONTENT_BOTTOM :: CALENDAR_ACTION_BAR_BOTTOM+
-                           CALENDAR_ACTION_BAR_HEIGHT+
-                           CALENDAR_LAYOUT_MARGIN
 CALENDAR_WINDOW_STYLE :: uint(14)
 CALENDAR_WINDOW_MINIMIZE_STYLE :: uint(15)
 CALENDAR_WINDOW_RESIZE_INSET :: 6.0
@@ -1071,12 +1070,8 @@ calendar_ui_window_control_rect_for_height :: proc(
 	index: int,
 	height: f64,
 ) -> Calendar_UI_Rect {
-	return {
-		38*f64(index),
-		height-CALENDAR_HEADER_CONTROL_HEIGHT,
-		30,
-		CALENDAR_HEADER_CONTROL_HEIGHT,
-	}
+	rect := hal_ui.window_control_rect(index, f32(height))
+	return {f64(rect.x), f64(rect.y), f64(rect.w), f64(rect.h)}
 }
 
 calendar_ui_window_control_rect :: proc(index: int) -> Calendar_UI_Rect {
@@ -1084,13 +1079,8 @@ calendar_ui_window_control_rect :: proc(index: int) -> Calendar_UI_Rect {
 }
 
 calendar_ui_window_icon_rect :: proc(index: int) -> Calendar_UI_Rect {
-	control := calendar_ui_window_control_rect(index)
-	return {
-		control.x+5,
-		control.y+5,
-		20,
-		20,
-	}
+	rect := hal_ui.window_icon_rect(index, f32(calendar_ui.height))
+	return {f64(rect.x), f64(rect.y), f64(rect.w), f64(rect.h)}
 }
 
 calendar_ui_settings_rect :: proc() -> Calendar_UI_Rect {
@@ -1135,14 +1125,18 @@ calendar_ui_new_rect :: proc() -> Calendar_UI_Rect {
 	}
 }
 
-calendar_ui_visible_day_count_for_height :: proc(height: f64) -> int {
+calendar_ui_visible_day_count_for_size :: proc(width, height: f64) -> int {
 	available := height-CALENDAR_HEADER_HEIGHT-CALENDAR_DAY_TOP_GAP-
-	             CALENDAR_CONTENT_BOTTOM
+	             calendar_ui_content_bottom_for_width(width)
 	return max(1, int(available/CALENDAR_DAY_ROW_PITCH))
 }
 
+calendar_ui_visible_day_count_for_height :: proc(height: f64) -> int {
+	return calendar_ui_visible_day_count_for_size(calendar_ui.width, height)
+}
+
 calendar_ui_visible_day_count :: proc() -> int {
-	return calendar_ui_visible_day_count_for_height(calendar_ui.height)
+	return calendar_ui_visible_day_count_for_size(calendar_ui.width, calendar_ui.height)
 }
 
 calendar_ui_center_day_index :: proc(visible_count: int) -> int {
@@ -1159,19 +1153,20 @@ calendar_ui_first_visible_day :: proc(
 calendar_ui_content_rects_for_size :: proc(
 	width, height: f64,
 ) -> (calendar, details: Calendar_UI_Rect) {
+	content_bottom := calendar_ui_content_bottom_for_width(width)
 	calendar_width := (
 		width-CALENDAR_LAYOUT_MARGIN*2-CALENDAR_PANEL_GAP
 	)/2
 	calendar = {
 		CALENDAR_LAYOUT_MARGIN,
-		CALENDAR_CONTENT_BOTTOM,
+		content_bottom,
 		calendar_width,
-		height-CALENDAR_HEADER_HEIGHT-CALENDAR_CONTENT_BOTTOM-
+		height-CALENDAR_HEADER_HEIGHT-content_bottom-
 		CALENDAR_LAYOUT_MARGIN,
 	}
 	details = {
 		calendar.x+calendar.w+CALENDAR_PANEL_GAP,
-		CALENDAR_CONTENT_BOTTOM,
+		content_bottom,
 		width-calendar.x-calendar.w-CALENDAR_PANEL_GAP-
 		CALENDAR_LAYOUT_MARGIN,
 		calendar.h,
@@ -1192,24 +1187,61 @@ calendar_ui_details_rect :: proc() -> Calendar_UI_Rect {
 	return details
 }
 
+calendar_ui_action_bar_layout_for_width :: proc(
+	view_width: f64,
+) -> ([7]Calendar_UI_Rect, hal_ui.Action_Bar_Result) {
+	items := [7]hal_ui.Action_Bar_Item{
+		{90, 1},
+		{110, 1},
+		{110, 1},
+		{120, 1},
+		{110, 1},
+		{100, 1},
+		{130, 2},
+	}
+	shared_rects: [7]framework_draw.Rect
+	rects: [7]Calendar_UI_Rect
+	result := hal_ui.action_bar_layout(
+		{
+			bounds = {
+				f32(CALENDAR_LAYOUT_MARGIN),
+				f32(CALENDAR_ACTION_BAR_BOTTOM),
+				f32(view_width-CALENDAR_LAYOUT_MARGIN*2),
+				0,
+			},
+			row_height = f32(CALENDAR_ACTION_BAR_HEIGHT),
+			item_gap = f32(CALENDAR_ACTION_BAR_GAP),
+			section_gap = f32(CALENDAR_ACTION_BAR_GAP*2),
+			row_gap = f32(CALENDAR_ACTION_BAR_ROW_GAP),
+		},
+		items[:],
+		shared_rects[:],
+	)
+	if result.fits {
+		for rect, index in shared_rects {
+			rects[index] = {
+				f64(rect.x),
+				f64(rect.y),
+				f64(rect.w),
+				f64(rect.h),
+			}
+		}
+	}
+	return rects, result
+}
+
+calendar_ui_content_bottom_for_width :: proc(view_width: f64) -> f64 {
+	_, result := calendar_ui_action_bar_layout_for_width(view_width)
+	height := CALENDAR_ACTION_BAR_HEIGHT
+	if result.fits {height = f64(result.required_height)}
+	return CALENDAR_ACTION_BAR_BOTTOM+height+CALENDAR_LAYOUT_MARGIN
+}
+
 calendar_ui_action_rect_for_width :: proc(index: int, view_width: f64) -> Calendar_UI_Rect {
-	section_gap := CALENDAR_ACTION_BAR_GAP*2
-	total_gap := CALENDAR_ACTION_BAR_GAP*5+section_gap
-	width := (
-		view_width-CALENDAR_LAYOUT_MARGIN*2-total_gap
-	)/7
-	left := CALENDAR_LAYOUT_MARGIN
-	if index >= 6 {
-		left += width*6+CALENDAR_ACTION_BAR_GAP*5+section_gap
-	} else {
-		left += f64(index)*(width+CALENDAR_ACTION_BAR_GAP)
-	}
-	return {
-		left,
-		CALENDAR_ACTION_BAR_BOTTOM,
-		width,
-		CALENDAR_ACTION_BAR_HEIGHT,
-	}
+	if index < 0 || index >= 7 {return {}}
+	rects, result := calendar_ui_action_bar_layout_for_width(view_width)
+	if !result.fits {return {}}
+	return rects[index]
 }
 
 calendar_ui_action_rect :: proc(index: int) -> Calendar_UI_Rect {
@@ -1399,6 +1431,7 @@ calendar_ui_reload_data :: proc(request_connected := true) {
 			dtstart = ical_format_date_time(start),
 			dtend = ical_format_date_time(end),
 			sequence = entry.revision,
+			recurrence_seconds = entry.recurrence_seconds,
 		}
 		append(&calendar_ui.events, event)
 		if has_confirmed_time {
@@ -2809,10 +2842,12 @@ calendar_chore_preset_interval :: proc(index: int) -> i64 {
 calendar_chore_interval_label :: proc(interval: i64) -> string {
 	switch interval {
 	case 86400: return "day"
-	case 172800: return "2 days"
 	case 604800: return "week"
 	case 1209600: return "2 weeks"
 	case 2592000: return "month"
+	}
+	if interval > 0 && interval%86400 == 0 {
+		return fmt.tprintf("%d days", interval/86400)
 	}
 	return ""
 }
@@ -4853,6 +4888,33 @@ calendar_draw_details :: proc(
 				break
 			}
 		}
+		if event.recurrence_seconds > 0 {
+			interval := calendar_chore_interval_label(event.recurrence_seconds)
+			repeats := "RECURRING"
+			if len(interval) > 0 {
+				repeats = fmt.tprintf(
+					"EVERY %s",
+					strings.to_upper(interval, context.temp_allocator),
+				)
+			}
+			calendar_detail_draw_field(
+				ctx, font, "CHORE", event.summary,
+				panel, &cursor, muted, ink,
+			)
+			calendar_detail_draw_field(
+				ctx, font, "DUE", calendar_format_display_date_time(
+					ical_date_time_from_stamp(
+						calendar_ui.navigation_start_stamp,
+						true,
+					),
+					context.temp_allocator,
+				), panel, &cursor, muted, ink,
+			)
+			calendar_detail_draw_field(
+				ctx, font, "REPEATS", repeats,
+				panel, &cursor, muted, ink,
+			)
+		} else {
 		calendar_detail_draw_field(ctx, font, "EVENT", event.summary, panel, &cursor, muted, ink)
 		calendar_detail_draw_field(
 			ctx, font, "START", calendar_format_display_date_time(
@@ -4955,6 +5017,7 @@ calendar_draw_details :: proc(
 				muted,
 				ink,
 			)
+		}
 		}
 		if len(calendar_eventkit_last_error) > 0 {
 			calendar_detail_draw_field(

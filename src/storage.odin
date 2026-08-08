@@ -54,6 +54,7 @@ Calendar_Event :: struct {
 	rrule: string,
 	raw_component: string,
 	sequence: int,
+	recurrence_seconds: i64,
 	last_modified: string,
 	dtstamp: string,
 }
