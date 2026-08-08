@@ -1145,6 +1145,17 @@ calendar_ui_visible_day_count :: proc() -> int {
 	return calendar_ui_visible_day_count_for_height(calendar_ui.height)
 }
 
+calendar_ui_center_day_index :: proc(visible_count: int) -> int {
+	return max(0, (visible_count-1)/2)
+}
+
+calendar_ui_first_visible_day :: proc(
+	anchor_day: i64,
+	visible_count: int,
+) -> i64 {
+	return anchor_day-i64(calendar_ui_center_day_index(visible_count))
+}
+
 calendar_ui_content_rects_for_size :: proc(
 	width, height: f64,
 ) -> (calendar, details: Calendar_UI_Rect) {
@@ -1355,8 +1366,16 @@ calendar_ui_reload_data :: proc(request_connected := true) {
 	)
 	anchor_days := ical_days_from_civil(now.year, now.month, now.day) +
 	               i64(calendar_ui.day_offset)
-	range_start := ical_date_time_from_stamp((anchor_days-7)*86400, true)
-	range_end := ical_date_time_from_stamp((anchor_days+60)*86400, true)
+	visible_count := calendar_ui_visible_day_count()
+	first_visible_day := calendar_ui_first_visible_day(
+		anchor_days,
+		visible_count,
+	)
+	range_start := ical_date_time_from_stamp((first_visible_day-7)*86400, true)
+	range_end := ical_date_time_from_stamp(
+		(first_visible_day+i64(visible_count)+60)*86400,
+		true,
+	)
 	for &entry in entries {
 		if entry.state != "active" {continue}
 		stamp_text := entry.start_at
@@ -1507,6 +1526,41 @@ calendar_ui_set_navigation_selection :: proc(item: Calendar_Navigation_Item) {
 	calendar_ui.navigation_holiday_definition_index = item.holiday.definition_index
 }
 
+calendar_ui_day_offset_for_stamp :: proc(stamp, now_stamp: i64) -> int {
+	now := ical_date_time_from_stamp(now_stamp, true)
+	return int(
+		stamp/86400-
+		ical_days_from_civil(now.year, now.month, now.day),
+	)
+}
+
+calendar_ui_center_focused_day :: proc(stamp: i64) {
+	calendar_ui.day_offset = calendar_ui_day_offset_for_stamp(
+		stamp,
+		time.to_unix_seconds(time.now()),
+	)
+	calendar_ui_reload_data()
+	calendar_ui.needs_redraw = true
+}
+
+calendar_ui_reveal_due_event :: proc(event_index: int) {
+	if calendar_ui.day_offset != 0 || event_index < 0 ||
+	   event_index >= len(calendar_ui.events) {
+		return
+	}
+	entry_id := calendar_ui.events[event_index].row_id
+	for &entry, index in calendar_ui.due_entries {
+		if entry.id != entry_id {continue}
+		visible_count := calendar_ui_due_visible_count()
+		if index < calendar_ui.due_first_row {
+			calendar_ui.due_first_row = index
+		} else if index >= calendar_ui.due_first_row+visible_count {
+			calendar_ui.due_first_row = index-visible_count+1
+		}
+		return
+	}
+}
+
 calendar_ui_focus_event :: proc(
 	event_index: int,
 	start_stamp: i64,
@@ -1522,6 +1576,8 @@ calendar_ui_focus_event :: proc(
 	calendar_ui.navigation_holiday_country_index = -1
 	calendar_ui.navigation_holiday_definition_index = -1
 	calendar_ui.details_scroll = 0
+	calendar_ui_center_focused_day(start_stamp)
+	calendar_ui_reveal_due_event(event_index)
 }
 
 calendar_ui_focus_holiday :: proc(
@@ -1540,6 +1596,7 @@ calendar_ui_focus_holiday :: proc(
 	calendar_ui.navigation_holiday_country_index = country_index
 	calendar_ui.navigation_holiday_definition_index = definition_index
 	calendar_ui.details_scroll = 0
+	calendar_ui_center_focused_day(date_stamp)
 }
 
 calendar_ui_details_url :: proc() -> string {
@@ -1792,6 +1849,22 @@ calendar_navigation_items :: proc(
 	allocator := context.allocator,
 ) -> [dynamic]Calendar_Navigation_Item {
 	items := make([dynamic]Calendar_Navigation_Item, allocator)
+	range_start_stamp := ical_date_time_stamp(range_start)
+	range_end_stamp := ical_date_time_stamp(range_end)
+	for &event, event_index in events {
+		if event.row_id <= 0 || len(event.raw_component) > 0 {continue}
+		start, parsed := ical_parse_date_time(event.dtstart)
+		if !parsed {continue}
+		stamp := ical_date_time_stamp(start)
+		if stamp < range_start_stamp || stamp >= range_end_stamp {continue}
+		append(&items, Calendar_Navigation_Item{
+			kind = .Event,
+			event = {
+				event_index = event_index,
+				start = start,
+			},
+		})
+	}
 	occurrences, _ := calendar_expand_events(
 		events,
 		range_start,
@@ -4271,6 +4344,19 @@ calendar_push_border :: proc(
 	calendar_push_rect(vertices, {rect.x+rect.w-1, rect.y, 1, rect.h}, color)
 }
 
+calendar_mix_color :: proc(
+	base, accent: [4]f32,
+	amount: f32,
+) -> [4]f32 {
+	value := max(f32(0), min(f32(1), amount))
+	return {
+		base[0]+(accent[0]-base[0])*value,
+		base[1]+(accent[1]-base[1])*value,
+		base[2]+(accent[2]-base[2])*value,
+		base[3]+(accent[3]-base[3])*value,
+	}
+}
+
 calendar_push_leading_edge :: proc(
 	vertices: ^[dynamic]Calendar_Solid_Vertex,
 	rect: Calendar_UI_Rect,
@@ -4428,6 +4514,49 @@ calendar_holiday_definition_for_occurrence :: proc(
 	return country, &country.entries[occurrence.definition_index], true
 }
 
+calendar_format_display_date_time :: proc(
+	value: ICal_Date_Time,
+	allocator := context.allocator,
+) -> string {
+	weekdays := [7]string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
+	months := [12]string{
+		"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+		"Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+	}
+	weekday := weekdays[int(ical_weekday(value))]
+	month := ""
+	if value.month >= 1 && value.month <= len(months) {
+		month = months[value.month-1]
+	}
+	if value.is_date {
+		return fmt.aprintf(
+			"%s, %d %s %04d",
+			weekday,
+			value.day,
+			month,
+			value.year,
+			allocator = allocator,
+		)
+	}
+	return fmt.aprintf(
+		"%s, %d %s %04d · %02d:%02d%s",
+		weekday,
+		value.day,
+		month,
+		value.year,
+		value.hour,
+		value.minute,
+		value.utc ? " UTC" : "",
+		allocator = allocator,
+	)
+}
+
+calendar_format_detail_date_time :: proc(value: string) -> string {
+	parsed, ok := ical_parse_date_time(value)
+	if !ok {return value}
+	return calendar_format_display_date_time(parsed, context.temp_allocator)
+}
+
 calendar_detail_draw_field :: proc(
 	ctx, font: rawptr,
 	label, value: string,
@@ -4490,12 +4619,12 @@ calendar_ui_event_index_for_entry :: proc(entry_id: i64) -> int {
 	return -1
 }
 
-CALENDAR_DUE_HEADER_HEIGHT :: 22.0
-CALENDAR_DUE_ROW_HEIGHT :: 26.0
-CALENDAR_DUE_FOOTER_HEIGHT :: 6.0
+CALENDAR_DUE_HEADER_HEIGHT :: 38.0
+CALENDAR_DUE_ROW_HEIGHT :: 54.0
+CALENDAR_DUE_FOOTER_HEIGHT :: 10.0
 
 calendar_ui_due_visible_capacity :: proc(panel: Calendar_UI_Rect) -> int {
-	maximum_height := panel.h/2
+	maximum_height := panel.h*2/3
 	available := maximum_height-CALENDAR_DUE_HEADER_HEIGHT-
 	             CALENDAR_DUE_FOOTER_HEIGHT
 	return max(1, int(available/CALENDAR_DUE_ROW_HEIGHT))
@@ -4538,11 +4667,11 @@ calendar_ui_due_row_rect :: proc(index: int) -> Calendar_UI_Rect {
 	start, _ := calendar_ui_due_visible_range()
 	slot := index-start
 	return {
-		section.x+8,
+		section.x+12,
 		section.y+section.h-CALENDAR_DUE_HEADER_HEIGHT-
-		f64(slot+1)*CALENDAR_DUE_ROW_HEIGHT,
-		section.w-16,
-		CALENDAR_DUE_ROW_HEIGHT,
+		f64(slot+1)*CALENDAR_DUE_ROW_HEIGHT+4,
+		section.w-24,
+		CALENDAR_DUE_ROW_HEIGHT-8,
 	}
 }
 
@@ -4563,12 +4692,30 @@ calendar_ui_scroll_due_rows :: proc(delta: f64) {
 
 calendar_ui_due_focus_rect :: proc(index: int) -> Calendar_UI_Rect {
 	row := calendar_ui_due_row_rect(index)
-	return {row.x, row.y, row.w-70, row.h}
+	return {row.x, row.y, row.w-94, row.h}
 }
 
 calendar_ui_due_done_rect :: proc(index: int) -> Calendar_UI_Rect {
 	row := calendar_ui_due_row_rect(index)
-	return {row.x+row.w-62, row.y+3, 54, row.h-6}
+	return {row.x+row.w-82, row.y+8, 70, row.h-16}
+}
+
+calendar_ui_due_row_selected :: proc(index: int) -> bool {
+	if index < 0 || index >= len(calendar_ui.due_entries) ||
+	   !calendar_ui.navigation_active || calendar_ui.navigation_kind != .Event {
+		return false
+	}
+	return calendar_ui_event_index_for_entry(calendar_ui.due_entries[index].id) ==
+	       calendar_ui.navigation_event_index
+}
+
+calendar_ui_due_entry_meta :: proc(entry: ^Agenda_Entry) -> string {
+	interval := calendar_chore_interval_label(entry.recurrence_seconds)
+	if len(interval) == 0 {return "DUE · RECURRING"}
+	return fmt.tprintf(
+		"DUE · EVERY %s",
+		strings.to_upper(interval, context.temp_allocator),
+	)
 }
 
 calendar_draw_due_section :: proc(
@@ -4579,7 +4726,6 @@ calendar_draw_due_section :: proc(
 	if calendar_active_modal().kind != .None {return 0}
 	section := calendar_ui_due_section_rect()
 	if section.h <= 0 {return 0}
-	theme := calendar_theme(calendar_ui.theme_id)
 	if calendar_ordered_active {
 		calendar_ordered_push_clip(section)
 		defer calendar_ordered_pop_clip()
@@ -4596,22 +4742,51 @@ calendar_draw_due_section :: proc(
 		ctx,
 		font,
 		"DUE TASKS",
-		{section.x+12, section.y+section.h-20, section.w-24, 16},
+		{section.x+12, section.y+section.h-27, section.w-110, 16},
 		ink,
 		0,
 		style = .Label,
 	)
 	start, end := calendar_ui_due_visible_range()
+	count_text := fmt.tprintf("%d DUE", len(calendar_ui.due_entries))
+	if end-start < len(calendar_ui.due_entries) {
+		count_text = fmt.tprintf(
+			"%d–%d OF %d",
+			start+1,
+			end,
+			len(calendar_ui.due_entries),
+		)
+	}
+	calendar_draw_text(
+		ctx,
+		font,
+		count_text,
+		{section.x+section.w-108, section.y+section.h-27, 96, 16},
+		muted,
+		0,
+		.End,
+		style = .Label,
+	)
 	for index in start..<end {
 		entry := &calendar_ui.due_entries[index]
+		row_rect := calendar_ui_due_row_rect(index)
 		name_rect := calendar_ui_due_focus_rect(index)
 		calendar_draw_text(
 			ctx,
 			font,
 			entry.original_text,
-			name_rect,
+			{name_rect.x+12, row_rect.y+22, name_rect.w-16, 20},
 			ink,
-			6,
+			0,
+		)
+		calendar_draw_text(
+			ctx,
+			font,
+			calendar_ui_due_entry_meta(entry),
+			{name_rect.x+12, row_rect.y+6, name_rect.w-16, 14},
+			muted,
+			0,
+			style = .Label,
 		)
 		done_rect := calendar_ui_due_done_rect(index)
 		calendar_draw_text(
@@ -4619,8 +4794,9 @@ calendar_draw_due_section :: proc(
 			font,
 			"DONE",
 			done_rect,
-			calendar_color64(theme.positive),
+			ink,
 			0,
+			.Center,
 		)
 	}
 	return section.h
@@ -4679,11 +4855,18 @@ calendar_draw_details :: proc(
 		}
 		calendar_detail_draw_field(ctx, font, "EVENT", event.summary, panel, &cursor, muted, ink)
 		calendar_detail_draw_field(
-			ctx, font, "START", ical_format_date_time(
-				ical_date_time_from_stamp(calendar_ui.navigation_start_stamp),
+			ctx, font, "START", calendar_format_display_date_time(
+				ical_date_time_from_stamp(
+					calendar_ui.navigation_start_stamp,
+					calendar_ui.navigation_start_is_date,
+				),
+				context.temp_allocator,
 			), panel, &cursor, muted, ink,
 		)
-		calendar_detail_draw_field(ctx, font, "END", end, panel, &cursor, muted, ink)
+		calendar_detail_draw_field(
+			ctx, font, "END", calendar_format_detail_date_time(end),
+			panel, &cursor, muted, ink,
+		)
 		calendar_detail_draw_field(ctx, font, "LOCATION", event.location, panel, &cursor, muted, ink)
 		calendar_detail_draw_field(ctx, font, "CATEGORIES", event.categories, panel, &cursor, muted, ink)
 		calendar_detail_draw_field(ctx, font, "IMPORTANCE", event.important ? "IMPORTANT" : "STANDARD", panel, &cursor, muted, ink)
@@ -4878,8 +5061,11 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 	anchor := ical_days_from_civil(now.year, now.month, now.day) +
 	          i64(calendar_ui.day_offset)
 	visible := calendar_ui_visible_day_count()
+	first_visible_day := calendar_ui_first_visible_day(anchor, visible)
+	today_days := ical_days_from_civil(now.year, now.month, now.day)
 	for index in 0..<visible {
-		day := ical_date_time_from_stamp((anchor+i64(index))*86400, true)
+		day_days := first_visible_day+i64(index)
+		day := ical_date_time_from_stamp(day_days*86400, true)
 		rect := calendar_ui_day_rect(index)
 		day_items := calendar_day_items(day)
 		is_important := false
@@ -4890,13 +5076,28 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 		}
 		color := row
 		if index%2 == 1 {color = row_alt}
+		selected_day := day_days == anchor
+		current_day := day_days == today_days
+		if selected_day {
+			color = calendar_mix_color(color, theme.focus, 0.12)
+		}
+		if current_day {
+			color = calendar_mix_color(color, theme.warm_strong, 0.28)
+		}
 		calendar_push_rect(vertices, rect, color)
 		if is_important {
 			calendar_push_leading_edge(vertices, rect, theme.important)
 		}
-		if ical_days_from_civil(day.year, day.month, day.day) ==
-		   ical_days_from_civil(now.year, now.month, now.day) {
-			calendar_push_border(vertices, rect, focus)
+		if selected_day {
+			calendar_push_border(vertices, rect, theme.focus)
+		}
+		if current_day {
+			calendar_push_border(vertices, rect, theme.warm_strong)
+			calendar_push_border(
+				vertices,
+				{rect.x+1, rect.y+1, rect.w-2, rect.h-2},
+				theme.warm_strong,
+			)
 		}
 		for item, item_index in day_items {
 			if item_index >= 3 {break}
@@ -4980,12 +5181,27 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 		}
 	}
 	if calendar_ui.day_offset == 0 && len(calendar_ui.due_entries) > 0 &&
-	   !calendar_ui.editor_open && !calendar_ui.chore_open &&
-	   !calendar_ui.archive_modal_open && !calendar_ui.settings_open &&
-	   !calendar_ui.shortcut_open {
+	   calendar_active_modal().kind == .None {
 		start, end := calendar_ui_due_visible_range()
 		for index in start..<end {
 			entry := &calendar_ui.due_entries[index]
+			row_rect := calendar_ui_due_row_rect(index)
+			row_color := button
+			if calendar_ui_due_row_selected(index) {
+				row_color = calendar_mix_color(row_color, theme.focus, 0.16)
+			}
+			calendar_push_rect(vertices, row_rect, row_color)
+			calendar_push_leading_edge(vertices, row_rect, theme.positive)
+			if calendar_ui_due_row_selected(index) {
+				calendar_push_border(vertices, row_rect, theme.focus)
+			}
+			done_rect := calendar_ui_due_done_rect(index)
+			calendar_push_rect(
+				vertices,
+				done_rect,
+				calendar_mix_color(button, theme.positive, 0.18),
+			)
+			calendar_push_border(vertices, done_rect, theme.positive)
 			due_stamp, _ := strconv.parse_i64(entry.due_at)
 			event_index := calendar_ui_event_index_for_entry(entry.id)
 			calendar_ui_add_control(
@@ -6110,9 +6326,13 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 	anchor := ical_days_from_civil(now.year, now.month, now.day) +
 	          i64(calendar_ui.day_offset)
 	visible := calendar_ui_visible_day_count()
+	first_visible_day := calendar_ui_first_visible_day(anchor, visible)
 	weekdays := [7]string{"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"}
 	for index in 0..<visible {
-		day := ical_date_time_from_stamp((anchor+i64(index))*86400, true)
+		day := ical_date_time_from_stamp(
+			(first_visible_day+i64(index))*86400,
+			true,
+		)
 		rect := calendar_ui_day_rect(index)
 		date_text := fmt.tprintf(
 			"%s  %04d-%02d-%02d",

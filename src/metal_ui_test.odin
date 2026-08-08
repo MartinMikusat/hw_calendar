@@ -224,7 +224,7 @@ calendar_due_section_is_top_pinned_and_bounded_test :: proc(t: ^testing.T) {
 	panel := calendar_ui_details_rect()
 	section := calendar_ui_due_section_rect()
 	testing.expect_value(t, section.y+section.h, panel.y+panel.h)
-	testing.expect(t, section.h <= panel.h/2)
+	testing.expect(t, section.h <= panel.h*2/3)
 	start, end := calendar_ui_due_visible_range()
 	testing.expect_value(t, start, 0)
 	testing.expect(t, end < len(calendar_ui.due_entries))
@@ -232,9 +232,51 @@ calendar_due_section_is_top_pinned_and_bounded_test :: proc(t: ^testing.T) {
 	last := calendar_ui_due_row_rect(end-1)
 	testing.expect(t, first.y+first.h <= section.y+section.h-CALENDAR_DUE_HEADER_HEIGHT)
 	testing.expect(t, last.y >= section.y+CALENDAR_DUE_FOOTER_HEIGHT)
+	done := calendar_ui_due_done_rect(start)
+	focus := calendar_ui_due_focus_rect(start)
+	testing.expect(t, done.x >= focus.x+focus.w)
+	testing.expect(t, done.y >= first.y && done.y+done.h <= first.y+first.h)
 	calendar_ui_scroll_due_rows(-24)
 	start, _ = calendar_ui_due_visible_range()
 	testing.expect(t, start > 0)
+	for index in 0..<len(calendar_ui.due_entries) {
+		calendar_ui.due_entries[index].id = i64(index+1)
+	}
+	calendar_ui.events = make([dynamic]Calendar_Event, 1)
+	defer delete(calendar_ui.events)
+	calendar_ui.events[0].row_id = calendar_ui.due_entries[20].id
+	calendar_ui.due_first_row = 0
+	calendar_ui_reveal_due_event(0)
+	start, end = calendar_ui_due_visible_range()
+	testing.expect(t, start > 0)
+	testing.expect(t, 20 >= start && 20 < end)
+}
+
+@(test)
+calendar_detail_dates_use_readable_display_format_test :: proc(t: ^testing.T) {
+	date, date_ok := ical_parse_date_time("20260808")
+	testing.expect(t, date_ok)
+	if date_ok {
+		formatted := calendar_format_display_date_time(date, context.temp_allocator)
+		testing.expect_value(t, formatted, "Sat, 8 Aug 2026")
+	}
+	timed, timed_ok := ical_parse_date_time("20260808T094546")
+	testing.expect(t, timed_ok)
+	if timed_ok {
+		formatted := calendar_format_display_date_time(timed, context.temp_allocator)
+		testing.expect_value(t, formatted, "Sat, 8 Aug 2026 · 09:45")
+	}
+	utc, utc_ok := ical_parse_date_time("20260808T094546Z")
+	testing.expect(t, utc_ok)
+	if utc_ok {
+		formatted := calendar_format_display_date_time(utc, context.temp_allocator)
+		testing.expect_value(t, formatted, "Sat, 8 Aug 2026 · 09:45 UTC")
+	}
+	testing.expect_value(
+		t,
+		calendar_format_detail_date_time("invalid date"),
+		"invalid date",
+	)
 }
 
 calendar_icon_points_use_iconoir_viewbox_test :: proc(
@@ -337,6 +379,16 @@ calendar_day_list_stops_above_action_bar_test :: proc(t: ^testing.T) {
 	          CALENDAR_DAY_TOP_GAP-
 	          CALENDAR_DAY_ROW_PITCH*f64(count-1)-CALENDAR_DAY_ROW_HEIGHT
 	testing.expect(t, last_y >= CALENDAR_CONTENT_BOTTOM)
+}
+
+@(test)
+calendar_day_list_centers_its_anchor_test :: proc(t: ^testing.T) {
+	testing.expect_value(t, calendar_ui_first_visible_day(100, 1), i64(100))
+	testing.expect_value(t, calendar_ui_first_visible_day(100, 5), i64(98))
+	testing.expect_value(t, calendar_ui_first_visible_day(100, 22), i64(90))
+	now := ical_days_from_civil(2026, 8, 8)*86400+12*3600
+	target := ical_days_from_civil(2026, 8, 12)*86400
+	testing.expect_value(t, calendar_ui_day_offset_for_stamp(target, now), 4)
 }
 
 @(test)
@@ -523,6 +575,29 @@ calendar_navigation_selects_adjacent_event_and_holiday_test :: proc(
 
 	_, found = calendar_navigation_find(items, .Previous, day)
 	testing.expect(t, !found)
+}
+
+@(test)
+calendar_navigation_includes_dated_agenda_entries_test :: proc(t: ^testing.T) {
+	day := ical_days_from_civil(2026, 8, 8)*86400
+	events := []Calendar_Event{{
+		row_id = 1,
+		uid = "agenda-1",
+		dtstart = "20260808",
+		dtend = "20260808",
+	}}
+	items := calendar_navigation_items(
+		events,
+		nil,
+		ical_date_time_from_stamp(day-86400, true),
+		ical_date_time_from_stamp(day+86400, true),
+		context.temp_allocator,
+	)
+	testing.expect_value(t, len(items), 1)
+	if len(items) == 1 {
+		testing.expect_value(t, items[0].kind, Calendar_Navigation_Item_Kind.Event)
+		testing.expect_value(t, items[0].event.event_index, 0)
+	}
 }
 
 @(test)

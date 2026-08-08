@@ -31,15 +31,19 @@ current product boundary.
 The main interface shows a chronological period. Dated entries, due recurring
 work, and enabled holidays share this view. An entry without a confirmed date
 remains available through search and the structured command interface.
+The focused date stays in the center row and always has a subtle focus tint and
+border, including when the date has no entries. The current date has a stronger
+warm tint and border.
 
 A recurring entry works as a chore. Define it once with an interval, for example
 `vacuum every week`, and it becomes due immediately. Marking it done starts the
 interval clock from that moment, so the next due date is `completion time +
 interval`. An overdue chore stays in the due list until it is marked done; it
 does not expire or re-enter the list on a fixed schedule. While the view is on
-today, a `DUE TASKS` list is pinned at the top of the details panel and shows
-every currently-due recurring entry, each with a `DONE` control. The list
-disappears when the view moves to another day.
+today, a `DUE TASKS` section is pinned at the top of the details panel. It grows
+to show more chores and uses up to two-thirds of the panel. Each chore has a
+separate `DONE` control. The section scrolls when more chores are due than fit,
+and it disappears when the view moves to another day.
 
 The entry editor keeps natural-language text as its primary field. The shared
 control registry routes pointer, numbered keyboard, Accessibility, and Flash
@@ -49,6 +53,9 @@ capability metadata.
 The `NEW CHORE` action (numbered code `21`, also available from the command
 palette) opens a chore editor with a name field and interval presets. Saving
 creates a recurring entry that is due immediately.
+
+Use `Command` with the arrow keys to jump between all dated entries, chores,
+and holidays. The selected date moves to the center row.
 
 Use the gear control or `Command-,` to open Settings. Settings contains theme
 and Flash shortcut configuration. The theme catalog contains HW Light and HW
