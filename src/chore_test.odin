@@ -97,6 +97,15 @@ chore_due_and_rolling_completion_test :: proc(t: ^testing.T) {
 	defer agenda_entry_destroy(&reloaded_future)
 	testing.expect(t, future_found)
 	testing.expect_value(t, reloaded_future.revision, future.revision)
+
+	calendar_ui_reload_data(false)
+	calendar_ui.day_offset += 1
+	calendar_ui_reload_data(false)
+	testing.expect(t, calendar_ui_event_index_for_entry(created.id) >= 0)
+	calendar_ui.day_offset = 0
+	calendar_events_destroy(&calendar_ui.events)
+	calendar_occurrences_destroy(&calendar_ui.occurrences)
+	agenda_entries_destroy(&calendar_ui.due_entries)
 }
 
 agenda_completion_recent :: proc(entry_id: i64, allocator := context.allocator) -> (string, bool) {

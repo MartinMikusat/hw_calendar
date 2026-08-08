@@ -1369,7 +1369,11 @@ calendar_ui_reload_data :: proc(request_connected := true) {
 		if end_stamp, ok := strconv.parse_i64(entry.end_at); ok {end = ical_date_time_from_stamp(end_stamp, true)} else if parsed, ok := ical_parse_date_time(entry.end_at); ok {end = parsed}
 		event := Calendar_Event{
 			row_id = entry.id,
-			uid = fmt.tprintf("agenda-%d", entry.id),
+			uid = fmt.aprintf(
+				"agenda-%d",
+				entry.id,
+				allocator = context.allocator,
+			),
 			summary = strings.clone(entry.original_text),
 			location = strings.clone(entry.location),
 			url = strings.clone(entry.source_url),
