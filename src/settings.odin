@@ -8,7 +8,9 @@ import flash "flash:."
 Calendar_Settings_Category :: enum {
 	Styling,
 	Connected_Calendars,
+	Data,
 	Shortcuts,
+	Updates,
 }
 
 Calendar_Setting_Descriptor :: struct {
@@ -22,6 +24,9 @@ Calendar_Setting_Descriptor :: struct {
 
 CALENDAR_SETTING_FLASH_ID :: command_palette.Entry_ID(100)
 CALENDAR_SETTING_EVENTKIT_ACCESS_ID :: command_palette.Entry_ID(200)
+CALENDAR_SETTING_ARCHIVE_EXPORT_ID :: command_palette.Entry_ID(300)
+CALENDAR_SETTING_ARCHIVE_IMPORT_ID :: command_palette.Entry_ID(301)
+CALENDAR_SETTING_UPDATE_CHECK_ID :: command_palette.Entry_ID(400)
 CALENDAR_SETTING_EVENTKIT_CALENDAR_BASE_ID :: command_palette.Entry_ID(1_000)
 CALENDAR_SETTINGS_ROW_HEIGHT :: 36.0
 
@@ -29,7 +34,9 @@ calendar_settings_category_name :: proc(category: Calendar_Settings_Category) ->
 	switch category {
 	case .Styling: return "STYLING"
 	case .Connected_Calendars: return "CALENDARS"
+	case .Data: return "DATA"
 	case .Shortcuts: return "SHORTCUTS"
+	case .Updates: return "UPDATES"
 	}
 	return "SETTINGS"
 }
@@ -145,6 +152,36 @@ calendar_settings_descriptors :: proc(
 		subtitle = "Configure the key chord that opens Flash targets",
 		keywords = flash_keywords,
 		action = {kind = .Configure_Flash},
+	})
+	export_keywords := make([]string, 4, allocator)
+	copy(export_keywords, []string{"archive", "backup", "portable", "json"})
+	append(&result, Calendar_Setting_Descriptor{
+		id = CALENDAR_SETTING_ARCHIVE_EXPORT_ID,
+		category = .Data,
+		title = "Export agenda",
+		subtitle = "Save entries, proposals, and completion history",
+		keywords = export_keywords,
+		action = {kind = .Export_Agenda},
+	})
+	import_keywords := make([]string, 4, allocator)
+	copy(import_keywords, []string{"archive", "restore", "portable", "json"})
+	append(&result, Calendar_Setting_Descriptor{
+		id = CALENDAR_SETTING_ARCHIVE_IMPORT_ID,
+		category = .Data,
+		title = "Import agenda",
+		subtitle = "Replace agenda data after creating a backup",
+		keywords = import_keywords,
+		action = {kind = .Import_Agenda},
+	})
+	update_keywords := make([]string, 4, allocator)
+	copy(update_keywords, []string{"release", "version", "sparkle", "download"})
+	append(&result, Calendar_Setting_Descriptor{
+		id = CALENDAR_SETTING_UPDATE_CHECK_ID,
+		category = .Updates,
+		title = "Check for updates",
+		subtitle = "Check the stable release feed",
+		keywords = update_keywords,
+		action = {kind = .Check_For_Updates},
 	})
 	return result
 }
@@ -307,6 +344,7 @@ calendar_settings_open :: proc() -> bool {
 	calendar_ui.settings_query = ""
 	delete(calendar_ui.settings_error)
 	calendar_ui.settings_error = ""
+	calendar_ui.settings_message_is_error = false
 	flash.cancel(&calendar_ui.flash)
 	calendar_text_focus(.Settings_Search)
 	calendar_ui.needs_redraw = true
@@ -328,6 +366,7 @@ calendar_settings_close :: proc() {
 	calendar_ui.settings_query = ""
 	delete(calendar_ui.settings_error)
 	calendar_ui.settings_error = ""
+	calendar_ui.settings_message_is_error = false
 	flash.cancel(&calendar_ui.flash)
 	calendar_ui.needs_redraw = true
 }

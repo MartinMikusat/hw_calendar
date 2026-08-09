@@ -47,6 +47,10 @@ Calendar_CLI_Command :: enum {
 	Proposal_Reject,
 	Chore_Due,
 	Chore_Done,
+	Archive_Export,
+	Archive_Inspect,
+	Archive_Import,
+	Update_Check,
 }
 
 Calendar_CLI_Request :: struct {
@@ -70,6 +74,8 @@ Calendar_CLI_Request :: struct {
 	target_control: string,
 	key: string,
 	modifiers: string,
+	path: string,
+	replace: bool,
 	limit: int,
 	if_revision: int,
 }
@@ -88,7 +94,8 @@ calendar_cli_command_mutates_database :: proc(command: Calendar_CLI_Command) -> 
 	       command == .Entry_Complete || command == .Entry_Reopen ||
 	       command == .Entry_Dismiss || command == .Entry_Restore ||
 	       command == .Proposal_Submit || command == .Proposal_Confirm ||
-	       command == .Proposal_Reject || command == .Chore_Done
+	       command == .Proposal_Reject || command == .Chore_Done ||
+	       command == .Archive_Import
 }
 
 calendar_cli_command_requires_gui :: proc(command: Calendar_CLI_Command) -> bool {
@@ -96,12 +103,14 @@ calendar_cli_command_requires_gui :: proc(command: Calendar_CLI_Command) -> bool
 	       command == .UI_Modal_State || command == .UI_Modal_Dismiss ||
 	       command == .UI_Bridge_Pointer ||
 	       command == .UI_Bridge_Keyboard ||
+	       command == .Update_Check ||
 	       command == .Calendar_Status || command == .Calendar_List ||
 	       command == .Calendar_Request_Access
 }
 
 calendar_cli_command_uses_database :: proc(command: Calendar_CLI_Command) -> bool {
-	return command != .ICal_Validate && command != .Recurrence_Expand
+	return command != .ICal_Validate && command != .Recurrence_Expand &&
+	       command != .Archive_Inspect && command != .Update_Check
 }
 
 Calendar_CLI_Result :: struct {
@@ -137,6 +146,17 @@ Calendar_CLI_Modal_Response :: struct {
 	ok: bool,
 	command: string,
 	data: Calendar_CLI_Modal_Data,
+}
+
+Calendar_CLI_Update_Data :: struct {
+	checking: bool,
+	version: string,
+}
+
+Calendar_CLI_Update_Response :: struct {
+	ok: bool,
+	command: string,
+	data: Calendar_CLI_Update_Data,
 }
 
 Calendar_CLI_UI_Bridge_Data :: struct {
@@ -383,6 +403,10 @@ calendar_cli_command_name :: proc(command: Calendar_CLI_Command) -> string {
 	case .Proposal_Reject: return "proposal reject"
 	case .Chore_Due: return "chore due"
 	case .Chore_Done: return "chore done"
+	case .Archive_Export: return "archive export"
+	case .Archive_Inspect: return "archive inspect"
+	case .Archive_Import: return "archive import"
+	case .Update_Check: return "update check"
 	case .None: return "unknown"
 	}
 	return "unknown"
@@ -415,7 +439,7 @@ calendar_cli_error :: proc(
 calendar_cli_parse :: proc(args: []string) -> (Calendar_CLI_Request, Calendar_CLI_Result, bool) {
 	request := Calendar_CLI_Request{limit=10_000}
 	if len(args) < 2 {
-		return {}, calendar_cli_error(.None, 2, "usage", "Expected an entry, agenda, proposal, chore, reminder, or UI command."), false
+		return {}, calendar_cli_error(.None, 2, "usage", "Expected an entry, agenda, proposal, chore, archive, update, reminder, or UI command."), false
 	}
 	group, action := args[0], args[1]
 	switch {
@@ -442,6 +466,10 @@ calendar_cli_parse :: proc(args: []string) -> (Calendar_CLI_Request, Calendar_CL
 	case group == "proposal" && action == "reject": request.command = .Proposal_Reject
 	case group == "chore" && action == "due": request.command = .Chore_Due
 	case group == "chore" && action == "done": request.command = .Chore_Done
+	case group == "archive" && action == "export": request.command = .Archive_Export
+	case group == "archive" && action == "inspect": request.command = .Archive_Inspect
+	case group == "archive" && action == "import": request.command = .Archive_Import
+	case group == "update" && action == "check": request.command = .Update_Check
 	case:
 		return {}, calendar_cli_error(.None, 2, "usage", "Unknown command."), false
 	}
@@ -452,6 +480,11 @@ calendar_cli_parse :: proc(args: []string) -> (Calendar_CLI_Request, Calendar_CL
 		}
 		if args[index] == "--confirm-external-write" {
 			request.confirm_external_write = true
+			index += 1
+			continue
+		}
+		if args[index] == "--replace" {
+			request.replace = true
 			index += 1
 			continue
 		}
@@ -477,6 +510,7 @@ calendar_cli_parse :: proc(args: []string) -> (Calendar_CLI_Request, Calendar_CL
 		case "--control": request.target_control = value
 		case "--key": request.key = value
 		case "--modifiers": request.modifiers = value
+		case "--path": request.path = value
 		case "--if-revision":
 			parsed, ok := strconv.parse_int(value)
 			if !ok || parsed < 1 {return {}, calendar_cli_error(request.command, 2, "usage", "--if-revision must be a positive integer."), false}
@@ -519,6 +553,24 @@ calendar_cli_parse :: proc(args: []string) -> (Calendar_CLI_Request, Calendar_CL
 			2,
 			"usage",
 			"ui bridge-pointer requires --control.",
+		), false
+	}
+	if (request.command == .Archive_Export ||
+	    request.command == .Archive_Inspect ||
+	    request.command == .Archive_Import) && len(request.path) == 0 {
+		return {}, calendar_cli_error(
+			request.command,
+			2,
+			"usage",
+			"The archive command requires --path.",
+		), false
+	}
+	if request.command == .Archive_Import && !request.replace {
+		return {}, calendar_cli_error(
+			request.command,
+			2,
+			"replacement_not_confirmed",
+			"archive import requires --replace.",
 		), false
 	}
 	if request.command == .UI_Bridge_Keyboard {
@@ -1686,6 +1738,11 @@ calendar_cli_event_mutate :: proc(
 }
 
 calendar_cli_execute :: proc(request: Calendar_CLI_Request) -> Calendar_CLI_Result {
+	if request.command == .Archive_Export ||
+	   request.command == .Archive_Inspect ||
+	   request.command == .Archive_Import {
+		return calendar_archive_cli_execute(request)
+	}
 	if request.command >= .Entry_Create && request.command <= .Chore_Done {
 		return agenda_cli_execute(request)
 	}
@@ -1717,6 +1774,25 @@ calendar_cli_execute :: proc(request: Calendar_CLI_Request) -> Calendar_CLI_Resu
 					pending_limit = 48,
 					executable_action = "DISPLAY",
 					snooze_seconds = 600,
+				},
+			}),
+		}
+	case .Update_Check:
+		if !calendar_ui_check_for_updates(false) {
+			return calendar_cli_error(
+				request.command,
+				6,
+				"updater_unavailable",
+				"The release updater is not available in this build.",
+			)
+		}
+		return {
+			output = calendar_cli_encode(Calendar_CLI_Update_Response{
+				ok = true,
+				command = calendar_cli_command_name(request.command),
+				data = {
+					checking = true,
+					version = updater_version_label(),
 				},
 			}),
 		}

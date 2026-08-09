@@ -19,6 +19,7 @@ git hw_odin_ui_framework https://github.com/MartinMikusat/hw_odin_ui_framework.g
 
 # Bundled Iconoir release and file checksums.
 iconoir v7.11.1 3497016dcb93122b5a64a2df1221598a14ecf4f3 https://github.com/iconoir-icons/iconoir/archive/refs/tags/v7.11.1.tar.gz 6a22cb1c3eaa49485a5f40cf276c0d063af0792d7bfed8b4bec4fbfc8866e5b2
+iconoir-file calendar.svg 8ae89c6d771ae5371a978ee43b348c44313109780510ca9195a7fe989d24adbb
 iconoir-file maximize.svg 3a3048cdc0e8e4aef5d68353b5434f0c0e074dc672b6c0abf25a5a64bc5cc8f4
 iconoir-file minus.svg babb05bca016bffdd38cbd1dcaeef6ccdf42fc8654124dee169a412eeed6d425
 iconoir-file settings.svg 437c253a1c11ff214c490c766f2a3cdcf8547399fd0be48a7d222bf0703aefb5

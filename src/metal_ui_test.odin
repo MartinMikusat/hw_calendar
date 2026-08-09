@@ -133,6 +133,23 @@ calendar_discard_confirmation_owns_modal_input_test :: proc(t: ^testing.T) {
 }
 
 @(test)
+calendar_agenda_import_confirmation_owns_modal_input_test :: proc(t: ^testing.T) {
+	sync.mutex_lock(&calendar_ui_test_mutex)
+	defer sync.mutex_unlock(&calendar_ui_test_mutex)
+	previous := calendar_ui
+	defer {calendar_ui = previous}
+	calendar_ui = Calendar_UI_State{
+		width = 900,
+		height = 700,
+		settings_open = true,
+		archive_import_open = true,
+	}
+	modal := calendar_active_modal()
+	testing.expect_value(t, modal.kind, Calendar_Modal_Kind.Agenda_Import)
+	testing.expect_value(t, modal.dismissal, Calendar_Modal_Dismissal.Dismissible)
+}
+
+@(test)
 calendar_chore_cancel_requests_dirty_confirmation_test :: proc(t: ^testing.T) {
 	sync.mutex_lock(&calendar_ui_test_mutex)
 	defer sync.mutex_unlock(&calendar_ui_test_mutex)
@@ -567,6 +584,22 @@ calendar_chore_modal_actions_use_single_digit_codes_test :: proc(t: ^testing.T) 
 		).first,
 		i8(7),
 	)
+}
+
+@(test)
+calendar_agenda_import_modal_numbers_actions_from_left_to_right_test :: proc(
+	t: ^testing.T,
+) {
+	cancel := calendar_framework_number_code(
+		Calendar_App_Action{kind = .Import_Agenda_Cancel},
+	)
+	replace := calendar_framework_number_code(
+		Calendar_App_Action{kind = .Import_Agenda_Replace},
+	)
+	testing.expect_value(t, cancel.first, i8(1))
+	testing.expect_value(t, cancel.digits, i8(1))
+	testing.expect_value(t, replace.first, i8(2))
+	testing.expect_value(t, replace.digits, i8(1))
 }
 
 @(test)

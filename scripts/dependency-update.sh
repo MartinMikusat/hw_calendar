@@ -182,7 +182,7 @@ ICONOIR_ROOT=$(find "$ICONOIR_EXTRACT" -mindepth 1 -maxdepth 1 -type d -print -q
   echo '[dependency-update] Iconoir archive has an invalid layout' >&2
   exit 1
 }
-for name in maximize.svg minus.svg settings.svg xmark.svg; do
+for name in calendar.svg maximize.svg minus.svg settings.svg xmark.svg; do
   cp "$ICONOIR_ROOT/icons/regular/$name" "$ICON_TARGET/$name"
 done
 cp "$ICONOIR_ROOT/LICENSE" "$ICON_TARGET/LICENSE"
@@ -212,7 +212,7 @@ CANDIDATE_LOCK="$WORKTREE/dependencies.lock"
   printf '\n# Bundled Iconoir release and file checksums.\n'
   printf 'iconoir %s %s %s %s\n' \
     "$ICONOIR_TAG" "$ICONOIR_COMMIT" "$ICONOIR_URL" "$ICONOIR_SHA"
-  for name in maximize.svg minus.svg settings.svg xmark.svg LICENSE; do
+  for name in calendar.svg maximize.svg minus.svg settings.svg xmark.svg LICENSE; do
     printf 'iconoir-file %s %s\n' "$name" "$(checksum "$ICON_TARGET/$name")"
   done
 } > "$CANDIDATE_LOCK"

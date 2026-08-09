@@ -128,3 +128,58 @@ calendar_cli_usage_lists_chore_commands_test :: proc(t: ^testing.T) {
 	testing.expect(t, !parsed)
 	testing.expect(t, strings.contains(result.output, "chore"))
 }
+
+@(test)
+calendar_cli_parses_archive_commands_test :: proc(t: ^testing.T) {
+	export_request, export_result, export_parsed := calendar_cli_parse([]string{
+		"archive", "export", "--path", "/tmp/calendar.json",
+	})
+	defer delete(export_result.output)
+	testing.expect(t, export_parsed)
+	testing.expect_value(t, export_request.command, Calendar_CLI_Command.Archive_Export)
+	testing.expect_value(t, export_request.path, "/tmp/calendar.json")
+	testing.expect(t, calendar_cli_command_uses_database(export_request.command))
+	testing.expect(t, !calendar_cli_command_mutates_database(export_request.command))
+
+	inspect_request, inspect_result, inspect_parsed := calendar_cli_parse([]string{
+		"archive", "inspect", "--path", "/tmp/calendar.json",
+	})
+	defer delete(inspect_result.output)
+	testing.expect(t, inspect_parsed)
+	testing.expect_value(t, inspect_request.command, Calendar_CLI_Command.Archive_Inspect)
+	testing.expect(t, !calendar_cli_command_uses_database(inspect_request.command))
+
+	import_request, import_result, import_parsed := calendar_cli_parse([]string{
+		"archive", "import", "--path", "/tmp/calendar.json", "--replace",
+	})
+	defer delete(import_result.output)
+	testing.expect(t, import_parsed)
+	testing.expect_value(t, import_request.command, Calendar_CLI_Command.Archive_Import)
+	testing.expect(t, import_request.replace)
+	testing.expect(t, calendar_cli_command_mutates_database(import_request.command))
+}
+
+@(test)
+calendar_cli_requires_archive_path_and_import_confirmation_test :: proc(t: ^testing.T) {
+	_, path_result, path_parsed := calendar_cli_parse([]string{"archive", "export"})
+	defer delete(path_result.output)
+	testing.expect(t, !path_parsed)
+	testing.expect(t, strings.contains(path_result.output, "requires --path"))
+
+	_, replace_result, replace_parsed := calendar_cli_parse([]string{
+		"archive", "import", "--path", "/tmp/calendar.json",
+	})
+	defer delete(replace_result.output)
+	testing.expect(t, !replace_parsed)
+	testing.expect(t, strings.contains(replace_result.output, "requires --replace"))
+}
+
+@(test)
+calendar_cli_parses_update_check_test :: proc(t: ^testing.T) {
+	request, result, parsed := calendar_cli_parse([]string{"update", "check"})
+	defer delete(result.output)
+	testing.expect(t, parsed)
+	testing.expect_value(t, request.command, Calendar_CLI_Command.Update_Check)
+	testing.expect(t, calendar_cli_command_requires_gui(request.command))
+	testing.expect(t, !calendar_cli_command_uses_database(request.command))
+}

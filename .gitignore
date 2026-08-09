@@ -1,3 +1,4 @@
 build/
+release-output/
 .DS_Store
 *.dSYM/

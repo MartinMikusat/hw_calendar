@@ -102,4 +102,35 @@ fi
 "$CLI" entry get --id "$NOTE_ID" |
   jq -e '.data.entry.state == "active" and .data.entry.revision == 1' >/dev/null
 
+ARCHIVE="$TMP/agenda.hwcalendar.json"
+"$CLI" archive export --path "$ARCHIVE" |
+  jq -e '.ok and .data.summary.entry_count == 3 and .data.summary.completion_count == 2' >/dev/null
+test -f "$ARCHIVE"
+
+"$CLI" archive inspect --path "$ARCHIVE" |
+  jq -e '.ok and .data.summary.entry_count == 3 and .data.summary.completion_count == 2' >/dev/null
+
+EXTRA=$(
+  "$CLI" entry create <<'EOF'
+{"schema_version":1,"original_text":"Temporary entry after export"}
+EOF
+)
+EXTRA_ID=$(printf '%s' "$EXTRA" | jq -r '.data.entry.id')
+test "$EXTRA_ID" = 4
+
+if "$CLI" archive import --path "$ARCHIVE" >/dev/null 2>&1
+then
+  exit 1
+fi
+
+"$CLI" archive import --path "$ARCHIVE" --replace |
+  jq -e '.ok and .data.replaced and .data.backup_path != "" and .data.summary.entry_count == 3' >/dev/null
+
+if "$CLI" entry get --id "$EXTRA_ID" >/dev/null 2>&1
+then
+  exit 1
+fi
+test "$(sqlite3 "$HW_CALENDAR_SUPPORT_DIR/agenda.sqlite3" 'PRAGMA foreign_key_check;')" = ""
+test "$(find "$HW_CALENDAR_SUPPORT_DIR/Backups" -name 'agenda-before-import-v1-*.sqlite3' | wc -l | tr -d ' ')" = 1
+
 printf '[hw_calendar] agenda CLI integration passed\n'

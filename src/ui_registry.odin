@@ -115,6 +115,8 @@ calendar_framework_number_code :: proc(action: Calendar_App_Action) -> framework
 	case .Archive_Occurrence: return {1, 0, 1}
 	case .Archive_Series: return {2, 0, 1}
 	case .Archive_Cancel: return {3, 0, 1}
+	case .Import_Agenda_Cancel: return {1, 0, 1}
+	case .Import_Agenda_Replace: return {2, 0, 1}
 	}
 	return {}
 }
@@ -149,6 +151,10 @@ calendar_control_in_active_scope :: proc(control: ^Calendar_UI_Control) -> bool 
 		return control.action.kind == .Discard_Keep_Editing ||
 		       control.action.kind == .Discard_Changes
 	}
+	if calendar_ui.archive_import_open {
+		return control.action.kind == .Import_Agenda_Cancel ||
+		       control.action.kind == .Import_Agenda_Replace
+	}
 	if calendar_ui.shortcut_open {
 		return control.action.kind == .Shortcut_Record ||
 		       control.action.kind == .Shortcut_Save ||
@@ -163,7 +169,10 @@ calendar_control_in_active_scope :: proc(control: ^Calendar_UI_Control) -> bool 
 		       control.action.kind == .Request_Calendar_Access ||
 		       control.action.kind == .Toggle_Connected_Calendar ||
 		       control.action.kind == .Set_Default_Connected_Calendar ||
-		       control.action.kind == .Configure_Flash
+		       control.action.kind == .Configure_Flash ||
+		       control.action.kind == .Export_Agenda ||
+		       control.action.kind == .Import_Agenda ||
+		       control.action.kind == .Check_For_Updates
 	}
 	if calendar_ui.archive_modal_open {
 		return control.action.kind == .Archive_Cancel ||

@@ -330,10 +330,11 @@ agenda_proposal_submit :: proc(input: ^Agenda_Proposal_Input) -> (Agenda_Proposa
 	      sqlite3_bind_int64(statement, 5, agenda_now_ms()) == SQLITE_OK &&
 	      sqlite3_step(statement) == SQLITE_DONE
 	if !ok {return {}, "storage_failed"}
-	return {id=sqlite3_last_insert_rowid(calendar_database), entry_id=input.entry_id,
-		source_revision=input.source_revision, fields=input.fields,
-		uncertainty=strings.clone(input.uncertainty), state=strings.clone("pending"),
-		created_at_ms=agenda_now_ms()}, ""
+	proposal, proposal_found := agenda_proposal_get(
+		sqlite3_last_insert_rowid(calendar_database),
+	)
+	if !proposal_found {return {}, "storage_failed"}
+	return proposal, ""
 }
 
 agenda_proposal_destroy :: proc(proposal: ^Agenda_Proposal, allocator := context.allocator) {

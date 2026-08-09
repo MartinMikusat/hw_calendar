@@ -133,6 +133,11 @@ Calendar_UI_Action :: enum {
 	Toggle_Connected_Calendar,
 	Set_Default_Connected_Calendar,
 	Configure_Flash,
+	Export_Agenda,
+	Import_Agenda,
+	Check_For_Updates,
+	Import_Agenda_Cancel,
+	Import_Agenda_Replace,
 	Shortcut_Record,
 	Shortcut_Save,
 	Shortcut_Reset,
@@ -181,6 +186,7 @@ Calendar_Modal_Kind :: enum {
 	Command_Palette,
 	Settings,
 	Shortcut,
+	Agenda_Import,
 	Archive,
 	Editor,
 	Chore,
@@ -298,6 +304,11 @@ Calendar_UI_State :: struct {
 	settings_query: string,
 	settings_query_focused: bool,
 	settings_error: string,
+	settings_message_is_error: bool,
+	archive_import_open: bool,
+	archive_import_path: string,
+	archive_import_summary: Calendar_Archive_Summary,
+	archive_import_error: string,
 	shortcut_open: bool,
 	shortcut_listening: bool,
 	shortcut_candidate: Calendar_Shortcut,
@@ -713,6 +724,11 @@ calendar_ui_ax_label :: proc(control: ^Calendar_UI_Control) -> string {
 		}
 		return "Set the default connected calendar"
 	case .Configure_Flash: return "Configure leader key for Flash"
+	case .Export_Agenda: return "Export agenda archive"
+	case .Import_Agenda: return "Import agenda archive"
+	case .Check_For_Updates: return "Check for updates"
+	case .Import_Agenda_Cancel: return "Cancel agenda import"
+	case .Import_Agenda_Replace: return "Replace agenda from archive"
 	case .Shortcut_Record: return "Record another Flash leader"
 	case .Shortcut_Save: return "Save Flash leader"
 	case .Shortcut_Reset: return "Reset Flash leader to slash"
@@ -2318,6 +2334,30 @@ calendar_ui_open_palette :: proc() {
 		"Shortcut",
 		[]string{"keyboard", "shortcut", "leader", "jump", "navigation"},
 	)
+	calendar_palette_append(
+		&entries,
+		{kind = .Export_Agenda},
+		"Export agenda",
+		"Save entries, proposals, and completion history",
+		"Data",
+		[]string{"archive", "backup", "portable", "json"},
+	)
+	calendar_palette_append(
+		&entries,
+		{kind = .Import_Agenda},
+		"Import agenda",
+		"Replace agenda data after creating a backup",
+		"Data",
+		[]string{"archive", "restore", "portable", "json"},
+	)
+	calendar_palette_append(
+		&entries,
+		{kind = .Check_For_Updates},
+		"Check for updates",
+		"Check the stable release feed",
+		"Update",
+		[]string{"release", "version", "sparkle", "download"},
+	)
 	for id in calendar_theme_ids() {
 		theme := calendar_theme(id)
 		theme_bit := command_palette.Context_Mask(
@@ -2673,6 +2713,9 @@ calendar_active_modal :: proc() -> Calendar_Modal {
 	if calendar_ui.discard_changes_open {
 		return {.Discard_Changes, calendar_ui_discard_rect(), .Blocking}
 	}
+	if calendar_ui.archive_import_open {
+		return {.Agenda_Import, calendar_ui_archive_import_rect(), .Dismissible}
+	}
 	if calendar_ui.shortcut_open {
 		return {.Shortcut, calendar_shortcut_modal_rect(), .Dirty_Confirm}
 	}
@@ -2703,6 +2746,7 @@ calendar_modal_kind_name :: proc(kind: Calendar_Modal_Kind) -> string {
 	case .Command_Palette: return "command-palette"
 	case .Settings: return "settings"
 	case .Shortcut: return "shortcut"
+	case .Agenda_Import: return "agenda-import"
 	case .Archive: return "archive"
 	case .Editor: return "editor"
 	case .Chore: return "chore"
@@ -3268,6 +3312,8 @@ calendar_modal_close_direct :: proc(kind: Calendar_Modal_Kind) {
 		calendar_settings_close()
 	case .Shortcut:
 		calendar_shortcut_recorder_close()
+	case .Agenda_Import:
+		calendar_ui_import_agenda_close()
 	case .Archive:
 		calendar_ui_archive_modal_close()
 	case .Editor:
@@ -3565,7 +3611,7 @@ calendar_ui_execute_action :: proc(action: Calendar_App_Action) {
 		calendar_settings_close()
 	case .Settings_Category:
 		if action.index >= 0 &&
-		   action.index <= int(Calendar_Settings_Category.Shortcuts) {
+		   action.index <= int(Calendar_Settings_Category.Updates) {
 			calendar_ui.settings_category =
 				Calendar_Settings_Category(action.index)
 			_ = calendar_settings_set_query("")
@@ -3635,6 +3681,16 @@ calendar_ui_execute_action :: proc(action: Calendar_App_Action) {
 		}
 	case .Configure_Flash:
 		calendar_shortcut_recorder_open()
+	case .Export_Agenda:
+		_ = calendar_ui_export_agenda()
+	case .Import_Agenda:
+		_ = calendar_ui_import_agenda_begin()
+	case .Check_For_Updates:
+		_ = calendar_ui_check_for_updates()
+	case .Import_Agenda_Cancel:
+		calendar_ui_import_agenda_close()
+	case .Import_Agenda_Replace:
+		_ = calendar_ui_import_agenda_replace()
 	case .Shortcut_Record:
 		calendar_shortcut_destroy(&calendar_ui.shortcut_candidate)
 		calendar_ui.shortcut_candidate_valid = false
@@ -4429,6 +4485,32 @@ calendar_on_key_down :: proc "c" (self: Id, command: Sel, event: Id) {
 			}
 		}
 		calendar_ui.needs_redraw = true
+		return
+	}
+	if calendar_ui.archive_import_open {
+		if key_code == 53 {
+			_ = calendar_modal_request_dismiss()
+		} else if calendar_shortcut_matches_event(
+			calendar_ui.flash_leader,
+			key_code,
+			text,
+			modifiers,
+		) {
+			calendar_ui_begin_flash()
+		} else if !command_down && !control_down &&
+		          !shift_down && !option_down {
+			if digit, found := calendar_number_digit_for_key_code(key_code);
+			   found {
+				control_id, activated, _ :=
+					calendar_consume_shared_numbered_digit(
+						digit,
+						calendar_number_time_ms(),
+					)
+				if activated {
+					_ = calendar_ui_activate_control(control_id, .Numbered)
+				}
+			}
+		}
 		return
 	}
 	if calendar_ui.settings_open {
@@ -6178,6 +6260,32 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 			.Archive_Cancel,
 		)
 	}
+	if calendar_ui.archive_import_open {
+		calendar_push_rect(
+			vertices,
+			{0, 0, calendar_ui.width, calendar_ui.height},
+			theme.overlay,
+		)
+		modal := calendar_ui_archive_import_rect()
+		calendar_push_rect(vertices, modal, theme.modal)
+		cancel_rect := calendar_ui_archive_import_button_rect(0)
+		replace_rect := calendar_ui_archive_import_button_rect(1)
+		calendar_push_rect(vertices, cancel_rect, button)
+		calendar_push_rect(vertices, replace_rect, button)
+		calendar_push_border(vertices, replace_rect, theme.destructive)
+		calendar_ui_add_action_control(
+			"agenda import cancel",
+			"cancel agenda import",
+			cancel_rect,
+			{kind = .Import_Agenda_Cancel},
+		)
+		calendar_ui_add_action_control(
+			"agenda import replace",
+			"replace agenda from archive",
+			replace_rect,
+			{kind = .Import_Agenda_Replace},
+		)
+	}
 	if calendar_ui.settings_open && !calendar_ui.shortcut_open {
 		calendar_push_rect(
 			vertices,
@@ -6205,10 +6313,12 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 			close_rect,
 			{kind = .Settings_Close},
 		)
-		categories := [3]Calendar_Settings_Category{
+		categories := [5]Calendar_Settings_Category{
 			.Styling,
 			.Connected_Calendars,
+			.Data,
 			.Shortcuts,
+			.Updates,
 		}
 		for category, index in categories {
 			rect := calendar_settings_category_rect(index)
@@ -7477,6 +7587,66 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 			)
 		}
 	}
+	if modal_only && calendar_ui.archive_import_open {
+		modal := calendar_ui_archive_import_rect()
+		calendar_draw_text(
+			ctx,
+			font,
+			"REPLACE AGENDA DATA?",
+			{modal.x+24, modal.y+modal.h-52, modal.w-48, 30},
+			ink,
+			0,
+		)
+		calendar_draw_text(
+			ctx,
+			font,
+			fmt.tprintf(
+				"%d ENTRIES · %d PROPOSALS · %d COMPLETIONS",
+				calendar_ui.archive_import_summary.entry_count,
+				calendar_ui.archive_import_summary.proposal_count,
+				calendar_ui.archive_import_summary.completion_count,
+			),
+			{modal.x+24, modal.y+modal.h-90, modal.w-48, 26},
+			calendar_color64(theme.warm),
+			0,
+		)
+		calendar_draw_text(
+			ctx,
+			font,
+			"THE CURRENT AGENDA WILL BE BACKED UP BEFORE REPLACEMENT",
+			{modal.x+24, modal.y+modal.h-124, modal.w-48, 24},
+			muted,
+			0,
+		)
+		calendar_draw_numbered_action(
+			ctx,
+			font,
+			"CANCEL",
+			1,
+			calendar_ui_archive_import_button_rect(0),
+			muted,
+			muted,
+		)
+		calendar_draw_numbered_action(
+			ctx,
+			font,
+			"REPLACE",
+			2,
+			calendar_ui_archive_import_button_rect(1),
+			calendar_color64(theme.destructive),
+			calendar_color64(theme.destructive),
+		)
+		if len(calendar_ui.archive_import_error) > 0 {
+			calendar_draw_text(
+				ctx,
+				font,
+				calendar_ui.archive_import_error,
+				{modal.x+24, modal.y+66, modal.w-48, 24},
+				calendar_color64(theme.destructive),
+				0,
+			)
+		}
+	}
 	if modal_only && calendar_ui.settings_open {
 		modal := calendar_settings_rect()
 		calendar_draw_editable_text(
@@ -7498,10 +7668,12 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 			muted,
 			xmark[:],
 		)
-		categories := [3]Calendar_Settings_Category{
+		categories := [5]Calendar_Settings_Category{
 			.Styling,
 			.Connected_Calendars,
+			.Data,
 			.Shortcuts,
+			.Updates,
 		}
 		for category, index in categories {
 			count := calendar_settings_category_match_count(category)
@@ -7589,12 +7761,16 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 		}
 		if len(calendar_ui.settings_error) > 0 {
 			content := calendar_settings_content_rect()
+			message_color := calendar_color64(theme.positive)
+			if calendar_ui.settings_message_is_error {
+				message_color = calendar_color64(theme.destructive)
+			}
 			calendar_draw_text(
 				ctx,
 				font,
 				calendar_ui.settings_error,
 				{content.x, content.y, content.w, 24},
-				calendar_color64(theme.destructive),
+				message_color,
 				0,
 			)
 		}
@@ -8200,6 +8376,8 @@ calendar_ui_destroy :: proc() {
 	delete(calendar_ui.archive_error)
 	delete(calendar_ui.settings_query)
 	delete(calendar_ui.settings_error)
+	delete(calendar_ui.archive_import_path)
+	delete(calendar_ui.archive_import_error)
 	delete(calendar_ui.shortcut_collision)
 	delete(calendar_ui.shortcut_error)
 	calendar_shortcut_destroy(&calendar_ui.shortcut_candidate)
@@ -8393,6 +8571,8 @@ calendar_gui_shutdown :: proc() {
 run_calendar_gui :: proc() {
 	if !calendar_gui_initialize() {return}
 	defer calendar_gui_shutdown()
+	_ = updater_initialize()
+	defer updater_shutdown()
 	app := calendar_ui.app
 	msg_void(app, sel_registerName("run"))
 }

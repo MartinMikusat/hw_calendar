@@ -157,7 +157,7 @@ load_lock() {
   esac
   [ "$GIT_COUNT" -eq 6 ] || fail "dependency lock must contain six sibling repositories"
   [ -n "$ICONOIR_TAG" ] || fail "dependency lock does not contain Iconoir"
-  [ "$ICON_FILE_COUNT" -eq 5 ] || fail "dependency lock must contain five Iconoir files"
+  [ "$ICON_FILE_COUNT" -eq 6 ] || fail "dependency lock must contain six Iconoir files"
 
   for required in \
     hw_odin_matchSorter \
