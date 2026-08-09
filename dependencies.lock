@@ -15,7 +15,7 @@ git hw_odin_ipc_localCommand https://github.com/MartinMikusat/hw_odin_ipc_localC
 git hw_odin_ui_flash https://github.com/MartinMikusat/hw_odin_ui_flash.git main d06e98a40640b13eea5b979319022aad0a470d72
 git hw_odin_ui_commandPalette https://github.com/MartinMikusat/hw_odin_ui_commandPalette.git main 72312d2f67cfc3d2ebc6a62fdbb1ba5bbc4e335f
 git hw_odin_ui_components https://github.com/MartinMikusat/hw_odin_ui_components.git main fddcea1b1a2dbccab7fdd7f130688d5af273a8d2
-git hw_odin_ui_framework https://github.com/MartinMikusat/hw_odin_ui_framework.git main 60a053b045b320acdd9c06c29f405863d2e69603
+git hw_odin_ui_framework https://github.com/MartinMikusat/hw_odin_ui_framework.git main 6deb43a2ec338b757811419ff5e921db8deb8590
 
 # Bundled Iconoir release and file checksums.
 iconoir v7.11.1 3497016dcb93122b5a64a2df1221598a14ecf4f3 https://github.com/iconoir-icons/iconoir/archive/refs/tags/v7.11.1.tar.gz 6a22cb1c3eaa49485a5f40cf276c0d063af0792d7bfed8b4bec4fbfc8866e5b2
