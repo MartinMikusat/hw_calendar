@@ -67,9 +67,10 @@ Down to jump to the previous or next date that contains an entry, chore, or
 holiday. Each jump occurs once per occupied date. The selected date moves to
 the center row.
 
-Use the gear control or `Command-,` to open Settings. Settings contains theme
-and Flash shortcut configuration. The theme catalog contains HW Light and HW
-Dark. The application stores these preferences in its local database.
+Use the gear control or `Command-,` to open Settings. Settings contains Styling,
+Calendars, Data, Shortcuts, and Updates. Data exports and imports the portable
+agenda archive. Updates starts a signed update check. The application stores
+interface preferences in its local database.
 
 Each project-styled modal uses one 80-percent backdrop over the visible
 interface. Escape, Cancel, and a backdrop click dismiss ordinary modals. An
@@ -97,6 +98,10 @@ build/hw_calendar proposal confirm --id 1
 build/hw_calendar proposal reject --id 1
 build/hw_calendar chore due
 build/hw_calendar chore done --id 1 --if-revision 2
+build/hw_calendar archive export --path /path/to/agenda.hwcalendar.json
+build/hw_calendar archive inspect --path /path/to/agenda.hwcalendar.json
+build/hw_calendar archive import --path /path/to/agenda.hwcalendar.json --replace
+build/hw_calendar update check
 build/hw_calendar reminder status
 build/hw_calendar ui snapshot
 build/hw_calendar ui check --baseline /path/to/snapshot.json
@@ -118,6 +123,13 @@ socket or directly against the database.
 The GUI owns the SQLite database while it runs. Commands use the GUI's private
 local socket in that state. When the GUI is closed, a command locks and opens
 the database directly.
+
+The archive is readable, versioned JSON. It contains agenda entries, pending
+and resolved proposals, and chore completion history. It excludes interface
+preferences, operational notifications, and transient interface state. Import
+validates all records, creates a verified SQLite backup, and replaces only the
+agenda tables. The application retains the newest ten pre-import backups in
+the Application Support `Backups` directory.
 
 The pointer bridge resolves a live control by its functional name. It sends
 AppKit mouse events through the same view callback as physical pointer input.
@@ -225,6 +237,27 @@ Bundled holiday data:
 
 ## Release details
 
-The current release task is tracked in [TODO.md](TODO.md). Completion requires
-a Developer ID-signed and notarized build and verified native reminder delivery
-while the application is closed.
+Release builds embed Sparkle 2.9.5. The application checks the signed stable
+feed once each day. It downloads and installs an update only after a person
+starts or confirms that action.
+
+- Sparkle version: 2.9.5
+- Source: <https://github.com/sparkle-project/Sparkle/releases/tag/2.9.5>
+- Archive SHA-256: `015336b601493e05c237964954bff6191370003d94edefe663724c88840d73cc`
+- License: `Contents/Resources/Licenses/Sparkle/LICENSE` in each release bundle
+
+Prepare one release machine with a Developer ID Application certificate, the
+`hw_videoClips-notary` Keychain profile, the `hw_calendar` Sparkle signing key,
+and authenticated GitHub CLI access. Run `./scripts/setup-release-credentials.sh`
+to verify these inputs.
+
+Run `./scripts/release.sh` from clean and synchronized `hw_calendar` `main` and
+`hal_wayland` `staging` branches. The command executes the tests, signs and
+notarizes the DMG, installs exact build 2 over private build 1 through Sparkle,
+and schedules a native reminder before it closes the test application. The
+release continues after the observed reminder is confirmed. Publication creates
+the GitHub Release, signs the stable appcast, enables the product page, and
+fast-forwards the website from `staging` to `main`.
+
+The current release task is tracked in [TODO.md](TODO.md). Mark it complete only
+after the closed-application reminder delivery is observed.
