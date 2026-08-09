@@ -35,6 +35,9 @@ The focused date stays in the center row and always has a subtle focus tint and
 border, including when the date has no entries. The current date has a stronger
 warm tint and border.
 
+Each date groups its recurring chores into one distinct `CHORES · count` target.
+Regular all-day and timed entries remain separate calendar cards.
+
 A recurring entry works as a chore. Define it once with an interval, for example
 `vacuum every week`, and it becomes due immediately. Marking it done starts the
 interval clock from that moment, so the next due date is `completion time +

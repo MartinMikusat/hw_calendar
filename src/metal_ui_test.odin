@@ -312,6 +312,41 @@ calendar_chore_interval_parses_positive_whole_days_test :: proc(t: ^testing.T) {
 	}
 }
 
+@(test)
+calendar_day_items_group_chores_and_preserve_selected_chore_test :: proc(
+	t: ^testing.T,
+) {
+	sync.mutex_lock(&calendar_ui_test_mutex)
+	defer sync.mutex_unlock(&calendar_ui_test_mutex)
+	previous := calendar_ui
+	defer {calendar_ui = previous}
+	calendar_ui = {
+		events = make([dynamic]Calendar_Event),
+		navigation_active = true,
+		navigation_kind = .Event,
+		navigation_event_index = 1,
+		navigation_start_stamp = 172800,
+	}
+	defer calendar_events_destroy(&calendar_ui.events)
+	append(&calendar_ui.events, Calendar_Event{recurrence_seconds = 86400})
+	append(&calendar_ui.events, Calendar_Event{recurrence_seconds = 172800})
+	append(&calendar_ui.events, Calendar_Event{})
+	items := [3]Calendar_Day_Item{
+		{kind = .Event, event = {event_index = 0, start = ical_date_time_from_stamp(86400, true)}},
+		{kind = .Event, event = {event_index = 1, start = ical_date_time_from_stamp(172800, true)}},
+		{kind = .Event, event = {event_index = 2, start = ical_date_time_from_stamp(259200, true)}},
+	}
+	grouped := calendar_group_day_chore_items(items[:])
+	testing.expect_value(t, len(grouped), 2)
+	if len(grouped) == 2 {
+		testing.expect_value(t, grouped[0].kind, Calendar_Day_Item_Kind.Chores)
+		testing.expect_value(t, grouped[0].chore_count, 2)
+		testing.expect_value(t, grouped[0].event.event_index, 1)
+		testing.expect(t, calendar_day_item_is_navigation_selected(grouped[0]))
+		testing.expect_value(t, grouped[1].kind, Calendar_Day_Item_Kind.Event)
+	}
+}
+
 calendar_icon_points_use_iconoir_viewbox_test :: proc(
 	t: ^testing.T,
 	points: []Calendar_Icon_Point,

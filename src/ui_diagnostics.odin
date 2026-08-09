@@ -127,6 +127,7 @@ calendar_ui_diagnostic_action_name :: proc(action: Calendar_UI_Action) -> string
 	case .Toggle_Holiday_Country: return "toggle-holiday-country"
 	case .Jump_Holiday: return "jump-holiday"
 	case .Focus_Event: return "focus-entry"
+	case .Focus_Chores: return "focus-chores"
 	case .Focus_Holiday: return "focus-holiday"
 	case .Action_Edit: return "action-edit"
 	case .Action_Open_URL: return "action-open-url"

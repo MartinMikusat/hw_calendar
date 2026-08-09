@@ -145,6 +145,7 @@ Calendar_UI_Action :: enum {
 	Toggle_Holiday_Country,
 	Jump_Holiday,
 	Focus_Event,
+	Focus_Chores,
 	Focus_Holiday,
 	Action_Edit,
 	Action_Open_URL,
@@ -684,6 +685,8 @@ calendar_ui_ax_label :: proc(control: ^Calendar_UI_Control) -> string {
 		}
 		return "Open event"
 	case .Focus_Event: return "Show event details"
+	case .Focus_Chores:
+		return fmt.tprintf("Show %d chores", control.action.definition_index)
 	case .Focus_Holiday: return "Show holiday details"
 	case .Jump_Event: return "Jump to event"
 	case .Toggle_Holiday_Country: return "Toggle holiday calendar"
@@ -3665,7 +3668,7 @@ calendar_ui_execute_action :: proc(action: Calendar_App_Action) {
 				}
 			}
 		}
-	case .Focus_Event:
+	case .Focus_Event, .Focus_Chores:
 		calendar_ui_focus_event(
 			action.index,
 			action.occurrence_stamp,
@@ -4614,13 +4617,21 @@ calendar_occurrences_for_day :: proc(day: ICal_Date_Time) -> []Calendar_Occurren
 
 Calendar_Day_Item_Kind :: enum {
 	Event,
+	Chores,
 	Holiday,
 }
 
 Calendar_Day_Item :: struct {
 	kind: Calendar_Day_Item_Kind,
 	event: Calendar_Occurrence,
+	chore_count: int,
 	holiday: Calendar_Holiday_Occurrence,
+}
+
+calendar_occurrence_is_chore :: proc(occurrence: Calendar_Occurrence) -> bool {
+	return occurrence.event_index >= 0 &&
+	       occurrence.event_index < len(calendar_ui.events) &&
+	       calendar_ui.events[occurrence.event_index].recurrence_seconds > 0
 }
 
 calendar_holiday_occurrence_is_promoted :: proc(
@@ -4661,10 +4672,37 @@ calendar_holiday_occurrence_is_navigation_selected :: proc(
 }
 
 calendar_day_item_is_navigation_selected :: proc(item: Calendar_Day_Item) -> bool {
-	if item.kind == .Event {
+	if item.kind == .Event || item.kind == .Chores {
 		return calendar_event_occurrence_is_navigation_selected(item.event)
 	}
 	return calendar_holiday_occurrence_is_navigation_selected(item.holiday)
+}
+
+calendar_group_day_chore_items :: proc(
+	items: []Calendar_Day_Item,
+) -> []Calendar_Day_Item {
+	grouped := make([dynamic]Calendar_Day_Item, context.temp_allocator)
+	chore_index := -1
+	for item in items {
+		if item.kind != .Event || !calendar_occurrence_is_chore(item.event) {
+			append(&grouped, item)
+			continue
+		}
+		if chore_index < 0 {
+			chore_index = len(grouped)
+			append(&grouped, Calendar_Day_Item{
+				kind = .Chores,
+				event = item.event,
+				chore_count = 1,
+			})
+			continue
+		}
+		grouped[chore_index].chore_count += 1
+		if calendar_event_occurrence_is_navigation_selected(item.event) {
+			grouped[chore_index].event = item.event
+		}
+	}
+	return grouped[:]
 }
 
 calendar_day_items :: proc(day: ICal_Date_Time) -> []Calendar_Day_Item {
@@ -4726,7 +4764,7 @@ calendar_day_items :: proc(day: ICal_Date_Time) -> []Calendar_Day_Item {
 			holiday = occurrence,
 		})
 	}
-	return result[:]
+	return calendar_group_day_chore_items(result[:])
 }
 
 calendar_holiday_definition_for_occurrence :: proc(
@@ -5365,6 +5403,35 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 			if item_index >= 3 {break}
 			event_rect := calendar_ui_event_rect(rect, item_index, min(3, len(day_items)))
 			event_color := button
+			if item.kind == .Chores {
+				calendar_push_rect(
+					vertices,
+					event_rect,
+					calendar_mix_color(event_color, theme.positive, 0.18),
+				)
+				calendar_push_leading_edge(vertices, event_rect, theme.positive)
+				if calendar_day_item_is_navigation_selected(item) {
+					calendar_push_leading_edge(vertices, event_rect, focus)
+				}
+				if !calendar_ui.editor_open && !calendar_ui.archive_modal_open &&
+				   !calendar_ui.settings_open && !calendar_ui.shortcut_open {
+					stamp := ical_date_time_stamp(item.event.start)
+					day_stamp := ical_date_time_stamp(day)
+					calendar_ui_add_action_control(
+						fmt.tprintf("chores:%d", day_stamp),
+						fmt.tprintf("%d chores", item.chore_count),
+						event_rect,
+						{
+							kind = .Focus_Chores,
+							index = item.event.event_index,
+							definition_index = item.chore_count,
+							occurrence_stamp = stamp,
+							occurrence_is_date = item.event.start.is_date,
+						},
+					)
+				}
+				continue
+			}
 			if item.kind == .Holiday {
 				calendar_push_rect(vertices, event_rect, event_color)
 				_, definition, found :=
@@ -6619,6 +6686,18 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 		for item, item_index in day_items {
 			if item_index >= 3 {break}
 			event_rect := calendar_ui_event_rect(rect, item_index, min(3, len(day_items)))
+			if item.kind == .Chores {
+				text_color := calendar_color64(theme.positive)
+				calendar_draw_text(
+					ctx,
+					font,
+					fmt.tprintf("CHORES · %d", item.chore_count),
+					event_rect,
+					text_color,
+					8,
+				)
+				continue
+			}
 			if item.kind == .Holiday {
 				country, definition, found :=
 					calendar_holiday_definition_for_occurrence(item.holiday)
