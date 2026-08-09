@@ -904,7 +904,7 @@ calendar_flash_badges_clamp_to_view_test :: proc(t: ^testing.T) {
 }
 
 @(test)
-calendar_shared_registry_preserves_control_identity_and_capabilities_test :: proc(
+calendar_framework_publication_preserves_control_identity_and_capabilities_test :: proc(
 	t: ^testing.T,
 ) {
 	sync.mutex_lock(&calendar_ui_test_mutex)
@@ -941,6 +941,74 @@ calendar_shared_registry_preserves_control_identity_and_capabilities_test :: pro
 	testing.expect(t, .Accessibility in control.capabilities)
 	testing.expect(t, .Flash in control.capabilities)
 	testing.expect(t, .CLI in control.capabilities)
+}
+
+@(test)
+calendar_framework_input_root_publishes_only_topmost_modal_and_window_controls_test :: proc(
+	t: ^testing.T,
+) {
+	sync.mutex_lock(&calendar_ui_test_mutex)
+	defer sync.mutex_unlock(&calendar_ui_test_mutex)
+	previous_ui := calendar_ui
+	calendar_ui = {
+		width = 800,
+		height = 600,
+		editor_open = true,
+		discard_changes_open = true,
+	}
+	framework_ui.context_init(&calendar_ui.control_context)
+	calendar_ui.control_bindings = make([dynamic]Calendar_Action_Binding)
+	frame := framework_ui.begin_frame(
+		&calendar_ui.control_context,
+		{viewport = {0, 0, 800, 600}},
+	)
+	calendar_control_frame = &frame
+	defer {
+		calendar_control_frame = nil
+		framework_ui.frame_destroy(&frame)
+		framework_ui.context_destroy(&calendar_ui.control_context)
+		delete(calendar_ui.control_bindings)
+		calendar_shared_view = {}
+		calendar_ui = previous_ui
+	}
+	calendar_ui_add_control("today", "today", {10, 10, 80, 30}, .Today)
+	calendar_control_scope_begin(.Editor)
+	calendar_ui_add_control("editor save", "save", {20, 20, 80, 30}, .Editor_Save)
+	calendar_control_scope_end()
+	calendar_control_scope_begin(.Discard_Changes)
+	calendar_ui_add_control(
+		"discard changes",
+		"discard changes",
+		{30, 30, 80, 30},
+		.Discard_Changes,
+	)
+	calendar_control_scope_end()
+	calendar_ui_add_control(
+		"window close",
+		"close window",
+		{700, 550, 20, 20},
+		.Window_Close,
+	)
+	calendar_control_frame_finish(&frame)
+
+	testing.expect_value(t, len(calendar_shared_view.controls), 2)
+	testing.expect_value(t, len(calendar_shared_view.actions), 2)
+	testing.expect(
+		t,
+		framework_ui.control_by_name_in_view(calendar_shared_view, "today") == nil,
+	)
+	testing.expect(
+		t,
+		framework_ui.control_by_name_in_view(calendar_shared_view, "editor save") == nil,
+	)
+	testing.expect(
+		t,
+		framework_ui.control_by_name_in_view(calendar_shared_view, "discard changes") != nil,
+	)
+	testing.expect(
+		t,
+		framework_ui.control_by_name_in_view(calendar_shared_view, "window close") != nil,
+	)
 }
 
 @(test)

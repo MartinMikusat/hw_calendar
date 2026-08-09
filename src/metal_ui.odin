@@ -1565,7 +1565,7 @@ calendar_ui_begin_flash :: proc() {
 				f64(control.rect.w),
 				f64(control.rect.h),
 			},
-			anchor = .Top_Left,
+			anchor = flash.Anchor(control.flash_anchor),
 		})
 	}
 	_ = flash.begin(&calendar_ui.flash, targets[:])

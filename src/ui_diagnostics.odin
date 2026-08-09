@@ -165,20 +165,6 @@ calendar_ui_diagnostic_action_name :: proc(action: Calendar_UI_Action) -> string
 	return "unknown"
 }
 
-calendar_ui_diagnostic_role :: proc(action: Calendar_UI_Action) -> string {
-	if action == .Editor_Field || action == .Settings_Search ||
-	   action == .Command_Palette_Search || action == .Chore_Name ||
-	   action == .Chore_Days {
-		return "AXTextField"
-	}
-	if action == .Set_Theme || action == .Settings_Category ||
-	   action == .Set_Default_Connected_Calendar || action == .Chore_Interval {
-		return "AXRadioButton"
-	}
-	if action == .Toggle_Connected_Calendar {return "AXCheckBox"}
-	return "AXButton"
-}
-
 calendar_ui_diagnostic_snapshot :: proc(
 	allocator := context.allocator,
 ) -> (Calendar_UI_Diagnostic_Snapshot, bool) {

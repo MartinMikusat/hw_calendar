@@ -50,10 +50,11 @@ to show more chores and uses up to two-thirds of the panel. Each chore has a
 separate `DONE` control. The section scrolls when more chores are due than fit,
 and it disappears when the view moves to another day.
 
-The entry editor keeps natural-language text as its primary field. The shared
-control registry routes pointer, numbered keyboard, Accessibility, and Flash
-through typed application actions. It also exports command-menu and CLI
-capability metadata.
+The entry editor keeps natural-language text as its primary field. Each frame
+emits framework actions and control boxes directly, then publishes the framework
+registry for pointer, numbered keyboard, Accessibility, Flash, command-menu, and
+CLI dispatch. A small local binding table maps published action IDs to typed
+application payloads, while framework input roots select the topmost modal.
 
 The `NEW CHORE` action (numbered code `21`, also available from the command
 palette) opens a chore editor with a name field, a whole-day interval field,
