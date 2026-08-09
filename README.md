@@ -37,6 +37,8 @@ warm tint and border.
 
 Each date groups its recurring chores into one distinct `CHORES · count` target.
 Regular all-day and timed entries remain separate calendar cards.
+The details panel shows every chore, event, and holiday on the selected date as
+one day agenda. Selecting a row opens its focused details and actions.
 
 A recurring entry works as a chore. Define it once with an interval, for example
 `vacuum every week`, and it becomes due immediately. Marking it done starts the
@@ -60,8 +62,10 @@ immediately. The `EDIT` action opens the same editor for a focused chore.
 Changing its interval preserves its current due date and applies the new
 interval after its next completion.
 
-Use `Command` with the arrow keys to jump between all dated entries, chores,
-and holidays. The selected date moves to the center row.
+Use Up and Down to move the selected date by one day. Use `Command` with Up or
+Down to jump to the previous or next date that contains an entry, chore, or
+holiday. Each jump occurs once per occupied date. The selected date moves to
+the center row.
 
 Use the gear control or `Command-,` to open Settings. Settings contains theme
 and Flash shortcut configuration. The theme catalog contains HW Light and HW

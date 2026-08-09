@@ -697,6 +697,29 @@ calendar_navigation_includes_dated_agenda_entries_test :: proc(t: ^testing.T) {
 }
 
 @(test)
+calendar_navigation_jumps_once_per_occupied_day_test :: proc(t: ^testing.T) {
+	day_1 := i64(ical_days_from_civil(2026, 8, 8))*86400
+	day_2 := day_1+86400
+	day_3 := day_2+86400
+	items := [4]Calendar_Navigation_Item{
+		{kind = .Event, event = {start = ical_date_time_from_stamp(day_1+3600, true)}},
+		{kind = .Event, event = {start = ical_date_time_from_stamp(day_1+7200, true)}},
+		{kind = .Holiday, holiday = {date = ical_date_time_from_stamp(day_2, true)}},
+		{kind = .Event, event = {start = ical_date_time_from_stamp(day_3+3600, true)}},
+	}
+	next_day, next_found := calendar_navigation_find_day(items[:], .Next, day_1)
+	testing.expect(t, next_found)
+	testing.expect_value(t, next_day, day_2)
+	previous_day, previous_found := calendar_navigation_find_day(
+		items[:],
+		.Previous,
+		day_3,
+	)
+	testing.expect(t, previous_found)
+	testing.expect_value(t, previous_day, day_2)
+}
+
+@(test)
 calendar_slovak_holiday_data_matches_current_legal_categories_test :: proc(
 	t: ^testing.T,
 ) {

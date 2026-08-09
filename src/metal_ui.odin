@@ -684,7 +684,13 @@ calendar_ui_ax_label :: proc(control: ^Calendar_UI_Control) -> string {
 			)
 		}
 		return "Open event"
-	case .Focus_Event: return "Show event details"
+	case .Focus_Event:
+		if control.action.index >= 0 &&
+		   control.action.index < len(calendar_ui.events) &&
+		   calendar_ui.events[control.action.index].recurrence_seconds > 0 {
+			return "Show chore details"
+		}
+		return "Show event details"
 	case .Focus_Chores:
 		return fmt.tprintf("Show %d chores", control.action.definition_index)
 	case .Focus_Holiday: return "Show holiday details"
@@ -1987,23 +1993,36 @@ calendar_navigation_find :: proc(
 	return {}, false
 }
 
+calendar_navigation_find_day :: proc(
+	items: []Calendar_Navigation_Item,
+	direction: Calendar_Navigation_Direction,
+	selected_day_stamp: i64,
+) -> (i64, bool) {
+	if direction == .Next {
+		for item in items {
+			day_stamp := calendar_navigation_item_stamp(item)/86400*86400
+			if day_stamp > selected_day_stamp {return day_stamp, true}
+		}
+		return 0, false
+	}
+	for index := len(items)-1; index >= 0; index -= 1 {
+		day_stamp := calendar_navigation_item_stamp(items[index])/86400*86400
+		if day_stamp < selected_day_stamp {return day_stamp, true}
+	}
+	return 0, false
+}
+
 calendar_ui_navigate :: proc(direction: Calendar_Navigation_Direction) {
 	now := ical_date_time_from_stamp(time.to_unix_seconds(time.now()), true)
 	anchor_days := ical_days_from_civil(now.year, now.month, now.day) +
 	               i64(calendar_ui.day_offset)
-	initial_day_stamp := anchor_days*86400
-	reference_stamp := initial_day_stamp
-	selection, has_selection := calendar_ui_navigation_selection_item()
-	if calendar_ui.navigation_active {
-		reference_stamp = calendar_ui.navigation_start_stamp
-	}
+	selected_day_stamp := anchor_days*86400
 	for span_days := i64(366); span_days <= 366*128; span_days *= 2 {
-		range_start := reference_stamp
-		range_end := reference_stamp+span_days*86400
+		range_start := selected_day_stamp
+		range_end := selected_day_stamp+span_days*86400
 		if direction == .Previous {
-			range_start = reference_stamp-span_days*86400
-			range_end = reference_stamp
-			if calendar_ui.navigation_active {range_end += 86400}
+			range_start = selected_day_stamp-span_days*86400
+			range_end = selected_day_stamp+86400
 		}
 		items := calendar_navigation_items(
 			calendar_ui.events[:],
@@ -2012,18 +2031,18 @@ calendar_ui_navigate :: proc(direction: Calendar_Navigation_Direction) {
 			ical_date_time_from_stamp(range_end, true),
 			context.temp_allocator,
 		)
-		item, found := calendar_navigation_find(
+		target_stamp, found := calendar_navigation_find_day(
 			items[:],
 			direction,
-			initial_day_stamp,
-			&selection if has_selection else nil,
+			selected_day_stamp,
 		)
 		if !found {continue}
 		calendar_ui_clear_holiday_promotion()
-		calendar_ui_set_navigation_selection(item)
-		target_days := calendar_navigation_item_stamp(item)/86400
-		calendar_ui.day_offset = int(target_days-anchor_days) +
-		                         calendar_ui.day_offset
+		calendar_ui_clear_navigation_selection()
+		calendar_ui.day_offset = calendar_ui_day_offset_for_stamp(
+			target_stamp,
+			time.to_unix_seconds(time.now()),
+		)
 		calendar_ui_reload_data()
 		calendar_ui.needs_redraw = true
 		return
@@ -4154,8 +4173,7 @@ calendar_on_scroll :: proc "c" (self: Id, command: Sel, event: Id) {
 		calendar_ui_scroll_due_rows(delta)
 		return
 	}
-	if calendar_ui.navigation_active &&
-	   calendar_ui_contains(calendar_ui_details_rect(), point) {
+	if calendar_ui_contains(calendar_ui_details_rect(), point) {
 		calendar_ui.details_scroll = max(0, min(4096, calendar_ui.details_scroll-delta*2))
 		calendar_ui.needs_redraw = true
 		return
@@ -4705,7 +4723,7 @@ calendar_group_day_chore_items :: proc(
 	return grouped[:]
 }
 
-calendar_day_items :: proc(day: ICal_Date_Time) -> []Calendar_Day_Item {
+calendar_raw_day_items :: proc(day: ICal_Date_Time) -> []Calendar_Day_Item {
 	result := make([dynamic]Calendar_Day_Item, context.temp_allocator)
 	day_days := ical_days_from_civil(day.year, day.month, day.day)
 	if calendar_ui.navigation_active {
@@ -4764,7 +4782,11 @@ calendar_day_items :: proc(day: ICal_Date_Time) -> []Calendar_Day_Item {
 			holiday = occurrence,
 		})
 	}
-	return calendar_group_day_chore_items(result[:])
+	return result[:]
+}
+
+calendar_day_items :: proc(day: ICal_Date_Time) -> []Calendar_Day_Item {
+	return calendar_group_day_chore_items(calendar_raw_day_items(day))
 }
 
 calendar_holiday_definition_for_occurrence :: proc(
@@ -4990,6 +5012,208 @@ calendar_ui_due_entry_meta :: proc(entry: ^Agenda_Entry) -> string {
 	)
 }
 
+CALENDAR_DAY_AGENDA_HEADER_HEIGHT :: 48.0
+CALENDAR_DAY_AGENDA_ROW_HEIGHT :: 58.0
+
+calendar_ui_selected_day :: proc() -> ICal_Date_Time {
+	now := ical_date_time_from_stamp(time.to_unix_seconds(time.now()), true)
+	day := ical_days_from_civil(now.year, now.month, now.day) +
+	       i64(calendar_ui.day_offset)
+	return ical_date_time_from_stamp(day*86400, true)
+}
+
+calendar_day_agenda_item_is_in_due_section :: proc(
+	item: Calendar_Day_Item,
+) -> bool {
+	if calendar_ui_due_section_height() == 0 || item.kind != .Event ||
+	   !calendar_occurrence_is_chore(item.event) {
+		return false
+	}
+	event := &calendar_ui.events[item.event.event_index]
+	for &entry in calendar_ui.due_entries {
+		if entry.id == event.row_id {return true}
+	}
+	return false
+}
+
+calendar_day_agenda_items :: proc() -> []Calendar_Day_Item {
+	result := make([dynamic]Calendar_Day_Item, context.temp_allocator)
+	for item in calendar_raw_day_items(calendar_ui_selected_day()) {
+		if calendar_day_agenda_item_is_in_due_section(item) {continue}
+		append(&result, item)
+	}
+	return result[:]
+}
+
+calendar_ui_day_agenda_panel_rect :: proc() -> Calendar_UI_Rect {
+	panel := calendar_ui_details_rect()
+	panel.h -= calendar_ui_due_section_height()
+	return panel
+}
+
+calendar_ui_day_agenda_row_rect :: proc(index: int) -> Calendar_UI_Rect {
+	panel := calendar_ui_day_agenda_panel_rect()
+	return {
+		panel.x+12,
+		panel.y+panel.h-CALENDAR_DAY_AGENDA_HEADER_HEIGHT-
+		f64(index+1)*CALENDAR_DAY_AGENDA_ROW_HEIGHT+4+
+		calendar_ui.details_scroll,
+		panel.w-24,
+		CALENDAR_DAY_AGENDA_ROW_HEIGHT-8,
+	}
+}
+
+calendar_day_agenda_item_title :: proc(item: Calendar_Day_Item) -> string {
+	if item.kind == .Event {
+		if item.event.event_index < 0 ||
+		   item.event.event_index >= len(calendar_ui.events) {
+			return ""
+		}
+		return calendar_ui.events[item.event.event_index].summary
+	}
+	_, definition, found := calendar_holiday_definition_for_occurrence(item.holiday)
+	return definition.name if found else ""
+}
+
+calendar_day_agenda_item_meta :: proc(item: Calendar_Day_Item) -> string {
+	if item.kind == .Holiday {return "HOLIDAY"}
+	if calendar_occurrence_is_chore(item.event) {
+		event := &calendar_ui.events[item.event.event_index]
+		interval := calendar_chore_interval_label(event.recurrence_seconds)
+		if len(interval) > 0 {
+			return fmt.tprintf(
+				"CHORE · EVERY %s",
+				strings.to_upper(interval, context.temp_allocator),
+			)
+		}
+		return "CHORE · RECURRING"
+	}
+	if item.event.start.is_date {return "EVENT · ALL DAY"}
+	return fmt.tprintf(
+		"EVENT · %02d:%02d",
+		item.event.start.hour,
+		item.event.start.minute,
+	)
+}
+
+calendar_register_day_agenda_controls :: proc() {
+	if calendar_ui.navigation_active || calendar_active_modal().kind != .None {
+		return
+	}
+	panel := calendar_ui_day_agenda_panel_rect()
+	for item, index in calendar_day_agenda_items() {
+		row := calendar_ui_day_agenda_row_rect(index)
+		if row.y+row.h <= panel.y || row.y >= panel.y+panel.h {continue}
+		if item.kind == .Event {
+			stamp := ical_date_time_stamp(item.event.start)
+			calendar_ui_add_control(
+				fmt.tprintf(
+					"day-agenda:event:%s:%s:%d",
+					item.event.uid,
+					item.event.recurrence_id,
+					stamp,
+				),
+				"day agenda event",
+				row,
+				.Focus_Event,
+				item.event.event_index,
+				stamp,
+				item.event.start.is_date,
+			)
+			continue
+		}
+		stamp := ical_date_time_stamp(item.holiday.date)
+		calendar_ui_add_control(
+			fmt.tprintf(
+				"day-agenda:holiday:%d:%d:%d",
+				item.holiday.country_index,
+				item.holiday.definition_index,
+				stamp,
+			),
+			"day agenda holiday",
+			row,
+			.Focus_Holiday,
+			occurrence_stamp = stamp,
+			holiday_country_index = item.holiday.country_index,
+			holiday_definition_index = item.holiday.definition_index,
+		)
+	}
+}
+
+calendar_draw_day_agenda :: proc(
+	ctx, font: rawptr,
+	ink, muted: [4]f64,
+) {
+	panel := calendar_ui_day_agenda_panel_rect()
+	day := calendar_ui_selected_day()
+	items := calendar_day_agenda_items()
+	calendar_draw_text(
+		ctx,
+		font,
+		fmt.tprintf(
+			"DAY AGENDA · %04d-%02d-%02d",
+			day.year,
+			day.month,
+			day.day,
+		),
+		{panel.x+16, panel.y+panel.h-34, panel.w-120, 20},
+		ink,
+		0,
+		style = .Label,
+	)
+	calendar_draw_text(
+		ctx,
+		font,
+		fmt.tprintf("%d ITEMS", len(items)),
+		{panel.x+panel.w-106, panel.y+panel.h-34, 90, 20},
+		muted,
+		0,
+		.End,
+		style = .Label,
+	)
+	if len(items) == 0 {
+		calendar_draw_text(
+			ctx,
+			font,
+			"NO CALENDAR ITEMS",
+			{panel.x+16, panel.y+panel.h-76, panel.w-32, 20},
+			muted,
+			0,
+		)
+		return
+	}
+	if calendar_ordered_active {
+		calendar_ordered_push_clip(panel)
+		defer calendar_ordered_pop_clip()
+	} else {
+		CGContextSaveGState(ctx)
+		defer CGContextRestoreGState(ctx)
+		CGContextClipToRect(
+			ctx,
+			{{panel.x*calendar_ui.scale, panel.y*calendar_ui.scale},
+			 {panel.w*calendar_ui.scale, panel.h*calendar_ui.scale}},
+		)
+	}
+	theme := calendar_theme(calendar_ui.theme_id)
+	for item, index in items {
+		row := calendar_ui_day_agenda_row_rect(index)
+		accent := theme.cool
+		if item.kind == .Holiday {accent = theme.holiday}
+		if item.kind == .Event && calendar_occurrence_is_chore(item.event) {
+			accent = theme.positive
+		}
+		calendar_draw_text(
+			ctx, font, calendar_day_agenda_item_title(item),
+			{row.x+12, row.y+22, row.w-24, 20}, ink, 0,
+		)
+		calendar_draw_text(
+			ctx, font, calendar_day_agenda_item_meta(item),
+			{row.x+12, row.y+6, row.w-24, 14},
+			calendar_color64(accent), 0, style = .Label,
+		)
+	}
+}
+
 calendar_draw_due_section :: proc(
 	ctx, font: rawptr,
 	panel: Calendar_UI_Rect,
@@ -5085,22 +5309,7 @@ calendar_draw_details :: proc(
 		content_panel.h -= due_height
 	}
 	if !calendar_ui.navigation_active {
-		calendar_draw_text(
-			ctx,
-			font,
-			"FOCUSED DETAILS",
-			{content_panel.x+20, content_panel.y+content_panel.h-42, content_panel.w-40, 24},
-			ink,
-			0,
-		)
-		calendar_draw_text(
-			ctx,
-			font,
-			"SELECT AN EVENT OR HOLIDAY TO SHOW ITS DETAILS",
-			{content_panel.x+20, content_panel.y+content_panel.h-72, content_panel.w-40, 20},
-			muted,
-			0,
-		)
+		calendar_draw_day_agenda(ctx, font, ink, muted)
 		return
 	}
 	if calendar_ordered_active {
@@ -5550,6 +5759,28 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 				index,
 			)
 		}
+	}
+	if !calendar_ui.navigation_active && calendar_active_modal().kind == .None {
+		panel := calendar_ui_day_agenda_panel_rect()
+		for item, index in calendar_day_agenda_items() {
+			item_rect := calendar_ui_day_agenda_row_rect(index)
+			if item_rect.y+item_rect.h <= panel.y ||
+			   item_rect.y >= panel.y+panel.h {
+				continue
+			}
+			accent := theme.cool
+			if item.kind == .Holiday {accent = theme.holiday}
+			if item.kind == .Event && calendar_occurrence_is_chore(item.event) {
+				accent = theme.positive
+			}
+			calendar_push_rect(
+				vertices,
+				item_rect,
+				calendar_mix_color(button, accent, 0.10),
+			)
+			calendar_push_leading_edge(vertices, item_rect, accent)
+		}
+		calendar_register_day_agenda_controls()
 	}
 	action_kinds := [7]Calendar_UI_Action{
 		.Action_Edit,
