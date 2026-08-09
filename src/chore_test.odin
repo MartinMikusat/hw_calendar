@@ -149,13 +149,13 @@ chore_due_and_rolling_completion_test :: proc(t: ^testing.T) {
 	)
 	testing.expect_value(t, conflict_code, "revision_conflict")
 
-	calendar_ui_reload_data(false)
+	calendar_ui_reload_data()
 	editable_index := calendar_ui_event_index_for_entry(editable.id)
 	testing.expect(t, editable_index >= 0)
 	if editable_index >= 0 {
 		testing.expect_value(
 			t,
-			calendar_ui.events[editable_index].recurrence_seconds,
+			calendar_ui.entries[editable_index].recurrence_seconds,
 			i64(259200),
 		)
 		calendar_ui.navigation_active = true
@@ -176,11 +176,11 @@ chore_due_and_rolling_completion_test :: proc(t: ^testing.T) {
 		calendar_ui_chore_close()
 	}
 	calendar_ui.day_offset += 1
-	calendar_ui_reload_data(false)
+	calendar_ui_reload_data()
 	testing.expect(t, calendar_ui_event_index_for_entry(created.id) >= 0)
 	calendar_ui.day_offset = 0
-	calendar_events_destroy(&calendar_ui.events)
-	calendar_occurrences_destroy(&calendar_ui.occurrences)
+	agenda_entries_destroy(&calendar_ui.entries)
+	delete(calendar_ui.occurrences)
 	agenda_entries_destroy(&calendar_ui.due_entries)
 }
 

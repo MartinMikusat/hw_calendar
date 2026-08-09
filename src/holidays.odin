@@ -47,7 +47,7 @@ Calendar_Holiday_Country :: struct {
 Calendar_Holiday_Occurrence :: struct {
 	country_index: int,
 	definition_index: int,
-	date: ICal_Date_Time,
+	date: Agenda_Date_Time,
 }
 
 calendar_holiday_country_destroy :: proc(country: ^Calendar_Holiday_Country) {
@@ -124,14 +124,14 @@ calendar_holiday_country_valid :: proc(
 			   entry.day < 1 || entry.day > 31 {
 				return false
 			}
-			date := ICal_Date_Time{
+			date := Agenda_Date_Time{
 				year = 2024,
 				month = entry.month,
 				day = entry.day,
 				is_date = true,
 			}
-			stamp := ical_days_from_civil(date.year, date.month, date.day)
-			round_trip := ical_date_time_from_stamp(stamp*86400, true)
+			stamp := agenda_days_from_civil(date.year, date.month, date.day)
+			round_trip := agenda_date_time_from_stamp(stamp*86400, true)
 			if round_trip.year != date.year ||
 			   round_trip.month != date.month ||
 			   round_trip.day != date.day {
@@ -229,7 +229,7 @@ calendar_holiday_countries_load :: proc(
 	return countries
 }
 
-calendar_gregorian_easter :: proc(year: int) -> ICal_Date_Time {
+calendar_gregorian_easter :: proc(year: int) -> Agenda_Date_Time {
 	a := year%19
 	b := year/100
 	c := year%100
@@ -250,7 +250,7 @@ calendar_gregorian_easter :: proc(year: int) -> ICal_Date_Time {
 calendar_holiday_definition_date :: proc(
 	definition: ^Calendar_Holiday_Definition,
 	year: int,
-) -> (ICal_Date_Time, bool) {
+) -> (Agenda_Date_Time, bool) {
 	if definition == nil {return {}, false}
 	switch calendar_holiday_rule(definition.rule) {
 	case .Fixed:
@@ -262,9 +262,9 @@ calendar_holiday_definition_date :: proc(
 		}, true
 	case .Easter_Offset:
 		easter := calendar_gregorian_easter(year)
-		days := ical_days_from_civil(easter.year, easter.month, easter.day) +
+		days := agenda_days_from_civil(easter.year, easter.month, easter.day) +
 		        i64(definition.easter_offset_days)
-		return ical_date_time_from_stamp(days*86400, true), true
+		return agenda_date_time_from_stamp(days*86400, true), true
 	case .Invalid:
 	}
 	return {}, false
@@ -273,8 +273,8 @@ calendar_holiday_definition_date :: proc(
 calendar_holiday_occurrence_compare :: proc(
 	a, b: Calendar_Holiday_Occurrence,
 ) -> int {
-	a_days := ical_days_from_civil(a.date.year, a.date.month, a.date.day)
-	b_days := ical_days_from_civil(b.date.year, b.date.month, b.date.day)
+	a_days := agenda_days_from_civil(a.date.year, a.date.month, a.date.day)
+	b_days := agenda_days_from_civil(b.date.year, b.date.month, b.date.day)
 	if a_days < b_days {return -1}
 	if a_days > b_days {return 1}
 	if a.country_index < b.country_index {return -1}
@@ -286,16 +286,16 @@ calendar_holiday_occurrence_compare :: proc(
 
 calendar_holiday_occurrences_expand :: proc(
 	countries: []Calendar_Holiday_Country,
-	range_start, range_end: ICal_Date_Time,
+	range_start, range_end: Agenda_Date_Time,
 	allocator := context.allocator,
 ) -> [dynamic]Calendar_Holiday_Occurrence {
 	result := make([dynamic]Calendar_Holiday_Occurrence, allocator)
-	start_days := ical_days_from_civil(
+	start_days := agenda_days_from_civil(
 		range_start.year,
 		range_start.month,
 		range_start.day,
 	)
-	end_days := ical_days_from_civil(range_end.year, range_end.month, range_end.day)
+	end_days := agenda_days_from_civil(range_end.year, range_end.month, range_end.day)
 	for &country, country_index in countries {
 		if !country.enabled {continue}
 		first_year := max(range_start.year, country.effective_from_year)
@@ -303,7 +303,7 @@ calendar_holiday_occurrences_expand :: proc(
 			for &definition, definition_index in country.entries {
 				date, valid := calendar_holiday_definition_date(&definition, year)
 				if !valid {continue}
-				days := ical_days_from_civil(date.year, date.month, date.day)
+				days := agenda_days_from_civil(date.year, date.month, date.day)
 				if days < start_days || days >= end_days {continue}
 				append(&result, Calendar_Holiday_Occurrence{
 					country_index = country_index,
@@ -320,15 +320,15 @@ calendar_holiday_occurrences_expand :: proc(
 calendar_holiday_next_date :: proc(
 	country: ^Calendar_Holiday_Country,
 	definition: ^Calendar_Holiday_Definition,
-	from: ICal_Date_Time,
-) -> (ICal_Date_Time, bool) {
+	from: Agenda_Date_Time,
+) -> (Agenda_Date_Time, bool) {
 	if country == nil || definition == nil {return {}, false}
-	from_days := ical_days_from_civil(from.year, from.month, from.day)
+	from_days := agenda_days_from_civil(from.year, from.month, from.day)
 	first_year := max(from.year, country.effective_from_year)
 	for year in first_year..=first_year+1 {
 		date, valid := calendar_holiday_definition_date(definition, year)
 		if !valid {continue}
-		days := ical_days_from_civil(date.year, date.month, date.day)
+		days := agenda_days_from_civil(date.year, date.month, date.day)
 		if days >= from_days {return date, true}
 	}
 	return {}, false

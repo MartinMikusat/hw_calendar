@@ -69,7 +69,7 @@ holiday. Each jump occurs once per occupied date. The selected date moves to
 the center row.
 
 Use the gear control or `Command-,` to open Settings. Settings contains Styling,
-Calendars, Data, Shortcuts, and Updates. Data exports and imports the portable
+Data, Shortcuts, and Updates. Data exports and imports the portable
 agenda archive. Updates starts a signed update check. The application stores
 interface preferences in its local database.
 

@@ -1,5 +1,6 @@
 package main
 
+import "core:fmt"
 import "core:math"
 import "core:testing"
 import "core:sync"
@@ -48,8 +49,8 @@ calendar_event_rect_uses_available_day_width_test :: proc(t: ^testing.T) {
 calendar_editor_all_day_conversion_uses_exclusive_end_date_test :: proc(
 	t: ^testing.T,
 ) {
-	start, _ := ical_parse_date_time("20260730T090000")
-	end, _ := ical_parse_date_time("20260730T100000")
+	start, _ := agenda_parse_date_time("20260730T090000")
+	end, _ := agenda_parse_date_time("20260730T100000")
 	all_day_start, all_day_end := calendar_editor_toggle_all_day_dates(
 		start,
 		end,
@@ -274,9 +275,9 @@ calendar_due_section_is_top_pinned_and_bounded_test :: proc(t: ^testing.T) {
 	for index in 0..<len(calendar_ui.due_entries) {
 		calendar_ui.due_entries[index].id = i64(index+1)
 	}
-	calendar_ui.events = make([dynamic]Calendar_Event, 1)
-	defer delete(calendar_ui.events)
-	calendar_ui.events[0].row_id = calendar_ui.due_entries[20].id
+	calendar_ui.entries = make([dynamic]Agenda_Entry, 1)
+	defer delete(calendar_ui.entries)
+	calendar_ui.entries[0].id = calendar_ui.due_entries[20].id
 	calendar_ui.due_first_row = 0
 	calendar_ui_reveal_due_event(0)
 	start, end = calendar_ui_due_visible_range()
@@ -286,19 +287,19 @@ calendar_due_section_is_top_pinned_and_bounded_test :: proc(t: ^testing.T) {
 
 @(test)
 calendar_detail_dates_use_readable_display_format_test :: proc(t: ^testing.T) {
-	date, date_ok := ical_parse_date_time("20260808")
+	date, date_ok := agenda_parse_date_time("20260808")
 	testing.expect(t, date_ok)
 	if date_ok {
 		formatted := calendar_format_display_date_time(date, context.temp_allocator)
 		testing.expect_value(t, formatted, "Sat, 8 Aug 2026")
 	}
-	timed, timed_ok := ical_parse_date_time("20260808T094546")
+	timed, timed_ok := agenda_parse_date_time("20260808T094546")
 	testing.expect(t, timed_ok)
 	if timed_ok {
 		formatted := calendar_format_display_date_time(timed, context.temp_allocator)
 		testing.expect_value(t, formatted, "Sat, 8 Aug 2026 · 09:45")
 	}
-	utc, utc_ok := ical_parse_date_time("20260808T094546Z")
+	utc, utc_ok := agenda_parse_date_time("20260808T094546Z")
 	testing.expect(t, utc_ok)
 	if utc_ok {
 		formatted := calendar_format_display_date_time(utc, context.temp_allocator)
@@ -338,27 +339,27 @@ calendar_day_items_group_chores_and_preserve_selected_chore_test :: proc(
 	previous := calendar_ui
 	defer {calendar_ui = previous}
 	calendar_ui = {
-		events = make([dynamic]Calendar_Event),
+		entries = make([dynamic]Agenda_Entry),
 		navigation_active = true,
 		navigation_kind = .Event,
 		navigation_event_index = 1,
 		navigation_start_stamp = 172800,
 	}
-	defer calendar_events_destroy(&calendar_ui.events)
-	append(&calendar_ui.events, Calendar_Event{recurrence_seconds = 86400})
-	append(&calendar_ui.events, Calendar_Event{recurrence_seconds = 172800})
-	append(&calendar_ui.events, Calendar_Event{})
+	defer agenda_entries_destroy(&calendar_ui.entries)
+	append(&calendar_ui.entries, Agenda_Entry{recurrence_seconds = 86400})
+	append(&calendar_ui.entries, Agenda_Entry{recurrence_seconds = 172800})
+	append(&calendar_ui.entries, Agenda_Entry{})
 	items := [3]Calendar_Day_Item{
-		{kind = .Event, event = {event_index = 0, start = ical_date_time_from_stamp(86400, true)}},
-		{kind = .Event, event = {event_index = 1, start = ical_date_time_from_stamp(172800, true)}},
-		{kind = .Event, event = {event_index = 2, start = ical_date_time_from_stamp(259200, true)}},
+		{kind = .Event, event = {entry_index = 0, start_stamp = 86400, all_day = true}},
+		{kind = .Event, event = {entry_index = 1, start_stamp = 172800, all_day = true}},
+		{kind = .Event, event = {entry_index = 2, start_stamp = 259200, all_day = true}},
 	}
 	grouped := calendar_group_day_chore_items(items[:])
 	testing.expect_value(t, len(grouped), 2)
 	if len(grouped) == 2 {
 		testing.expect_value(t, grouped[0].kind, Calendar_Day_Item_Kind.Chores)
 		testing.expect_value(t, grouped[0].chore_count, 2)
-		testing.expect_value(t, grouped[0].event.event_index, 1)
+		testing.expect_value(t, grouped[0].event.entry_index, 1)
 		testing.expect(t, calendar_day_item_is_navigation_selected(grouped[0]))
 		testing.expect_value(t, grouped[1].kind, Calendar_Day_Item_Kind.Event)
 	}
@@ -499,8 +500,8 @@ calendar_day_list_centers_its_anchor_test :: proc(t: ^testing.T) {
 	testing.expect_value(t, calendar_ui_first_visible_day(100, 1), i64(100))
 	testing.expect_value(t, calendar_ui_first_visible_day(100, 5), i64(98))
 	testing.expect_value(t, calendar_ui_first_visible_day(100, 22), i64(90))
-	now := ical_days_from_civil(2026, 8, 8)*86400+12*3600
-	target := ical_days_from_civil(2026, 8, 12)*86400
+	now := agenda_days_from_civil(2026, 8, 8)*86400+12*3600
+	target := agenda_days_from_civil(2026, 8, 12)*86400
 	testing.expect_value(t, calendar_ui_day_offset_for_stamp(target, now), 4)
 }
 
@@ -608,32 +609,17 @@ calendar_archive_modal_numbers_actions_from_left_to_right_test :: proc(
 ) {
 	testing.expect_value(
 		t,
-		calendar_archive_action_for_slot(false, 0),
-		Calendar_UI_Action.Archive_Occurrence,
+		calendar_archive_action_for_slot(0),
+		Calendar_UI_Action.Archive_Confirm,
 	)
 	testing.expect_value(
 		t,
-		calendar_archive_action_for_slot(false, 1),
+		calendar_archive_action_for_slot(1),
 		Calendar_UI_Action.Archive_Cancel,
 	)
 	testing.expect_value(
 		t,
-		calendar_archive_action_for_slot(true, 0),
-		Calendar_UI_Action.Archive_Occurrence,
-	)
-	testing.expect_value(
-		t,
-		calendar_archive_action_for_slot(true, 1),
-		Calendar_UI_Action.Archive_Series,
-	)
-	testing.expect_value(
-		t,
-		calendar_archive_action_for_slot(true, 2),
-		Calendar_UI_Action.Archive_Cancel,
-	)
-	testing.expect_value(
-		t,
-		calendar_archive_action_for_slot(true, 3),
+		calendar_archive_action_for_slot(2),
 		Calendar_UI_Action.None,
 	)
 }
@@ -642,14 +628,14 @@ calendar_archive_modal_numbers_actions_from_left_to_right_test :: proc(
 calendar_navigation_selects_adjacent_event_and_holiday_test :: proc(
 	t: ^testing.T,
 ) {
-	day := ical_days_from_civil(2026, 7, 28)*86400
+	day := agenda_days_from_civil(2026, 7, 28)*86400
 	items := []Calendar_Navigation_Item{
 		{
 			kind = .Event,
 			event = {
-				event_index = 4,
-				uid = "imported-event",
-				start = ical_date_time_from_stamp(day, true),
+				entry_index = 4,
+				start_stamp = day,
+				all_day = true,
 			},
 		},
 		{
@@ -657,27 +643,28 @@ calendar_navigation_selects_adjacent_event_and_holiday_test :: proc(
 			holiday = {
 				country_index = 0,
 				definition_index = 1,
-				date = ical_date_time_from_stamp(day, true),
+				date = agenda_date_time_from_stamp(day, true),
 			},
 		},
 		{
 			kind = .Event,
 			event = {
-				event_index = 5,
-				start = ical_date_time_from_stamp(day+9*3600),
+				entry_index = 5,
+				start_stamp = day+9*3600,
 			},
 		},
 	}
 	next, found := calendar_navigation_find(items, .Next, day)
 	testing.expect(t, found)
 	testing.expect_value(t, next.kind, Calendar_Navigation_Item_Kind.Event)
-	testing.expect_value(t, next.event.event_index, 4)
+	testing.expect_value(t, next.event.entry_index, 4)
 
 	reconstructed_selection := Calendar_Navigation_Item{
 		kind = .Event,
 		event = {
-			event_index = 4,
-			start = ical_date_time_from_stamp(day, true),
+			entry_index = 4,
+			start_stamp = day,
+			all_day = true,
 		},
 	}
 	next, found = calendar_navigation_find(
@@ -708,37 +695,37 @@ calendar_navigation_selects_adjacent_event_and_holiday_test :: proc(
 
 @(test)
 calendar_navigation_includes_dated_agenda_entries_test :: proc(t: ^testing.T) {
-	day := ical_days_from_civil(2026, 8, 8)*86400
-	events := []Calendar_Event{{
-		row_id = 1,
-		uid = "agenda-1",
-		dtstart = "20260808",
-		dtend = "20260808",
+	day := agenda_days_from_civil(2026, 8, 8)*86400
+	entries := []Agenda_Entry{{
+		id = 1,
+		state = "active",
+		start_at = fmt.tprintf("%d", day),
+		end_at = fmt.tprintf("%d", day+86400),
 	}}
 	items := calendar_navigation_items(
-		events,
+		entries,
 		nil,
-		ical_date_time_from_stamp(day-86400, true),
-		ical_date_time_from_stamp(day+86400, true),
+		agenda_date_time_from_stamp(day-86400, true),
+		agenda_date_time_from_stamp(day+86400, true),
 		context.temp_allocator,
 	)
 	testing.expect_value(t, len(items), 1)
 	if len(items) == 1 {
 		testing.expect_value(t, items[0].kind, Calendar_Navigation_Item_Kind.Event)
-		testing.expect_value(t, items[0].event.event_index, 0)
+		testing.expect_value(t, items[0].event.entry_index, 0)
 	}
 }
 
 @(test)
 calendar_navigation_jumps_once_per_occupied_day_test :: proc(t: ^testing.T) {
-	day_1 := i64(ical_days_from_civil(2026, 8, 8))*86400
+	day_1 := i64(agenda_days_from_civil(2026, 8, 8))*86400
 	day_2 := day_1+86400
 	day_3 := day_2+86400
 	items := [4]Calendar_Navigation_Item{
-		{kind = .Event, event = {start = ical_date_time_from_stamp(day_1+3600, true)}},
-		{kind = .Event, event = {start = ical_date_time_from_stamp(day_1+7200, true)}},
-		{kind = .Holiday, holiday = {date = ical_date_time_from_stamp(day_2, true)}},
-		{kind = .Event, event = {start = ical_date_time_from_stamp(day_3+3600, true)}},
+		{kind = .Event, event = {start_stamp = day_1+3600}},
+		{kind = .Event, event = {start_stamp = day_1+7200}},
+		{kind = .Holiday, holiday = {date = agenda_date_time_from_stamp(day_2, true)}},
+		{kind = .Event, event = {start_stamp = day_3+3600}},
 	}
 	next_day, next_found := calendar_navigation_find_day(items[:], .Next, day_1)
 	testing.expect(t, next_found)
@@ -778,7 +765,7 @@ calendar_slovak_movable_holidays_follow_gregorian_easter_test :: proc(
 	t: ^testing.T,
 ) {
 	easter := calendar_gregorian_easter(2026)
-	testing.expect_value(t, easter, ICal_Date_Time{
+	testing.expect_value(t, easter, Agenda_Date_Time{
 		year = 2026,
 		month = 4,
 		day = 5,
@@ -790,7 +777,7 @@ calendar_slovak_movable_holidays_follow_gregorian_easter_test :: proc(
 	}
 	date, valid := calendar_holiday_definition_date(&good_friday, 2026)
 	testing.expect(t, valid)
-	testing.expect_value(t, date, ICal_Date_Time{
+	testing.expect_value(t, date, Agenda_Date_Time{
 		year = 2026,
 		month = 4,
 		day = 3,
@@ -800,7 +787,7 @@ calendar_slovak_movable_holidays_follow_gregorian_easter_test :: proc(
 	easter_monday.easter_offset_days = 1
 	date, valid = calendar_holiday_definition_date(&easter_monday, 2026)
 	testing.expect(t, valid)
-	testing.expect_value(t, date, ICal_Date_Time{
+	testing.expect_value(t, date, Agenda_Date_Time{
 		year = 2026,
 		month = 4,
 		day = 6,

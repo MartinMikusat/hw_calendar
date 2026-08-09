@@ -66,7 +66,7 @@ fi
   jq -e '.data.entry.state == "active" and .data.entry.revision == 5' >/dev/null
 
 test "$(sqlite3 "$HW_CALENDAR_SUPPORT_DIR/agenda.sqlite3" 'PRAGMA foreign_key_check;')" = ""
-test "$(sqlite3 "$HW_CALENDAR_SUPPORT_DIR/agenda.sqlite3" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('events','documents','eventkit_search_cache');")" = 0
+test "$(sqlite3 "$HW_CALENDAR_SUPPORT_DIR/agenda.sqlite3" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('events','documents');")" = 0
 "$CLI" entry list >/dev/null
 test "$(find "$HW_CALENDAR_SUPPORT_DIR" -name 'calendar-unused.sqlite3' | wc -l | tr -d ' ')" = 1
 

@@ -15,7 +15,7 @@ calendar_text_field :: proc(id: text_input.Field_ID) -> Calendar_Text_Field {
 }
 
 calendar_text_editor_field :: proc(index: int) -> Calendar_Text_Field {
-	if index < 0 || index >= 10 {return .None}
+	if index < 0 || index >= 5 {return .None}
 	return Calendar_Text_Field(int(Calendar_Text_Field.Editor_Summary)+index)
 }
 
@@ -28,11 +28,6 @@ calendar_text_target :: proc(field: Calendar_Text_Field) -> ^string {
 	case .Editor_End: return &calendar_ui.editor_end
 	case .Editor_Location: return &calendar_ui.editor_location
 	case .Editor_URL: return &calendar_ui.editor_url
-	case .Editor_Categories: return &calendar_ui.editor_categories
-	case .Editor_Description: return &calendar_ui.editor_description
-	case .Editor_Time_Zone: return &calendar_ui.editor_time_zone
-	case .Editor_Alarms: return &calendar_ui.editor_alarms
-	case .Editor_RRule: return &calendar_ui.editor_rrule
 	case .Chore_Name: return &calendar_ui.chore_name
 	case .Chore_Days: return &calendar_ui.chore_days
 	case .None:
@@ -56,8 +51,7 @@ calendar_text_field_rect :: proc(field: Calendar_Text_Field) -> Calendar_UI_Rect
 	case .Settings_Search:
 		return calendar_settings_search_rect()
 	case .Editor_Summary, .Editor_Start, .Editor_End, .Editor_Location,
-	     .Editor_URL, .Editor_Categories, .Editor_Description,
-	     .Editor_Time_Zone, .Editor_Alarms, .Editor_RRule:
+	     .Editor_URL:
 		return calendar_ui_editor_field_rect(
 			int(field)-int(Calendar_Text_Field.Editor_Summary),
 		)
@@ -86,7 +80,7 @@ calendar_text_focus :: proc(field: Calendar_Text_Field) {
 		)
 	}
 	calendar_ui.settings_query_focused = field == .Settings_Search
-	if field >= .Editor_Summary && field <= .Editor_RRule {
+	if field >= .Editor_Summary && field <= .Editor_URL {
 		calendar_ui.editor_field =
 			int(field)-int(Calendar_Text_Field.Editor_Summary)
 	}
@@ -131,9 +125,7 @@ calendar_text_changed :: proc(field: Calendar_Text_Field) {
 		interval, valid := calendar_chore_interval_from_days(calendar_ui.chore_days)
 		calendar_ui.chore_interval = valid ? interval : 0
 	case .None, .Editor_Summary, .Editor_Start, .Editor_End,
-	     .Editor_Location, .Editor_URL, .Editor_Categories,
-	     .Editor_Description, .Editor_Time_Zone, .Editor_Alarms,
-	     .Editor_RRule, .Chore_Name:
+	     .Editor_Location, .Editor_URL, .Chore_Name:
 	}
 	calendar_ui.needs_redraw = true
 }
@@ -353,15 +345,15 @@ calendar_on_text_command :: proc "c" (
 	} else if selector == sel_registerName("insertNewline:") {
 		if field == .Command_Palette {
 			calendar_ui_activate_palette()
-		} else if field >= .Editor_Summary && field <= .Editor_RRule {
+		} else if field >= .Editor_Summary && field <= .Editor_URL {
 			calendar_ui_editor_commit()
 		} else if field == .Chore_Name || field == .Chore_Days {
 			calendar_chore_commit()
 		}
 		return
 	} else if selector == sel_registerName("insertTab:") {
-		if field >= .Editor_Summary && field <= .Editor_RRule {
-			next := (calendar_ui.editor_field+1)%7
+		if field >= .Editor_Summary && field <= .Editor_URL {
+			next := (calendar_ui.editor_field+1)%5
 			calendar_text_focus(calendar_text_editor_field(next))
 		} else {
 			_ = calendar_text_blur()
@@ -556,7 +548,7 @@ calendar_text_begin_pointer :: proc(
 		click_count,
 	)
 	calendar_ui.settings_query_focused = field == .Settings_Search
-	if field >= .Editor_Summary && field <= .Editor_RRule {
+	if field >= .Editor_Summary && field <= .Editor_URL {
 		calendar_ui.editor_field =
 			int(field)-int(Calendar_Text_Field.Editor_Summary)
 	}

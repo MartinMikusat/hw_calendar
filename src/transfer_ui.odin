@@ -51,7 +51,7 @@ calendar_archive_panel_path :: proc(save: bool) -> (string, bool) {
 	msg_void_id(panel, sel_registerName("setAllowedFileTypes:"), extensions)
 	msg_void_bool(panel, sel_registerName("setCanCreateDirectories:"), true)
 	if save {
-		now := ical_date_time_from_stamp(time.to_unix_seconds(time.now()), true)
+		now := agenda_date_time_from_stamp(time.to_unix_seconds(time.now()), true)
 		name := fmt.tprintf(
 			"hw_calendar-%04d-%02d-%02d.hwcalendar.json",
 			now.year,

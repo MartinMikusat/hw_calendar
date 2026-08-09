@@ -48,9 +48,9 @@ calendar_framework_role :: proc(action: Calendar_App_Action) -> framework_ui.Acc
 	case .Settings_Search, .Command_Palette_Search, .Editor_Field, .Chore_Name,
 	     .Chore_Days:
 		return .Text_Field
-	case .Set_Theme, .Settings_Category, .Set_Default_Connected_Calendar, .Chore_Interval:
+	case .Set_Theme, .Settings_Category, .Chore_Interval:
 		return .Radio_Button
-	case .Toggle_Connected_Calendar, .Editor_Important, .Editor_All_Day:
+	case .Editor_All_Day:
 		return .Check_Box
 	}
 	return .Button
@@ -71,9 +71,8 @@ calendar_framework_number_code :: proc(action: Calendar_App_Action) -> framework
 		}
 	case .Chore_Save: return {6, 0, 1}
 	case .Chore_Cancel: return {7, 0, 1}
-	case .Archive_Occurrence: return {1, 0, 1}
-	case .Archive_Series: return {2, 0, 1}
-	case .Archive_Cancel: return {3, 0, 1}
+	case .Archive_Confirm: return {1, 0, 1}
+	case .Archive_Cancel: return {2, 0, 1}
 	case .Import_Agenda_Cancel: return {1, 0, 1}
 	case .Import_Agenda_Replace: return {2, 0, 1}
 	}
