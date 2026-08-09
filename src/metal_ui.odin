@@ -433,6 +433,8 @@ CALENDAR_HEADER_CONTROL_HEIGHT :: f64(hal_ui.METRICS.window_control)
 CALENDAR_EVENT_MODIFIER_SHIFT :: uint(1 << 17)
 CALENDAR_EVENT_MODIFIER_OPTION :: uint(1 << 19)
 CALENDAR_EVENT_MODIFIER_COMMAND :: uint(1 << 20)
+CALENDAR_EVENT_TYPE_KEY_DOWN :: uint(10)
+CALENDAR_EVENT_TYPE_KEY_UP :: uint(11)
 CALENDAR_DEFAULT_WINDOW_WIDTH :: 1280.0
 CALENDAR_DEFAULT_WINDOW_HEIGHT :: 760.0
 CALENDAR_DAY_ROW_HEIGHT :: 28.0
@@ -544,6 +546,49 @@ calendar_msg_id_mouse_event :: proc(
 		event_number,
 		click_count,
 		pressure,
+	)
+}
+
+calendar_msg_id_key_event :: proc(
+	receiver: Id,
+	selector: Sel,
+	event_type: uint,
+	location: Point,
+	modifiers: uint,
+	timestamp: f64,
+	window_number: int,
+	event_context: Id,
+	characters, characters_ignoring_modifiers: Id,
+	is_repeat: bool,
+	key_code: u16,
+) -> Id {
+	p := transmute(proc "c" (
+		_: Id,
+		_: Sel,
+		_: uint,
+		_: Point,
+		_: uint,
+		_: f64,
+		_: int,
+		_: Id,
+		_: Id,
+		_: Id,
+		_: bool,
+		_: u16,
+	) -> Id)objc_send_address
+	return p(
+		receiver,
+		selector,
+		event_type,
+		location,
+		modifiers,
+		timestamp,
+		window_number,
+		event_context,
+		characters,
+		characters_ignoring_modifiers,
+		is_repeat,
+		key_code,
 	)
 }
 
@@ -4033,6 +4078,75 @@ calendar_ui_post_pointer_click :: proc(functional_name: string) -> string {
 	}
 	msg_void_id(calendar_ui.view, sel_registerName("mouseDown:"), down)
 	msg_void_id(calendar_ui.view, sel_registerName("mouseUp:"), up)
+	return ""
+}
+
+calendar_ui_post_keyboard_event :: proc(key, modifiers: string) -> string {
+	key_code := u16(0)
+	characters := ""
+	switch key {
+	case "up":
+		key_code = 126
+		characters = "\uF700"
+	case "down":
+		key_code = 125
+		characters = "\uF701"
+	case:
+		return "The keyboard bridge supports only the up and down keys."
+	}
+	modifier_flags := uint(0)
+	switch modifiers {
+	case "none":
+	case "command":
+		modifier_flags = CALENDAR_EVENT_MODIFIER_COMMAND
+	case:
+		return "The keyboard bridge supports none or command modifiers."
+	}
+	window_number := int(calendar_msg_i64(
+		calendar_ui.window,
+		sel_registerName("windowNumber"),
+	))
+	characters_object := nsstring(characters)
+	event_class := objc_getClass("NSEvent")
+	event_selector := sel_registerName(
+		"keyEventWithType:location:modifierFlags:timestamp:windowNumber:context:characters:charactersIgnoringModifiers:isARepeat:keyCode:",
+	)
+	down := calendar_msg_id_key_event(
+		event_class,
+		event_selector,
+		CALENDAR_EVENT_TYPE_KEY_DOWN,
+		{},
+		modifier_flags,
+		0,
+		window_number,
+		nil,
+		characters_object,
+		characters_object,
+		false,
+		key_code,
+	)
+	up := calendar_msg_id_key_event(
+		event_class,
+		event_selector,
+		CALENDAR_EVENT_TYPE_KEY_UP,
+		{},
+		modifier_flags,
+		0,
+		window_number,
+		nil,
+		characters_object,
+		characters_object,
+		false,
+		key_code,
+	)
+	if down == nil || up == nil {
+		return "AppKit could not create the keyboard events."
+	}
+	if calendar_msg_uint(down, sel_registerName("keyCode")) != uint(key_code) {
+		return "AppKit created a keyboard event with the wrong key code."
+	}
+	msg_void_id(calendar_ui.view, sel_registerName("keyDown:"), down)
+	msg_void_id(calendar_ui.view, sel_registerName("keyUp:"), up)
 	return ""
 }
 

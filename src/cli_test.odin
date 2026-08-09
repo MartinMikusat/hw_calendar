@@ -63,6 +63,45 @@ calendar_cli_requires_pointer_bridge_control_test :: proc(t: ^testing.T) {
 }
 
 @(test)
+calendar_cli_parses_keyboard_bridge_test :: proc(t: ^testing.T) {
+	request, result, parsed := calendar_cli_parse([]string{
+		"ui", "bridge-keyboard", "--key", "down", "--modifiers", "command",
+	})
+	defer delete(result.output)
+	testing.expect(t, parsed)
+	testing.expect_value(t, request.command, Calendar_CLI_Command.UI_Bridge_Keyboard)
+	testing.expect_value(t, request.key, "down")
+	testing.expect_value(t, request.modifiers, "command")
+	testing.expect(t, calendar_cli_command_requires_gui(request.command))
+}
+
+@(test)
+calendar_cli_keyboard_bridge_defaults_to_no_modifiers_test :: proc(t: ^testing.T) {
+	request, result, parsed := calendar_cli_parse([]string{
+		"ui", "bridge-keyboard", "--key", "up",
+	})
+	defer delete(result.output)
+	testing.expect(t, parsed)
+	testing.expect_value(t, request.modifiers, "none")
+}
+
+@(test)
+calendar_cli_rejects_invalid_keyboard_bridge_input_test :: proc(t: ^testing.T) {
+	_, key_result, key_parsed := calendar_cli_parse([]string{
+		"ui", "bridge-keyboard", "--key", "left",
+	})
+	defer delete(key_result.output)
+	testing.expect(t, !key_parsed)
+	testing.expect(t, strings.contains(key_result.output, "--key up or --key down"))
+	_, modifier_result, modifier_parsed := calendar_cli_parse([]string{
+		"ui", "bridge-keyboard", "--key", "down", "--modifiers", "shift",
+	})
+	defer delete(modifier_result.output)
+	testing.expect(t, !modifier_parsed)
+	testing.expect(t, strings.contains(modifier_result.output, "none or command"))
+}
+
+@(test)
 calendar_cli_parses_chore_commands_test :: proc(t: ^testing.T) {
 	request, result, parsed := calendar_cli_parse([]string{"chore", "due"})
 	defer delete(result.output)

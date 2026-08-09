@@ -89,6 +89,27 @@ done
   exit 1
 }
 
+ui_day_offset() {
+  response=$(HW_CALENDAR_SUPPORT_DIR="$SUPPORT_DIR" \
+    "$ROOT/build/hw_calendar-asan" ui snapshot)
+  artifact=$(printf '%s' "$response" | jq -r '.data.path')
+  jq -r '.day_offset' "$artifact"
+}
+
+[ "$(ui_day_offset)" -eq 0 ]
+HW_CALENDAR_SUPPORT_DIR="$SUPPORT_DIR" \
+  "$ROOT/build/hw_calendar-asan" ui bridge-keyboard --key down |
+  jq -e '.ok and .data.key == "down" and .data.modifiers == "none"' >/dev/null
+[ "$(ui_day_offset)" -eq 1 ]
+HW_CALENDAR_SUPPORT_DIR="$SUPPORT_DIR" \
+  "$ROOT/build/hw_calendar-asan" ui bridge-keyboard --key up >/dev/null
+[ "$(ui_day_offset)" -eq 0 ]
+HW_CALENDAR_SUPPORT_DIR="$SUPPORT_DIR" \
+  "$ROOT/build/hw_calendar-asan" ui bridge-keyboard --key down \
+    --modifiers command |
+  jq -e '.ok and .data.key == "down" and .data.modifiers == "command"' >/dev/null
+[ "$(ui_day_offset)" -gt 0 ]
+
 HW_CALENDAR_SUPPORT_DIR="$SUPPORT_DIR" \
   "$ROOT/build/hw_calendar-asan" ui snapshot |
   jq -e '.ok == true' >/dev/null

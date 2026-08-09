@@ -30,6 +30,7 @@ Calendar_CLI_Command :: enum {
 	UI_Modal_State,
 	UI_Modal_Dismiss,
 	UI_Bridge_Pointer,
+	UI_Bridge_Keyboard,
 	Entry_Create,
 	Entry_Update,
 	Entry_Get,
@@ -67,6 +68,8 @@ Calendar_CLI_Request :: struct {
 	output: string,
 	baseline: string,
 	target_control: string,
+	key: string,
+	modifiers: string,
 	limit: int,
 	if_revision: int,
 }
@@ -92,6 +95,7 @@ calendar_cli_command_requires_gui :: proc(command: Calendar_CLI_Command) -> bool
 	return command == .UI_Snapshot || command == .UI_Check ||
 	       command == .UI_Modal_State || command == .UI_Modal_Dismiss ||
 	       command == .UI_Bridge_Pointer ||
+	       command == .UI_Bridge_Keyboard ||
 	       command == .Calendar_Status || command == .Calendar_List ||
 	       command == .Calendar_Request_Access
 }
@@ -136,7 +140,9 @@ Calendar_CLI_Modal_Response :: struct {
 }
 
 Calendar_CLI_UI_Bridge_Data :: struct {
-	control: string,
+	control: string `json:"control,omitempty"`,
+	key: string `json:"key,omitempty"`,
+	modifiers: string `json:"modifiers,omitempty"`,
 }
 
 Calendar_CLI_UI_Bridge_Response :: struct {
@@ -360,6 +366,7 @@ calendar_cli_command_name :: proc(command: Calendar_CLI_Command) -> string {
 	case .UI_Modal_State: return "ui modal-state"
 	case .UI_Modal_Dismiss: return "ui modal-dismiss"
 	case .UI_Bridge_Pointer: return "ui bridge-pointer"
+	case .UI_Bridge_Keyboard: return "ui bridge-keyboard"
 	case .Entry_Create: return "entry create"
 	case .Entry_Update: return "entry update"
 	case .Entry_Get: return "entry get"
@@ -418,6 +425,7 @@ calendar_cli_parse :: proc(args: []string) -> (Calendar_CLI_Request, Calendar_CL
 	case group == "ui" && action == "modal-state": request.command = .UI_Modal_State
 	case group == "ui" && action == "modal-dismiss": request.command = .UI_Modal_Dismiss
 	case group == "ui" && action == "bridge-pointer": request.command = .UI_Bridge_Pointer
+	case group == "ui" && action == "bridge-keyboard": request.command = .UI_Bridge_Keyboard
 	case group == "entry" && action == "create": request.command = .Entry_Create
 	case group == "entry" && action == "update": request.command = .Entry_Update
 	case group == "entry" && action == "get": request.command = .Entry_Get
@@ -467,6 +475,8 @@ calendar_cli_parse :: proc(args: []string) -> (Calendar_CLI_Request, Calendar_CL
 		case "--output": request.output = value
 		case "--baseline": request.baseline = value
 		case "--control": request.target_control = value
+		case "--key": request.key = value
+		case "--modifiers": request.modifiers = value
 		case "--if-revision":
 			parsed, ok := strconv.parse_int(value)
 			if !ok || parsed < 1 {return {}, calendar_cli_error(request.command, 2, "usage", "--if-revision must be a positive integer."), false}
@@ -510,6 +520,25 @@ calendar_cli_parse :: proc(args: []string) -> (Calendar_CLI_Request, Calendar_CL
 			"usage",
 			"ui bridge-pointer requires --control.",
 		), false
+	}
+	if request.command == .UI_Bridge_Keyboard {
+		if request.key != "up" && request.key != "down" {
+			return {}, calendar_cli_error(
+				request.command,
+				2,
+				"usage",
+				"ui bridge-keyboard requires --key up or --key down.",
+			), false
+		}
+		if len(request.modifiers) == 0 {request.modifiers = "none"}
+		if request.modifiers != "none" && request.modifiers != "command" {
+			return {}, calendar_cli_error(
+				request.command,
+				2,
+				"usage",
+				"--modifiers must be none or command.",
+			), false
+		}
 	}
 	return request, {}, true
 }
@@ -1729,6 +1758,25 @@ calendar_cli_execute :: proc(request: Calendar_CLI_Request) -> Calendar_CLI_Resu
 				ok = true,
 				command = calendar_cli_command_name(request.command),
 				data = {control=request.target_control},
+			}),
+		}
+	case .UI_Bridge_Keyboard:
+		if keyboard_error := calendar_ui_post_keyboard_event(
+			request.key,
+			request.modifiers,
+		); len(keyboard_error) > 0 {
+			return calendar_cli_error(
+				request.command,
+				3,
+				"keyboard_failed",
+				keyboard_error,
+			)
+		}
+		return {
+			output = calendar_cli_encode(Calendar_CLI_UI_Bridge_Response{
+				ok = true,
+				command = calendar_cli_command_name(request.command),
+				data = {key=request.key, modifiers=request.modifiers},
 			}),
 		}
 	case .None:

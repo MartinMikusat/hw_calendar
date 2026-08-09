@@ -103,6 +103,7 @@ build/hw_calendar ui check --baseline /path/to/snapshot.json
 build/hw_calendar ui modal-state
 build/hw_calendar ui modal-dismiss
 build/hw_calendar ui bridge-pointer --control "settings"
+build/hw_calendar ui bridge-keyboard --key down --modifiers command
 ```
 
 Every entry mutation uses an expected revision. A proposal also records its
@@ -121,6 +122,9 @@ the database directly.
 The pointer bridge resolves a live control by its functional name. It sends
 AppKit mouse events through the same view callback as physical pointer input.
 It does not activate or raise the application window.
+
+The keyboard bridge sends AppKit Up or Down key events through the live view.
+Use `--modifiers none` or `--modifiers command`. The command defaults to `none`.
 
 The agenda uses `agenda.sqlite3`. On the first agenda launch, the application
 renames an unused `calendar.sqlite3` file to `calendar-unused.sqlite3`. It does
