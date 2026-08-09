@@ -2,7 +2,7 @@
 
 ## Active
 
-No active application tasks.
+- [ ] Replace the first-release build-1 updater test with a public old-to-new test before 0.1.1. Install the latest stable release through its public feed, update it to the signed candidate, and verify the installed bundle matches that candidate.
 
 ## Completed
 
