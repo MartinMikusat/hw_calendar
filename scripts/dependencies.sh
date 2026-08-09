@@ -155,12 +155,13 @@ load_lock() {
     *"sha256:$LLVM_SHA") ;;
     *) fail "LLVM bottle URL and checksum do not match" ;;
   esac
-  [ "$GIT_COUNT" -eq 5 ] || fail "dependency lock must contain five sibling repositories"
+  [ "$GIT_COUNT" -eq 6 ] || fail "dependency lock must contain six sibling repositories"
   [ -n "$ICONOIR_TAG" ] || fail "dependency lock does not contain Iconoir"
   [ "$ICON_FILE_COUNT" -eq 5 ] || fail "dependency lock must contain five Iconoir files"
 
   for required in \
     hw_odin_matchSorter \
+    hw_odin_ipc_localCommand \
     hw_odin_ui_flash \
     hw_odin_ui_commandPalette \
     hw_odin_ui_components \

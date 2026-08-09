@@ -5,6 +5,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 ODIN=$("$ROOT/scripts/dependencies.sh" path odin)
 LLVM_BIN=$("$ROOT/scripts/dependencies.sh" path llvm-bin)
 MATCH_SORTER_ROOT=$("$ROOT/scripts/dependencies.sh" path repo hw_odin_matchSorter)
+LOCAL_COMMAND_ROOT=$("$ROOT/scripts/dependencies.sh" path repo hw_odin_ipc_localCommand)
 UI_FLASH_ROOT=$("$ROOT/scripts/dependencies.sh" path repo hw_odin_ui_flash)
 COMMAND_PALETTE_ROOT=$("$ROOT/scripts/dependencies.sh" path repo hw_odin_ui_commandPalette)
 COMPONENTS_ROOT=$("$ROOT/scripts/dependencies.sh" path repo hw_odin_ui_components)
@@ -36,6 +37,9 @@ stage "validate the synchronized lock"
 
 stage "test hw_odin_matchSorter"
 (cd "$MATCH_SORTER_ROOT" && "$ODIN" test .)
+
+stage "test hw_odin_ipc_localCommand"
+"$LOCAL_COMMAND_ROOT/test.sh"
 
 stage "test hw_odin_ui_flash"
 (cd "$UI_FLASH_ROOT" && "$ODIN" test .)
