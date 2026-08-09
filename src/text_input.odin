@@ -34,6 +34,7 @@ calendar_text_target :: proc(field: Calendar_Text_Field) -> ^string {
 	case .Editor_Alarms: return &calendar_ui.editor_alarms
 	case .Editor_RRule: return &calendar_ui.editor_rrule
 	case .Chore_Name: return &calendar_ui.chore_name
+	case .Chore_Days: return &calendar_ui.chore_days
 	case .None:
 	}
 	return nil
@@ -62,6 +63,8 @@ calendar_text_field_rect :: proc(field: Calendar_Text_Field) -> Calendar_UI_Rect
 		)
 	case .Chore_Name:
 		return calendar_chore_name_rect()
+	case .Chore_Days:
+		return calendar_chore_days_rect()
 	case .None:
 	}
 	return {}
@@ -124,6 +127,9 @@ calendar_text_changed :: proc(field: Calendar_Text_Field) {
 			delete(calendar_ui.settings_query)
 			calendar_ui.settings_query = replace
 		}
+	case .Chore_Days:
+		interval, valid := calendar_chore_interval_from_days(calendar_ui.chore_days)
+		calendar_ui.chore_interval = valid ? interval : 0
 	case .None, .Editor_Summary, .Editor_Start, .Editor_End,
 	     .Editor_Location, .Editor_URL, .Editor_Categories,
 	     .Editor_Description, .Editor_Time_Zone, .Editor_Alarms,
@@ -349,7 +355,7 @@ calendar_on_text_command :: proc "c" (
 			calendar_ui_activate_palette()
 		} else if field >= .Editor_Summary && field <= .Editor_RRule {
 			calendar_ui_editor_commit()
-		} else if field == .Chore_Name {
+		} else if field == .Chore_Name || field == .Chore_Days {
 			calendar_chore_commit()
 		}
 		return

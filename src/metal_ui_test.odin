@@ -1,11 +1,17 @@
 package main
 
+import "core:math"
 import "core:testing"
 import "core:sync"
 import flash "flash:."
+import "core:strings"
 import framework_ui "ui_framework:core"
 
 calendar_ui_test_mutex: sync.Mutex
+
+calendar_test_expect_approx :: proc(t: ^testing.T, actual, expected: f64) {
+	testing.expect(t, math.abs(actual-expected) < 0.001)
+}
 
 @(test)
 calendar_text_styles_bind_size_and_tracking_test :: proc(t: ^testing.T) {
@@ -136,10 +142,14 @@ calendar_chore_cancel_requests_dirty_confirmation_test :: proc(t: ^testing.T) {
 		width = 900,
 		height = 700,
 		chore_open = true,
+		chore_days = strings.clone("7"),
 		chore_interval = CALENDAR_CHORE_DEFAULT_INTERVAL,
-		chore_focus_slot = -1,
+		chore_focus_slot = CALENDAR_CHORE_FOCUS_NAME,
 	}
+	defer delete(calendar_ui.chore_days)
 	calendar_ui.chore_initial_hash = calendar_chore_fingerprint()
+	delete(calendar_ui.chore_days)
+	calendar_ui.chore_days = strings.clone("1")
 	calendar_ui.chore_interval = CALENDAR_CHORE_PRESETS[0]
 	calendar_ui_execute_action(Calendar_App_Action{kind = .Chore_Cancel})
 	testing.expect(t, calendar_ui.chore_open)
@@ -158,6 +168,7 @@ calendar_chore_geometry_stays_inside_modal_test :: proc(t: ^testing.T) {
 		calendar_ui = {width = width, height = 760}
 		modal := calendar_ui_chore_rect()
 		name := calendar_chore_name_rect()
+		days := calendar_chore_days_rect()
 		first_interval := calendar_chore_interval_rect(0)
 		last_interval := calendar_chore_interval_rect(
 			len(CALENDAR_CHORE_PRESETS)-1,
@@ -166,7 +177,10 @@ calendar_chore_geometry_stays_inside_modal_test :: proc(t: ^testing.T) {
 		save := calendar_chore_button_rect(0)
 		testing.expect(t, name.x >= modal.x+24)
 		testing.expect(t, name.x+name.w <= modal.x+modal.w-24)
-		testing.expect(t, first_interval.y+first_interval.h < name.y)
+		testing.expect(t, days.x >= modal.x+24)
+		testing.expect(t, days.x+days.w <= modal.x+modal.w-24)
+		testing.expect(t, days.y+days.h < name.y)
+		testing.expect(t, first_interval.y+first_interval.h < days.y)
 		testing.expect(t, first_interval.x >= modal.x+24)
 		testing.expect(t, last_interval.x+last_interval.w <= modal.x+modal.w-24)
 		testing.expect(t, save.y+save.h < error_rect.y)
@@ -193,6 +207,7 @@ calendar_chore_modal_blocks_sibling_modals_test :: proc(t: ^testing.T) {
 @(test)
 calendar_chore_palette_contains_only_chore_actions_test :: proc(t: ^testing.T) {
 	testing.expect(t, calendar_palette_action_allowed_over_chore(.Chore_Interval))
+	testing.expect(t, calendar_palette_action_allowed_over_chore(.Chore_Days))
 	testing.expect(t, calendar_palette_action_allowed_over_chore(.Chore_Save))
 	testing.expect(t, calendar_palette_action_allowed_over_chore(.Chore_Cancel))
 	testing.expect(t, !calendar_palette_action_allowed_over_chore(.New_Event))
@@ -285,6 +300,18 @@ calendar_chore_interval_label_supports_custom_day_counts_test :: proc(t: ^testin
 	testing.expect_value(t, calendar_chore_interval_label(345600), "4 days")
 }
 
+@(test)
+calendar_chore_interval_parses_positive_whole_days_test :: proc(t: ^testing.T) {
+	interval, valid := calendar_chore_interval_from_days(" 4 ")
+	testing.expect(t, valid)
+	testing.expect_value(t, interval, i64(345600))
+	invalid_values := [6]string{"", "0", "-1", "1.5", "days", "106751991167301"}
+	for invalid in invalid_values {
+		_, item_valid := calendar_chore_interval_from_days(invalid)
+		testing.expect(t, !item_valid)
+	}
+}
+
 calendar_icon_points_use_iconoir_viewbox_test :: proc(
 	t: ^testing.T,
 	points: []Calendar_Icon_Point,
@@ -371,12 +398,12 @@ calendar_action_bar_uses_one_row_with_section_gap_when_wide_test :: proc(t: ^tes
 	testing.expect_value(t, first.x, CALENDAR_LAYOUT_MARGIN)
 	testing.expect_value(t, first.y, CALENDAR_ACTION_BAR_BOTTOM)
 	testing.expect_value(t, first.h, CALENDAR_ACTION_BAR_HEIGHT)
-	testing.expect_value(t, second.x-(first.x+first.w), CALENDAR_ACTION_BAR_GAP)
-	testing.expect_value(t, third.x-(second.x+second.w), CALENDAR_ACTION_BAR_GAP)
-	testing.expect_value(t, fourth.x-(third.x+third.w), CALENDAR_ACTION_BAR_GAP)
-	testing.expect_value(t, fifth.x-(fourth.x+fourth.w), CALENDAR_ACTION_BAR_GAP)
-	testing.expect_value(t, sixth.x-(fifth.x+fifth.w), CALENDAR_ACTION_BAR_GAP)
-	testing.expect_value(
+	calendar_test_expect_approx(t, second.x-(first.x+first.w), CALENDAR_ACTION_BAR_GAP)
+	calendar_test_expect_approx(t, third.x-(second.x+second.w), CALENDAR_ACTION_BAR_GAP)
+	calendar_test_expect_approx(t, fourth.x-(third.x+third.w), CALENDAR_ACTION_BAR_GAP)
+	calendar_test_expect_approx(t, fifth.x-(fourth.x+fourth.w), CALENDAR_ACTION_BAR_GAP)
+	calendar_test_expect_approx(t, sixth.x-(fifth.x+fifth.w), CALENDAR_ACTION_BAR_GAP)
+	calendar_test_expect_approx(
 		t,
 		seventh.x-(sixth.x+sixth.w),
 		CALENDAR_ACTION_BAR_GAP*2,

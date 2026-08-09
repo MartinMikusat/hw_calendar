@@ -137,6 +137,7 @@ calendar_ui_diagnostic_action_name :: proc(action: Calendar_UI_Action) -> string
 	case .Complete_Chore: return "complete-chore"
 	case .New_Chore: return "new-chore"
 	case .Chore_Name: return "chore-name"
+	case .Chore_Days: return "chore-days"
 	case .Chore_Interval: return "chore-interval"
 	case .Chore_Save: return "chore-save"
 	case .Chore_Cancel: return "chore-cancel"
@@ -160,7 +161,8 @@ calendar_ui_diagnostic_action_name :: proc(action: Calendar_UI_Action) -> string
 
 calendar_ui_diagnostic_role :: proc(action: Calendar_UI_Action) -> string {
 	if action == .Editor_Field || action == .Settings_Search ||
-	   action == .Command_Palette_Search || action == .Chore_Name {
+	   action == .Command_Palette_Search || action == .Chore_Name ||
+	   action == .Chore_Days {
 		return "AXTextField"
 	}
 	if action == .Set_Theme || action == .Settings_Category ||

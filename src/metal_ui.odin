@@ -155,6 +155,7 @@ Calendar_UI_Action :: enum {
 	Complete_Chore,
 	New_Chore,
 	Chore_Name,
+	Chore_Days,
 	Chore_Interval,
 	Chore_Save,
 	Chore_Cancel,
@@ -250,6 +251,7 @@ Calendar_Text_Field :: enum u64 {
 	Editor_Alarms,
 	Editor_RRule,
 	Chore_Name,
+	Chore_Days,
 }
 
 Calendar_UI_State :: struct {
@@ -339,10 +341,13 @@ Calendar_UI_State :: struct {
 	next_chore_due_stamp: i64,
 	chore_open: bool,
 	chore_name: string,
+	chore_days: string,
 	chore_interval: i64,
 	chore_error: string,
 	chore_initial_hash: u64,
 	chore_focus_slot: int,
+	chore_entry_id: i64,
+	chore_expected_revision: int,
 	discard_changes_open: bool,
 	discard_target: Calendar_Modal_Kind,
 	ax_children: Id,
@@ -683,7 +688,8 @@ calendar_ui_ax_label :: proc(control: ^Calendar_UI_Control) -> string {
 	case .Jump_Event: return "Jump to event"
 	case .Toggle_Holiday_Country: return "Toggle holiday calendar"
 	case .Jump_Holiday: return "Jump to holiday"
-	case .Action_Edit: return "Edit focused event"
+	case .Action_Edit:
+		return calendar_ui_focused_event_is_chore() ? "Edit focused chore" : "Edit focused event"
 	case .Action_Open_URL: return "Open focused details URL"
 	case .Action_Archive:
 		if calendar_ui.navigation_event_index >= 0 &&
@@ -705,6 +711,7 @@ calendar_ui_ax_label :: proc(control: ^Calendar_UI_Control) -> string {
 		return "Complete due chore"
 	case .New_Chore: return "New chore"
 	case .Chore_Name: return "Chore name"
+	case .Chore_Days: return "Repeat interval in days"
 	case .Chore_Interval:
 		if control.action.index >= 0 {
 			return fmt.tprintf(
@@ -802,6 +809,9 @@ calendar_on_ax_value :: proc "c" (self: Id, command: Sel) -> Id {
 	}
 	if control.action.kind == .Chore_Name {
 		return nsstring(calendar_ui.chore_name)
+	}
+	if control.action.kind == .Chore_Days {
+		return nsstring(calendar_ui.chore_days)
 	}
 	if control.action.kind == .Chore_Interval {
 		return calendar_msg_id_bool(
@@ -913,6 +923,16 @@ calendar_on_ax_set_value :: proc "c" (
 		calendar_text_changed(.Chore_Name)
 		return
 	}
+	if control.action.kind == .Chore_Days {
+		utf8 := calendar_msg_cstring(value, sel_registerName("UTF8String"))
+		if utf8 == nil {return}
+		delete(calendar_ui.chore_days)
+		calendar_ui.chore_days = strings.clone(string(utf8))
+		calendar_ui.chore_focus_slot = CALENDAR_CHORE_FOCUS_DAYS
+		calendar_text_focus(.Chore_Days)
+		calendar_text_changed(.Chore_Days)
+		return
+	}
 	if control.action.kind != .Editor_Field {return}
 	text_value := calendar_ui_editor_field_text(control.action.index)
 	if text_value == nil {return}
@@ -947,6 +967,7 @@ calendar_ui_rebuild_accessibility :: proc() {
 		role := "AXButton"
 	if control.action.kind == .Editor_Field ||
 	   control.action.kind == .Chore_Name ||
+	   control.action.kind == .Chore_Days ||
 	   control.action.kind == .Settings_Search ||
 	   control.action.kind == .Command_Palette_Search {
 			role = "AXTextField"
@@ -994,6 +1015,12 @@ calendar_ui_rebuild_accessibility :: proc() {
 				element,
 				sel_registerName("setAccessibilityValue:"),
 				nsstring(calendar_ui.chore_name),
+			)
+		} else if control.action.kind == .Chore_Days {
+			msg_void_id(
+				element,
+				sel_registerName("setAccessibilityValue:"),
+				nsstring(calendar_ui.chore_days),
 			)
 		} else if control.action.kind == .Chore_Interval {
 			msg_void_id(
@@ -1695,6 +1722,14 @@ calendar_action_available :: proc(
 	return false
 }
 
+calendar_ui_focused_event_is_chore :: proc() -> bool {
+	return calendar_ui.navigation_active &&
+	       calendar_ui.navigation_kind == .Event &&
+	       calendar_ui.navigation_event_index >= 0 &&
+	       calendar_ui.navigation_event_index < len(calendar_ui.events) &&
+	       calendar_ui.events[calendar_ui.navigation_event_index].recurrence_seconds > 0
+}
+
 calendar_ui_action_available :: proc(action: Calendar_UI_Action) -> bool {
 	available := calendar_action_available(
 		action,
@@ -2019,6 +2054,7 @@ calendar_palette_action_allowed_over_chore :: proc(
 	action: Calendar_UI_Action,
 ) -> bool {
 	return action == .Chore_Interval ||
+	       action == .Chore_Days ||
 	       action == .Chore_Save ||
 	       action == .Chore_Cancel
 }
@@ -2118,6 +2154,10 @@ calendar_ui_open_palette :: proc() {
 		context.temp_allocator,
 	)
 	clear(&calendar_ui.palette_actions)
+	chore_save_subtitle := "Create the active recurring chore"
+	if calendar_ui.chore_entry_id > 0 {
+		chore_save_subtitle = "Update the active recurring chore"
+	}
 	calendar_palette_append(
 		&entries,
 		{kind = .Today},
@@ -2164,7 +2204,7 @@ calendar_ui_open_palette :: proc() {
 		&entries,
 		{kind = .Chore_Save},
 		"Save chore",
-		"Create the active recurring chore",
+		chore_save_subtitle,
 		"Chore editor",
 		nil,
 		{all = CALENDAR_PALETTE_CHORE},
@@ -2233,11 +2273,15 @@ calendar_ui_open_palette :: proc() {
 			"Current theme",
 		)
 	}
+	edit_is_chore := calendar_ui_focused_event_is_chore()
+	edit_title := edit_is_chore ? "Edit focused chore" : "Edit focused entry"
+	edit_subtitle := "Open the focused agenda entry in the editor"
+	if edit_is_chore {edit_subtitle = "Open the focused chore editor"}
 	calendar_palette_append(
 		&entries,
 		{kind = .Action_Edit},
-		"Edit focused entry",
-		"Open the focused agenda entry in the editor",
+		edit_title,
+		edit_subtitle,
 		"Agenda action",
 		[]string{"change", "update"},
 		{all = CALENDAR_PALETTE_FOCUSED_EVENT},
@@ -2833,6 +2877,9 @@ calendar_ui_editor_close :: proc() {
 
 CALENDAR_CHORE_PRESETS := [5]i64{86400, 172800, 604800, 1209600, 2592000}
 CALENDAR_CHORE_DEFAULT_INTERVAL :: 604800
+CALENDAR_CHORE_MAX_DAYS :: i64(106751991167300)
+CALENDAR_CHORE_FOCUS_DAYS :: -2
+CALENDAR_CHORE_FOCUS_NAME :: -1
 
 calendar_chore_preset_interval :: proc(index: int) -> i64 {
 	if index < 0 || index >= len(CALENDAR_CHORE_PRESETS) {return 0}
@@ -2852,9 +2899,15 @@ calendar_chore_interval_label :: proc(interval: i64) -> string {
 	return ""
 }
 
+calendar_chore_interval_from_days :: proc(value: string) -> (i64, bool) {
+	days, parsed := strconv.parse_i64(strings.trim_space(value))
+	if !parsed || days <= 0 || days > CALENDAR_CHORE_MAX_DAYS {return 0, false}
+	return days*86400, true
+}
+
 calendar_ui_chore_rect :: proc() -> Calendar_UI_Rect {
 	width := min(560.0, calendar_ui.width-48)
-	height := 272.0
+	height := 326.0
 	return {
 		(calendar_ui.width-width)/2,
 		(calendar_ui.height-height)/2,
@@ -2868,6 +2921,11 @@ calendar_chore_name_rect :: proc() -> Calendar_UI_Rect {
 	return {modal.x+90, modal.y+modal.h-94, modal.w-114, 34}
 }
 
+calendar_chore_days_rect :: proc() -> Calendar_UI_Rect {
+	modal := calendar_ui_chore_rect()
+	return {modal.x+112, modal.y+modal.h-142, 88, 34}
+}
+
 calendar_chore_interval_rect :: proc(index: int) -> Calendar_UI_Rect {
 	modal := calendar_ui_chore_rect()
 	gap := 8.0
@@ -2876,7 +2934,7 @@ calendar_chore_interval_rect :: proc(index: int) -> Calendar_UI_Rect {
 	)/f64(len(CALENDAR_CHORE_PRESETS))
 	return {
 		modal.x+24+f64(index)*(width+gap),
-		modal.y+modal.h-162,
+		modal.y+modal.h-210,
 		width,
 		34,
 	}
@@ -2905,16 +2963,33 @@ calendar_chore_cycle_focus :: proc(reverse := false) {
 	last_slot := len(CALENDAR_CHORE_PRESETS)+1
 	next := calendar_ui.chore_focus_slot
 	if reverse {
-		next -= 1
-		if next < -1 {next = last_slot}
+		if next == CALENDAR_CHORE_FOCUS_NAME {
+			next = last_slot
+		} else if next == CALENDAR_CHORE_FOCUS_DAYS {
+			next = CALENDAR_CHORE_FOCUS_NAME
+		} else if next == 0 {
+			next = CALENDAR_CHORE_FOCUS_DAYS
+		} else {
+			next -= 1
+		}
 	} else {
-		next += 1
-		if next > last_slot {next = -1}
+		if next == CALENDAR_CHORE_FOCUS_NAME {
+			next = CALENDAR_CHORE_FOCUS_DAYS
+		} else if next == CALENDAR_CHORE_FOCUS_DAYS {
+			next = 0
+		} else if next >= last_slot {
+			next = CALENDAR_CHORE_FOCUS_NAME
+		} else {
+			next += 1
+		}
 	}
 	calendar_ui.chore_focus_slot = next
-	if next == -1 {
+	if next == CALENDAR_CHORE_FOCUS_NAME {
 		calendar_text_focus(.Chore_Name)
-	} else if calendar_text_active_field() == .Chore_Name {
+	} else if next == CALENDAR_CHORE_FOCUS_DAYS {
+		calendar_text_focus(.Chore_Days)
+	} else if calendar_text_active_field() == .Chore_Name ||
+	          calendar_text_active_field() == .Chore_Days {
 		_ = calendar_text_blur()
 	}
 	calendar_ui.needs_redraw = true
@@ -2922,9 +2997,9 @@ calendar_chore_cycle_focus :: proc(reverse := false) {
 
 calendar_chore_fingerprint :: proc() -> u64 {
 	value := fmt.tprintf(
-		"%s\x1f%d",
+		"%s\x1f%s",
 		calendar_ui.chore_name,
-		calendar_ui.chore_interval,
+		calendar_ui.chore_days,
 	)
 	return hash.fnv64a(transmute([]u8)value)
 }
@@ -2942,33 +3017,95 @@ calendar_ui_chore_set_error :: proc(message: string) {
 calendar_ui_chore_clear :: proc() {
 	delete(calendar_ui.chore_name)
 	calendar_ui.chore_name = ""
+	delete(calendar_ui.chore_days)
+	calendar_ui.chore_days = ""
 	delete(calendar_ui.chore_error)
 	calendar_ui.chore_error = ""
 	calendar_ui.chore_interval = 0
 	calendar_ui.chore_initial_hash = 0
-	calendar_ui.chore_focus_slot = -1
+	calendar_ui.chore_focus_slot = CALENDAR_CHORE_FOCUS_NAME
+	calendar_ui.chore_entry_id = 0
+	calendar_ui.chore_expected_revision = 0
 }
 
-calendar_ui_chore_open :: proc() {
-	if calendar_active_modal().kind != .None {return}
+calendar_ui_chore_open :: proc(event_index := -1) -> bool {
+	if calendar_active_modal().kind != .None {return false}
+	editing := event_index >= 0 && event_index < len(calendar_ui.events) &&
+	           calendar_ui.events[event_index].recurrence_seconds > 0
+	entry: Agenda_Entry
+	if editing {
+		found: bool
+		entry, found = agenda_entry_get(
+			calendar_ui.events[event_index].row_id,
+			context.temp_allocator,
+		)
+		if !found || entry.recurrence_seconds <= 0 ||
+		   entry.recurrence_seconds%86400 != 0 {
+			if found {agenda_entry_destroy(&entry, context.temp_allocator)}
+			return false
+		}
+	}
 	calendar_ui_chore_clear()
 	calendar_ui.chore_open = true
-	calendar_ui.chore_interval = CALENDAR_CHORE_DEFAULT_INTERVAL
-	calendar_ui.chore_focus_slot = -1
+	if editing {
+		calendar_ui.chore_name = strings.clone(entry.original_text)
+		calendar_ui.chore_days = fmt.aprintf(
+			"%d",
+			entry.recurrence_seconds/86400,
+			allocator = context.allocator,
+		)
+		calendar_ui.chore_interval = entry.recurrence_seconds
+		calendar_ui.chore_entry_id = entry.id
+		calendar_ui.chore_expected_revision = entry.revision
+	} else {
+		calendar_ui.chore_days = strings.clone("7")
+		calendar_ui.chore_interval = CALENDAR_CHORE_DEFAULT_INTERVAL
+	}
+	if editing {agenda_entry_destroy(&entry, context.temp_allocator)}
+	calendar_ui.chore_focus_slot = CALENDAR_CHORE_FOCUS_NAME
 	calendar_ui.chore_initial_hash = calendar_chore_fingerprint()
 	calendar_text_focus(.Chore_Name)
 	flash.cancel(&calendar_ui.flash)
 	command_palette.close(&calendar_ui.palette)
 	calendar_ui.needs_redraw = true
+	return true
 }
 
 calendar_ui_chore_close :: proc() {
-	if calendar_text_active_field() == .Chore_Name {
+	if calendar_text_active_field() == .Chore_Name ||
+	   calendar_text_active_field() == .Chore_Days {
 		_ = calendar_text_blur()
 	}
 	calendar_ui_chore_clear()
 	calendar_ui.chore_open = false
 	calendar_ui.needs_redraw = true
+}
+
+calendar_chore_update_entry :: proc(
+	entry_id: i64,
+	expected_revision: int,
+	name: string,
+	interval: i64,
+) -> (i64, string) {
+	current, found := agenda_entry_get(entry_id, context.temp_allocator)
+	if !found {return 0, "storage_failed"}
+	defer agenda_entry_destroy(&current, context.temp_allocator)
+	input := Agenda_Entry_Input{
+		schema_version = 1,
+		original_text = strings.trim_space(name),
+		start_at = current.start_at,
+		end_at = current.end_at,
+		due_at = current.due_at,
+		location = current.location,
+		source_url = current.source_url,
+		reminder_at = current.reminder_at,
+		recurrence_seconds = interval,
+	}
+	updated, code := agenda_entry_update(entry_id, expected_revision, &input)
+	if len(code) > 0 {return 0, code}
+	agenda_entry_destroy(&updated)
+	due_stamp, _ := strconv.parse_i64(current.due_at)
+	return due_stamp, ""
 }
 
 calendar_chore_commit :: proc(cancelled := false) {
@@ -2978,29 +3115,65 @@ calendar_chore_commit :: proc(cancelled := false) {
 	}
 	if len(strings.trim_space(calendar_ui.chore_name)) == 0 {
 		calendar_ui_chore_set_error("CHORE NAME IS REQUIRED")
-		calendar_ui.chore_focus_slot = -1
+		calendar_ui.chore_focus_slot = CALENDAR_CHORE_FOCUS_NAME
 		calendar_text_focus(.Chore_Name)
 		return
 	}
-	if calendar_ui.chore_interval <= 0 {
-		calendar_ui_chore_set_error("SELECT AN INTERVAL")
+	interval, valid_interval := calendar_chore_interval_from_days(
+		calendar_ui.chore_days,
+	)
+	if !valid_interval {
+		calendar_ui_chore_set_error("ENTER A POSITIVE WHOLE NUMBER OF DAYS")
+		calendar_ui.chore_focus_slot = CALENDAR_CHORE_FOCUS_DAYS
+		calendar_text_focus(.Chore_Days)
 		return
 	}
-	now_unix := time.to_unix_seconds(time.now())
-	input := Agenda_Entry_Input{
-		schema_version = 1,
-		original_text = strings.trim_space(calendar_ui.chore_name),
-		due_at = fmt.tprintf("%d", now_unix),
-		recurrence_seconds = calendar_ui.chore_interval,
+	entry_id := calendar_ui.chore_entry_id
+	due_stamp := i64(0)
+	if entry_id > 0 {
+		code: string
+		due_stamp, code = calendar_chore_update_entry(
+			entry_id,
+			calendar_ui.chore_expected_revision,
+			calendar_ui.chore_name,
+			interval,
+		)
+		if len(code) > 0 {
+			calendar_ui_chore_set_error("THE CHORE CHANGED OR COULD NOT BE STORED")
+			return
+		}
+	} else {
+		now_unix := time.to_unix_seconds(time.now())
+		input := Agenda_Entry_Input{
+			schema_version = 1,
+			original_text = strings.trim_space(calendar_ui.chore_name),
+			due_at = fmt.tprintf("%d", now_unix),
+			recurrence_seconds = interval,
+		}
+		created, ok := agenda_entry_create(&input)
+		if !ok {
+			calendar_ui_chore_set_error("THE CHORE COULD NOT BE STORED")
+			return
+		}
+		agenda_entry_destroy(&created)
 	}
-	created, ok := agenda_entry_create(&input)
-	if !ok {
-		calendar_ui_chore_set_error("THE CHORE COULD NOT BE STORED")
-		return
-	}
-	agenda_entry_destroy(&created)
 	calendar_ui_chore_close()
 	calendar_ui_reload_data()
+	if entry_id > 0 {
+		for &event, event_index in calendar_ui.events {
+			if event.row_id != entry_id {continue}
+			calendar_ui.navigation_active = true
+			calendar_ui.navigation_kind = .Event
+			calendar_ui.navigation_event_index = event_index
+			calendar_ui.navigation_start_stamp = due_stamp
+			calendar_ui.navigation_start_is_date = true
+			calendar_ui.navigation_holiday_country_index = -1
+			calendar_ui.navigation_holiday_definition_index = -1
+			calendar_ui.details_scroll = 0
+			calendar_ui_reveal_due_event(event_index)
+			break
+		}
+	}
 	calendar_notification_reconcile()
 	calendar_ui.needs_redraw = true
 }
@@ -3506,7 +3679,11 @@ calendar_ui_execute_action :: proc(action: Calendar_App_Action) {
 		)
 	case .Action_Edit:
 		if calendar_ui_action_available(.Action_Edit) {
-			calendar_ui_editor_open(calendar_ui.navigation_event_index)
+			if calendar_ui_focused_event_is_chore() {
+				_ = calendar_ui_chore_open(calendar_ui.navigation_event_index)
+			} else {
+				calendar_ui_editor_open(calendar_ui.navigation_event_index)
+			}
 		}
 	case .Action_Open_URL:
 		calendar_ui_open_url(calendar_ui_details_url())
@@ -3541,16 +3718,26 @@ calendar_ui_execute_action :: proc(action: Calendar_App_Action) {
 			}
 		}
 	case .New_Chore:
-		if !calendar_ui.chore_open {calendar_ui_chore_open()}
+		if !calendar_ui.chore_open {_ = calendar_ui_chore_open()}
 	case .Chore_Name:
-		calendar_ui.chore_focus_slot = -1
+		calendar_ui.chore_focus_slot = CALENDAR_CHORE_FOCUS_NAME
 		calendar_text_focus(.Chore_Name)
+	case .Chore_Days:
+		calendar_ui.chore_focus_slot = CALENDAR_CHORE_FOCUS_DAYS
+		calendar_text_focus(.Chore_Days)
 	case .Chore_Interval:
 		if calendar_ui.chore_open {
-			if calendar_text_active_field() == .Chore_Name {
+			if calendar_text_active_field() == .Chore_Name ||
+			   calendar_text_active_field() == .Chore_Days {
 				_ = calendar_text_blur()
 			}
 			calendar_ui.chore_interval = calendar_chore_preset_interval(action.index)
+			delete(calendar_ui.chore_days)
+			calendar_ui.chore_days = fmt.aprintf(
+				"%d",
+				calendar_ui.chore_interval/86400,
+				allocator = context.allocator,
+			)
 			calendar_ui.chore_focus_slot = action.index
 			calendar_ui.needs_redraw = true
 		}
@@ -3743,9 +3930,17 @@ calendar_ui_click :: proc(point: Point, click_count: uint = 1) -> bool {
 				)
 				return true
 			case .Chore_Name:
-				calendar_ui.chore_focus_slot = -1
+				calendar_ui.chore_focus_slot = CALENDAR_CHORE_FOCUS_NAME
 				calendar_text_begin_pointer(
 					.Chore_Name,
+					point,
+					click_count,
+				)
+				return true
+			case .Chore_Days:
+				calendar_ui.chore_focus_slot = CALENDAR_CHORE_FOCUS_DAYS
+				calendar_text_begin_pointer(
+					.Chore_Days,
 					point,
 					click_count,
 				)
@@ -4206,9 +4401,12 @@ calendar_on_key_down :: proc "c" (self: Id, command: Sel, event: Id) {
 			calendar_chore_cycle_focus(shift_down)
 			return
 		}
-		name_focused := calendar_text_active_field() == .Chore_Name &&
-		                calendar_ui.chore_focus_slot == -1
-		if !name_focused && calendar_shortcut_matches_event(
+		text_focused :=
+			(calendar_text_active_field() == .Chore_Name &&
+			 calendar_ui.chore_focus_slot == CALENDAR_CHORE_FOCUS_NAME) ||
+			(calendar_text_active_field() == .Chore_Days &&
+			 calendar_ui.chore_focus_slot == CALENDAR_CHORE_FOCUS_DAYS)
+		if !text_focused && calendar_shortcut_matches_event(
 			calendar_ui.flash_leader,
 			key_code,
 			text,
@@ -4217,7 +4415,7 @@ calendar_on_key_down :: proc "c" (self: Id, command: Sel, event: Id) {
 			calendar_ui_begin_flash()
 			return
 		}
-		if !name_focused && !command_down && !control_down &&
+		if !text_focused && !command_down && !control_down &&
 		   !shift_down && !option_down {
 			if digit, found := calendar_number_digit_for_key_code(key_code);
 			   found {
@@ -4232,15 +4430,16 @@ calendar_on_key_down :: proc "c" (self: Id, command: Sel, event: Id) {
 				if handled {return}
 			}
 		}
-		if !name_focused && key_code == 36 {
+		if !text_focused && key_code == 36 {
 			action := calendar_chore_action_for_slot(
 				calendar_ui.chore_focus_slot,
 			)
 			if action.kind != .None {calendar_ui_execute_action(action)}
 			return
 		}
-		if calendar_text_active_field() != .Chore_Name {
-			calendar_ui.chore_focus_slot = -1
+		if calendar_text_active_field() != .Chore_Name &&
+		   calendar_text_active_field() != .Chore_Days {
+			calendar_ui.chore_focus_slot = CALENDAR_CHORE_FOCUS_NAME
 			calendar_text_focus(.Chore_Name)
 		}
 		_ = calendar_text_handle_shortcut(
@@ -5445,7 +5644,7 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 		calendar_push_rect(vertices, modal, theme.modal)
 		name_rect := calendar_chore_name_rect()
 		calendar_push_rect(vertices, name_rect, field)
-		if calendar_ui.chore_focus_slot == -1 {
+		if calendar_ui.chore_focus_slot == CALENDAR_CHORE_FOCUS_NAME {
 			calendar_push_border(vertices, name_rect, focus)
 		}
 		calendar_ui_add_control(
@@ -5453,6 +5652,17 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 			"name",
 			name_rect,
 			.Chore_Name,
+		)
+		days_rect := calendar_chore_days_rect()
+		calendar_push_rect(vertices, days_rect, field)
+		if calendar_ui.chore_focus_slot == CALENDAR_CHORE_FOCUS_DAYS {
+			calendar_push_border(vertices, days_rect, focus)
+		}
+		calendar_ui_add_control(
+			"chore days",
+			"days",
+			days_rect,
+			.Chore_Days,
 		)
 		for preset_index in 0..<len(CALENDAR_CHORE_PRESETS) {
 			preset_rect := calendar_chore_interval_rect(preset_index)
@@ -6638,7 +6848,7 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 		calendar_draw_text(
 			ctx,
 			font,
-			"NEW CHORE",
+			calendar_ui.chore_entry_id > 0 ? "EDIT CHORE" : "NEW CHORE",
 			{modal.x+18, modal.y+modal.h-48, modal.w-36, 34},
 			ink,
 			0,
@@ -6663,10 +6873,38 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 			muted,
 			calendar_color64(theme.focus),
 		)
+		days_rect := calendar_chore_days_rect()
 		calendar_draw_text(
 			ctx,
 			font,
-			"REPEAT",
+			"EVERY",
+			{modal.x+24, days_rect.y, 82, days_rect.h},
+			muted,
+			0,
+		)
+		calendar_draw_editable_text(
+			ctx,
+			font,
+			.Chore_Days,
+			calendar_ui.chore_days,
+			"",
+			days_rect,
+			ink,
+			muted,
+			calendar_color64(theme.focus),
+		)
+		calendar_draw_text(
+			ctx,
+			font,
+			"DAYS",
+			{days_rect.x+days_rect.w+12, days_rect.y, 64, days_rect.h},
+			muted,
+			0,
+		)
+		calendar_draw_text(
+			ctx,
+			font,
+			"PRESETS",
 			{
 				modal.x+24,
 				calendar_chore_interval_rect(0).y+38,

@@ -86,7 +86,8 @@ calendar_ui_find_control :: proc(id: u64) -> ^Calendar_UI_Control {
 
 calendar_framework_role :: proc(action: Calendar_App_Action) -> framework_ui.Accessibility_Role {
 	#partial switch action.kind {
-	case .Settings_Search, .Command_Palette_Search, .Editor_Field, .Chore_Name:
+	case .Settings_Search, .Command_Palette_Search, .Editor_Field, .Chore_Name,
+	     .Chore_Days:
 		return .Text_Field
 	case .Set_Theme, .Settings_Category, .Set_Default_Connected_Calendar, .Chore_Interval:
 		return .Radio_Button
@@ -129,7 +130,8 @@ calendar_framework_capabilities :: proc(
 		.CLI,
 	}
 	#partial switch control.action.kind {
-	case .Settings_Search, .Command_Palette_Search, .Editor_Field, .Chore_Name:
+	case .Settings_Search, .Command_Palette_Search, .Editor_Field, .Chore_Name,
+	     .Chore_Days:
 		result += {.Editable, .Drag, .Direct_Keyboard}
 	}
 	code := calendar_framework_number_code(control.action)
@@ -182,6 +184,7 @@ calendar_control_in_active_scope :: proc(control: ^Calendar_UI_Control) -> bool 
 	}
 	if calendar_ui.chore_open {
 		return control.action.kind == .Chore_Name ||
+		       control.action.kind == .Chore_Days ||
 		       control.action.kind == .Chore_Interval ||
 		       control.action.kind == .Chore_Save ||
 		       control.action.kind == .Chore_Cancel

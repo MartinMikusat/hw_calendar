@@ -51,8 +51,11 @@ through typed application actions. It also exports command-menu and CLI
 capability metadata.
 
 The `NEW CHORE` action (numbered code `21`, also available from the command
-palette) opens a chore editor with a name field and interval presets. Saving
-creates a recurring entry that is due immediately.
+palette) opens a chore editor with a name field, a whole-day interval field,
+and interval presets. Saving a new chore creates a recurring entry that is due
+immediately. The `EDIT` action opens the same editor for a focused chore.
+Changing its interval preserves its current due date and applies the new
+interval after its next completion.
 
 Use `Command` with the arrow keys to jump between all dated entries, chores,
 and holidays. The selected date moves to the center row.
