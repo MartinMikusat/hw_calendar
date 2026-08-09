@@ -14,6 +14,7 @@ COMPONENTS_ROOT=$("$ROOT/scripts/dependencies.sh" path repo hw_odin_ui_component
 UI_FRAMEWORK_ROOT=${HW_CALENDAR_UI_FRAMEWORK_ROOT:-$("$ROOT/scripts/dependencies.sh" path repo hw_odin_ui_framework)}
 
 "$ODIN" test "$ROOT/src" \
+	-define:ODIN_TEST_THREADS=1 \
   -collection:match_sorter="$MATCH_SORTER_ROOT" \
   -collection:flash="$UI_FLASH_ROOT" \
   -collection:command_palette="$COMMAND_PALETTE_ROOT" \
