@@ -182,38 +182,41 @@ calendar_ui_diagnostic_role :: proc(action: Calendar_UI_Action) -> string {
 calendar_ui_diagnostic_snapshot :: proc(
 	allocator := context.allocator,
 ) -> (Calendar_UI_Diagnostic_Snapshot, bool) {
-	if len(calendar_ui.controls) == 0 {return {}, false}
+	if len(calendar_shared_view.controls) == 0 {return {}, false}
 	controls := make(
 		[]Calendar_UI_Diagnostic_Control,
-		len(calendar_ui.controls),
+		len(calendar_shared_view.controls),
 		allocator,
 	)
 	seen := make(map[u64]bool, context.temp_allocator)
-	for &control, index in calendar_ui.controls {
-		if seen[control.id] {return {}, false}
-		seen[control.id] = true
+	for &control, index in calendar_shared_view.controls {
+		id := u64(control.id)
+		if seen[id] {return {}, false}
+		seen[id] = true
+		binding := calendar_control_binding_for_control(&control)
+		if binding == nil {return {}, false}
 		controls[index] = {
-			id = control.id,
-			functional_name = strings.clone(control.name, allocator),
-			flash_label = strings.clone(control.label, allocator),
+			id = id,
+			functional_name = strings.clone(control.functional_name, allocator),
+			flash_label = strings.clone(control.flash_label, allocator),
 			accessibility_label = strings.clone(
-				calendar_ui_ax_label(&control),
+				control.accessibility_label,
 				allocator,
 			),
 			accessibility_role = strings.clone(
-				calendar_ui_diagnostic_role(control.action.kind),
+				calendar_ui_ax_role_name(control.accessibility_role),
 				allocator,
 			),
 			action = strings.clone(
-				calendar_ui_diagnostic_action_name(control.action.kind),
+				calendar_ui_diagnostic_action_name(binding.action.kind),
 				allocator,
 			),
-			event_index = control.action.index,
+			event_index = binding.action.index,
 			rect = {
-				x = control.rect.x,
-				y = control.rect.y,
-				w = control.rect.w,
-				h = control.rect.h,
+				x = f64(control.rect.x),
+				y = f64(control.rect.y),
+				w = f64(control.rect.w),
+				h = f64(control.rect.h),
 			},
 		}
 	}

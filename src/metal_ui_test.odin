@@ -911,10 +911,18 @@ calendar_shared_registry_preserves_control_identity_and_capabilities_test :: pro
 	defer sync.mutex_unlock(&calendar_ui_test_mutex)
 	previous_ui := calendar_ui
 	calendar_ui = {width = 800, height = 600}
+	framework_ui.context_init(&calendar_ui.control_context)
+	calendar_ui.control_bindings = make([dynamic]Calendar_Action_Binding)
+	frame := framework_ui.begin_frame(
+		&calendar_ui.control_context,
+		{viewport = {0, 0, 800, 600}},
+	)
+	calendar_control_frame = &frame
 	defer {
-		calendar_ui_clear_controls()
-		delete(calendar_ui.controls)
-		framework_ui.registry_reset(&calendar_shared_registry, 0)
+		calendar_control_frame = nil
+		framework_ui.frame_destroy(&frame)
+		framework_ui.context_destroy(&calendar_ui.control_context)
+		delete(calendar_ui.control_bindings)
 		calendar_shared_view = {}
 		calendar_ui = previous_ui
 	}
@@ -924,7 +932,7 @@ calendar_shared_registry_preserves_control_identity_and_capabilities_test :: pro
 		{10, 10, 80, 30},
 		.Today,
 	)
-	calendar_publish_shared_registry()
+	calendar_control_frame_finish(&frame)
 	testing.expect_value(t, len(calendar_shared_view.actions), 1)
 	testing.expect_value(t, len(calendar_shared_view.controls), 1)
 	control := calendar_shared_view.controls[0]
@@ -943,10 +951,18 @@ calendar_shared_numbered_dispatch_activates_new_chore_test :: proc(
 	defer sync.mutex_unlock(&calendar_ui_test_mutex)
 	previous_ui := calendar_ui
 	calendar_ui = {width = 800, height = 600}
+	framework_ui.context_init(&calendar_ui.control_context)
+	calendar_ui.control_bindings = make([dynamic]Calendar_Action_Binding)
+	frame := framework_ui.begin_frame(
+		&calendar_ui.control_context,
+		{viewport = {0, 0, 800, 600}},
+	)
+	calendar_control_frame = &frame
 	defer {
-		calendar_ui_clear_controls()
-		delete(calendar_ui.controls)
-		framework_ui.registry_reset(&calendar_shared_registry, 0)
+		calendar_control_frame = nil
+		framework_ui.frame_destroy(&frame)
+		framework_ui.context_destroy(&calendar_ui.control_context)
+		delete(calendar_ui.control_bindings)
 		calendar_shared_view = {}
 		calendar_ui = previous_ui
 	}
@@ -956,7 +972,7 @@ calendar_shared_numbered_dispatch_activates_new_chore_test :: proc(
 		{10, 10, 80, 30},
 		.New_Chore,
 	)
-	calendar_publish_shared_registry()
+	calendar_control_frame_finish(&frame)
 	control_id, activated, handled := calendar_consume_shared_numbered_digit(
 		2,
 		10_000,

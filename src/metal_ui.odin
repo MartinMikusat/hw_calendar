@@ -214,17 +214,14 @@ Calendar_App_Action :: struct {
 	theme_id: Calendar_Theme_ID,
 }
 
-Calendar_UI_Control :: struct {
-	id: u64,
-	name: string,
-	label: string,
-	rect: Calendar_UI_Rect,
+Calendar_Action_Binding :: struct {
+	id: framework_ui.Action_ID,
 	action: Calendar_App_Action,
 }
 
 Calendar_UI_AX_Binding :: struct {
 	element: Id,
-	control_id: u64,
+	control_id: framework_ui.Key,
 }
 
 Calendar_Navigation_Item_Kind :: enum {
@@ -290,7 +287,8 @@ Calendar_UI_State :: struct {
 	occurrences: [dynamic]Calendar_Occurrence,
 	holiday_countries: [dynamic]Calendar_Holiday_Country,
 	holiday_occurrences: [dynamic]Calendar_Holiday_Occurrence,
-	controls: [dynamic]Calendar_UI_Control,
+	control_context: framework_ui.Context,
+	control_bindings: [dynamic]Calendar_Action_Binding,
 	flash: flash.State,
 	palette: command_palette.State,
 	palette_query: string,
@@ -661,10 +659,10 @@ calendar_msg_rect_rect :: proc(
 	return p(receiver, selector, rect)
 }
 
-calendar_ui_ax_control :: proc(element: Id) -> ^Calendar_UI_Control {
+calendar_ui_ax_control :: proc(element: Id) -> ^framework_ui.Control_Record {
 	for binding in calendar_ui.ax_bindings {
 		if binding.element == element {
-			return calendar_ui_find_control(binding.control_id)
+			return calendar_shared_control(binding.control_id)
 		}
 	}
 	return nil
@@ -685,9 +683,20 @@ calendar_ui_ax_screen_rect :: proc(rect: Calendar_UI_Rect) -> Rect {
 	)
 }
 
-calendar_ui_ax_label :: proc(control: ^Calendar_UI_Control) -> string {
-	if control == nil {return ""}
-	switch control.action.kind {
+calendar_ui_ax_role_name :: proc(role: framework_ui.Accessibility_Role) -> string {
+	#partial switch role {
+	case .Text_Field: return "AXTextField"
+	case .Radio_Button: return "AXRadioButton"
+	case .Check_Box: return "AXCheckBox"
+	case .Slider: return "AXSlider"
+	case .Group: return "AXGroup"
+	case .Button:
+	}
+	return "AXButton"
+}
+
+calendar_ui_ax_label :: proc(action: Calendar_App_Action, fallback_name: string) -> string {
+	switch action.kind {
 	case .Window_Close: return "Close window"
 	case .Window_Minimize: return "Minimize window"
 	case .Window_Zoom: return "Zoom window"
@@ -697,29 +706,29 @@ calendar_ui_ax_label :: proc(control: ^Calendar_UI_Control) -> string {
 		return fmt.tprintf(
 			"Show %s settings",
 			calendar_settings_category_name(
-				Calendar_Settings_Category(control.action.index),
+				Calendar_Settings_Category(action.index),
 			),
 		)
 	case .Settings_Search: return "Search Settings"
 	case .Command_Palette_Search: return "Search commands"
 	case .Set_Theme:
-		return calendar_theme_command_title(control.action.theme_id)
+		return calendar_theme_command_title(action.theme_id)
 	case .Request_Calendar_Access: return "Request calendar access"
 	case .Toggle_Connected_Calendar:
-		if control.action.index >= 0 &&
-		   control.action.index < len(calendar_eventkit_calendars) {
+		if action.index >= 0 &&
+		   action.index < len(calendar_eventkit_calendars) {
 			return fmt.tprintf(
 				"Show calendar %s",
-				calendar_eventkit_calendars[control.action.index].title,
+				calendar_eventkit_calendars[action.index].title,
 			)
 		}
 		return "Show connected calendar"
 	case .Set_Default_Connected_Calendar:
-		if control.action.index >= 0 &&
-		   control.action.index < len(calendar_eventkit_calendars) {
+		if action.index >= 0 &&
+		   action.index < len(calendar_eventkit_calendars) {
 			return fmt.tprintf(
 				"Use %s as the default calendar",
-				calendar_eventkit_calendars[control.action.index].title,
+				calendar_eventkit_calendars[action.index].title,
 			)
 		}
 		return "Set the default connected calendar"
@@ -737,23 +746,23 @@ calendar_ui_ax_label :: proc(control: ^Calendar_UI_Control) -> string {
 	case .Search: return "Search calendar"
 	case .New_Event: return "New agenda entry"
 	case .Open_Event:
-		if control.action.index >= 0 &&
-		   control.action.index < len(calendar_ui.events) {
+		if action.index >= 0 &&
+		   action.index < len(calendar_ui.events) {
 			return fmt.tprintf(
 				"Open event %s",
-				calendar_ui.events[control.action.index].summary,
+				calendar_ui.events[action.index].summary,
 			)
 		}
 		return "Open event"
 	case .Focus_Event:
-		if control.action.index >= 0 &&
-		   control.action.index < len(calendar_ui.events) &&
-		   calendar_ui.events[control.action.index].recurrence_seconds > 0 {
+		if action.index >= 0 &&
+		   action.index < len(calendar_ui.events) &&
+		   calendar_ui.events[action.index].recurrence_seconds > 0 {
 			return "Show chore details"
 		}
 		return "Show event details"
 	case .Focus_Chores:
-		return fmt.tprintf("Show %d chores", control.action.definition_index)
+		return fmt.tprintf("Show %d chores", action.definition_index)
 	case .Focus_Holiday: return "Show holiday details"
 	case .Jump_Event: return "Jump to event"
 	case .Toggle_Holiday_Country: return "Toggle holiday calendar"
@@ -771,11 +780,11 @@ calendar_ui_ax_label :: proc(control: ^Calendar_UI_Control) -> string {
 		return "Archive focused event"
 	case .Action_Complete: return "Complete focused entry"
 	case .Complete_Chore:
-		if control.action.index >= 0 &&
-		   control.action.index < len(calendar_ui.due_entries) {
+		if action.index >= 0 &&
+		   action.index < len(calendar_ui.due_entries) {
 			return fmt.tprintf(
 				"Complete due chore %s",
-				calendar_ui.due_entries[control.action.index].original_text,
+				calendar_ui.due_entries[action.index].original_text,
 			)
 		}
 		return "Complete due chore"
@@ -783,11 +792,11 @@ calendar_ui_ax_label :: proc(control: ^Calendar_UI_Control) -> string {
 	case .Chore_Name: return "Chore name"
 	case .Chore_Days: return "Repeat interval in days"
 	case .Chore_Interval:
-		if control.action.index >= 0 {
+		if action.index >= 0 {
 			return fmt.tprintf(
 				"Repeat every %s",
 				calendar_chore_interval_label(
-					calendar_chore_preset_interval(control.action.index),
+					calendar_chore_preset_interval(action.index),
 				),
 			)
 		}
@@ -846,8 +855,8 @@ calendar_ui_ax_label :: proc(control: ^Calendar_UI_Control) -> string {
 			"Event alarms",
 			"Event recurrence rule",
 		}
-		if control.action.index >= 0 && control.action.index < len(labels) {
-			return labels[control.action.index]
+		if action.index >= 0 && action.index < len(labels) {
+			return labels[action.index]
 		}
 	case .Editor_Important: return "Important event"
 	case .Editor_All_Day: return "All-day event"
@@ -859,79 +868,82 @@ calendar_ui_ax_label :: proc(control: ^Calendar_UI_Control) -> string {
 	case .Discard_Changes: return "Discard unsaved changes"
 	case .None:
 	}
-	return control.name
+	return fallback_name
 }
 
 calendar_on_ax_press :: proc "c" (self: Id, command: Sel) -> bool {
 	context = runtime.default_context()
 	control := calendar_ui_ax_control(self)
 	if control == nil {return false}
-	return calendar_ui_activate_control(control.id, .Accessibility)
+	return calendar_ui_activate_control(u64(control.id), .Accessibility)
 }
 
 calendar_on_ax_value :: proc "c" (self: Id, command: Sel) -> Id {
 	context = runtime.default_context()
 	control := calendar_ui_ax_control(self)
 	if control == nil {return nil}
-	if control.action.kind == .Editor_Field {
-		value := calendar_ui_editor_field_text(control.action.index)
+	binding := calendar_control_binding_for_control(control)
+	if binding == nil {return nil}
+	action := binding.action
+	if action.kind == .Editor_Field {
+		value := calendar_ui_editor_field_text(action.index)
 		if value != nil {return nsstring(value^)}
 	}
-	if control.action.kind == .Chore_Name {
+	if action.kind == .Chore_Name {
 		return nsstring(calendar_ui.chore_name)
 	}
-	if control.action.kind == .Chore_Days {
+	if action.kind == .Chore_Days {
 		return nsstring(calendar_ui.chore_days)
 	}
-	if control.action.kind == .Chore_Interval {
+	if action.kind == .Chore_Interval {
 		return calendar_msg_id_bool(
 			objc_getClass("NSNumber"),
 			sel_registerName("numberWithBool:"),
-			calendar_chore_preset_interval(control.action.index) ==
+			calendar_chore_preset_interval(action.index) ==
 				calendar_ui.chore_interval,
 		)
 	}
-	if control.action.kind == .Editor_Important {
+	if action.kind == .Editor_Important {
 		return calendar_msg_id_bool(
 			objc_getClass("NSNumber"),
 			sel_registerName("numberWithBool:"),
 			calendar_ui.editor_important,
 		)
 	}
-	if control.action.kind == .Editor_All_Day {
+	if action.kind == .Editor_All_Day {
 		return calendar_msg_id_bool(
 			objc_getClass("NSNumber"),
 			sel_registerName("numberWithBool:"),
 			calendar_ui.editor_all_day,
 		)
 	}
-	if control.action.kind == .Settings_Search {
+	if action.kind == .Settings_Search {
 		return nsstring(calendar_ui.settings_query)
 	}
-	if control.action.kind == .Command_Palette_Search {
+	if action.kind == .Command_Palette_Search {
 		return nsstring(calendar_ui.palette_query)
 	}
-	if control.action.kind == .Set_Theme {
+	if action.kind == .Set_Theme {
 		return calendar_msg_id_bool(
 			objc_getClass("NSNumber"),
 			sel_registerName("numberWithBool:"),
-			control.action.theme_id == calendar_ui.theme_id,
+			action.theme_id == calendar_ui.theme_id,
 		)
 	}
-	if control.action.kind == .Toggle_Connected_Calendar &&
-	   control.action.index >= 0 &&
-	   control.action.index < len(calendar_eventkit_calendars) {
+	if action.kind == .Toggle_Connected_Calendar &&
+	   action.index >= 0 &&
+	   action.index < len(calendar_eventkit_calendars) {
 		return calendar_msg_id_bool(
 			objc_getClass("NSNumber"),
 			sel_registerName("numberWithBool:"),
 			calendar_connected_calendar_visible(
-				calendar_eventkit_calendars[control.action.index].identifier,
+				calendar_eventkit_calendars[action.index].identifier,
 			),
 		)
 	}
-	if control.action.kind == .Set_Default_Connected_Calendar &&
-	   control.action.index >= 0 &&
-	   control.action.index < len(calendar_eventkit_calendars) {
+	if action.kind == .Set_Default_Connected_Calendar &&
+	   action.index >= 0 &&
+	   action.index < len(calendar_eventkit_calendars) {
 		default_identifier, _ := calendar_connected_default_calendar(
 			context.temp_allocator,
 		)
@@ -939,17 +951,17 @@ calendar_on_ax_value :: proc "c" (self: Id, command: Sel) -> Id {
 			objc_getClass("NSNumber"),
 			sel_registerName("numberWithBool:"),
 			default_identifier ==
-				calendar_eventkit_calendars[control.action.index].identifier,
+				calendar_eventkit_calendars[action.index].identifier,
 		)
 	}
-	if control.action.kind == .Settings_Category {
+	if action.kind == .Settings_Category {
 		return calendar_msg_id_bool(
 			objc_getClass("NSNumber"),
 			sel_registerName("numberWithBool:"),
-			control.action.index == int(calendar_ui.settings_category),
+			action.index == int(calendar_ui.settings_category),
 		)
 	}
-	if control.action.kind == .Configure_Flash {
+	if action.kind == .Configure_Flash {
 		return nsstring(calendar_shortcut_display(calendar_ui.flash_leader))
 	}
 	return nil
@@ -963,7 +975,10 @@ calendar_on_ax_set_value :: proc "c" (
 	context = runtime.default_context()
 	control := calendar_ui_ax_control(self)
 	if control == nil {return}
-	if control.action.kind == .Settings_Search {
+	binding := calendar_control_binding_for_control(control)
+	if binding == nil {return}
+	action := binding.action
+	if action.kind == .Settings_Search {
 		utf8 := calendar_msg_cstring(value, sel_registerName("UTF8String"))
 		if utf8 == nil {return}
 		replace := strings.clone(string(utf8))
@@ -973,7 +988,7 @@ calendar_on_ax_set_value :: proc "c" (
 		calendar_text_changed(.Settings_Search)
 		return
 	}
-	if control.action.kind == .Command_Palette_Search {
+	if action.kind == .Command_Palette_Search {
 		utf8 := calendar_msg_cstring(value, sel_registerName("UTF8String"))
 		if utf8 == nil {return}
 		replace := strings.clone(string(utf8))
@@ -983,7 +998,7 @@ calendar_on_ax_set_value :: proc "c" (
 		calendar_text_changed(.Command_Palette)
 		return
 	}
-	if control.action.kind == .Chore_Name {
+	if action.kind == .Chore_Name {
 		utf8 := calendar_msg_cstring(value, sel_registerName("UTF8String"))
 		if utf8 == nil {return}
 		delete(calendar_ui.chore_name)
@@ -993,7 +1008,7 @@ calendar_on_ax_set_value :: proc "c" (
 		calendar_text_changed(.Chore_Name)
 		return
 	}
-	if control.action.kind == .Chore_Days {
+	if action.kind == .Chore_Days {
 		utf8 := calendar_msg_cstring(value, sel_registerName("UTF8String"))
 		if utf8 == nil {return}
 		delete(calendar_ui.chore_days)
@@ -1003,14 +1018,14 @@ calendar_on_ax_set_value :: proc "c" (
 		calendar_text_changed(.Chore_Days)
 		return
 	}
-	if control.action.kind != .Editor_Field {return}
-	text_value := calendar_ui_editor_field_text(control.action.index)
+	if action.kind != .Editor_Field {return}
+	text_value := calendar_ui_editor_field_text(action.index)
 	if text_value == nil {return}
 	utf8 := calendar_msg_cstring(value, sel_registerName("UTF8String"))
 	if utf8 == nil {return}
 	delete(text_value^)
 	text_value^ = strings.clone(string(utf8))
-	calendar_text_focus(calendar_text_editor_field(control.action.index))
+	calendar_text_focus(calendar_text_editor_field(action.index))
 	calendar_ui.needs_redraw = true
 }
 
@@ -1030,22 +1045,11 @@ calendar_ui_rebuild_accessibility :: proc() {
 	array := msg_id(objc_getClass("NSMutableArray"), sel_registerName("array"))
 	calendar_ui.ax_children = msg_id(array, sel_registerName("retain"))
 	element_class := objc_getClass("hw_calendar_AccessibilityElement")
-	for &shared_control in calendar_shared_view.controls {
-		control := calendar_ui_find_control(u64(shared_control.id))
-		if control == nil {continue}
+	for &control in calendar_shared_view.controls {
+		binding := calendar_control_binding_for_control(&control)
+		if binding == nil {continue}
+		action := binding.action
 		element := msg_id(element_class, sel_registerName("new"))
-		role := "AXButton"
-	if control.action.kind == .Editor_Field ||
-	   control.action.kind == .Chore_Name ||
-	   control.action.kind == .Chore_Days ||
-	   control.action.kind == .Settings_Search ||
-	   control.action.kind == .Command_Palette_Search {
-			role = "AXTextField"
-		} else if control.action.kind == .Set_Theme ||
-		          control.action.kind == .Settings_Category ||
-		          control.action.kind == .Chore_Interval {
-			role = "AXRadioButton"
-		}
 		msg_void_id(
 			element,
 			sel_registerName("setAccessibilityParent:"),
@@ -1054,25 +1058,25 @@ calendar_ui_rebuild_accessibility :: proc() {
 		msg_void_id(
 			element,
 			sel_registerName("setAccessibilityRole:"),
-			nsstring(role),
+			nsstring(calendar_ui_ax_role_name(control.accessibility_role)),
 		)
 		msg_void_id(
 			element,
 			sel_registerName("setAccessibilityLabel:"),
-			nsstring(calendar_ui_ax_label(control)),
+			nsstring(control.accessibility_label),
 		)
 		msg_void_bool(
 			element,
 			sel_registerName("setAccessibilityEnabled:"),
-			true,
+			control.enabled,
 		)
 		calendar_msg_void_rect(
 			element,
 			sel_registerName("setAccessibilityFrame:"),
-			calendar_ui_ax_screen_rect(control.rect),
+			calendar_ui_ax_screen_rect(calendar_ui_rect_from_framework(control.rect)),
 		)
-		if control.action.kind == .Editor_Field {
-			if value := calendar_ui_editor_field_text(control.action.index);
+		if action.kind == .Editor_Field {
+			if value := calendar_ui_editor_field_text(action.index);
 			   value != nil {
 				msg_void_id(
 					element,
@@ -1080,59 +1084,59 @@ calendar_ui_rebuild_accessibility :: proc() {
 					nsstring(value^),
 				)
 			}
-		} else if control.action.kind == .Chore_Name {
+		} else if action.kind == .Chore_Name {
 			msg_void_id(
 				element,
 				sel_registerName("setAccessibilityValue:"),
 				nsstring(calendar_ui.chore_name),
 			)
-		} else if control.action.kind == .Chore_Days {
+		} else if action.kind == .Chore_Days {
 			msg_void_id(
 				element,
 				sel_registerName("setAccessibilityValue:"),
 				nsstring(calendar_ui.chore_days),
 			)
-		} else if control.action.kind == .Chore_Interval {
+		} else if action.kind == .Chore_Interval {
 			msg_void_id(
 				element,
 				sel_registerName("setAccessibilityValue:"),
 				calendar_msg_id_bool(
 					objc_getClass("NSNumber"),
 					sel_registerName("numberWithBool:"),
-					calendar_chore_preset_interval(control.action.index) ==
+					calendar_chore_preset_interval(action.index) ==
 						calendar_ui.chore_interval,
 				),
 			)
-		} else if control.action.kind == .Settings_Search {
+		} else if action.kind == .Settings_Search {
 			msg_void_id(
 				element,
 				sel_registerName("setAccessibilityValue:"),
 				nsstring(calendar_ui.settings_query),
 			)
-		} else if control.action.kind == .Command_Palette_Search {
+		} else if action.kind == .Command_Palette_Search {
 			msg_void_id(
 				element,
 				sel_registerName("setAccessibilityValue:"),
 				nsstring(calendar_ui.palette_query),
 			)
-		} else if control.action.kind == .Set_Theme {
+		} else if action.kind == .Set_Theme {
 			msg_void_id(
 				element,
 				sel_registerName("setAccessibilityValue:"),
 				calendar_msg_id_bool(
 					objc_getClass("NSNumber"),
 					sel_registerName("numberWithBool:"),
-					control.action.theme_id == calendar_ui.theme_id,
+					action.theme_id == calendar_ui.theme_id,
 				),
 			)
-		} else if control.action.kind == .Settings_Category {
+		} else if action.kind == .Settings_Category {
 			msg_void_id(
 				element,
 				sel_registerName("setAccessibilityValue:"),
 				calendar_msg_id_bool(
 					objc_getClass("NSNumber"),
 					sel_registerName("numberWithBool:"),
-					control.action.index == int(calendar_ui.settings_category),
+					action.index == int(calendar_ui.settings_category),
 				),
 			)
 		}
@@ -3995,30 +3999,27 @@ calendar_ui_activate_control :: proc(
 	id: u64,
 	source := framework_ui.Activation_Source.Pointer,
 ) -> bool {
-	_, activated := framework_ui.activate_control_in_view(
+	activation, activated := framework_ui.activate_control_in_view(
 		calendar_shared_view,
 		framework_ui.Key(id),
 		source,
 	)
 	if !activated {return false}
-	for control in calendar_ui.controls {
-		if control.id != id {continue}
-		calendar_ui_execute_action(control.action)
-		calendar_ui.needs_redraw = true
-		return true
-	}
-	return false
+	binding := calendar_control_binding(activation.action)
+	if binding == nil {return false}
+	calendar_ui_execute_action(binding.action)
+	calendar_ui.needs_redraw = true
+	return true
 }
 
 calendar_ui_click :: proc(point: Point, click_count: uint = 1) -> bool {
 	flash.cancel(&calendar_ui.flash)
 	modal := calendar_active_modal()
 	if modal.kind != .None && !calendar_ui_contains(modal.rect, point) {
-		for index := len(calendar_ui.controls)-1; index >= 0; index -= 1 {
-			control := calendar_ui.controls[index]
-			if calendar_ui_is_window_action(control.action.kind) &&
-			   calendar_ui_contains(control.rect, point) {
-				calendar_ui_activate_control(control.id)
+		if control := calendar_shared_control_at_point(point); control != nil {
+			binding := calendar_control_binding_for_control(control)
+			if binding != nil && calendar_ui_is_window_action(binding.action.kind) {
+				calendar_ui_activate_control(u64(control.id))
 				return true
 			}
 		}
@@ -4026,11 +4027,9 @@ calendar_ui_click :: proc(point: Point, click_count: uint = 1) -> bool {
 		return true
 	}
 	if control := calendar_shared_control_at_point(point); control != nil {
-		if modal.kind != .Discard_Changes ||
-		   calendar_ui_is_window_action(control.action.kind) ||
-		   control.action.kind == .Discard_Keep_Editing ||
-		   control.action.kind == .Discard_Changes {
-			#partial switch control.action.kind {
+		binding := calendar_control_binding_for_control(control)
+		if binding != nil {
+			#partial switch binding.action.kind {
 			case .Settings_Search:
 				calendar_text_begin_pointer(
 					.Settings_Search,
@@ -4047,7 +4046,7 @@ calendar_ui_click :: proc(point: Point, click_count: uint = 1) -> bool {
 				return true
 			case .Editor_Field:
 				calendar_text_begin_pointer(
-					calendar_text_editor_field(control.action.index),
+					calendar_text_editor_field(binding.action.index),
 					point,
 					click_count,
 				)
@@ -4070,7 +4069,7 @@ calendar_ui_click :: proc(point: Point, click_count: uint = 1) -> bool {
 				return true
 			case:
 			}
-			calendar_ui_activate_control(control.id)
+			calendar_ui_activate_control(u64(control.id))
 			return true
 		}
 	}
@@ -4089,11 +4088,9 @@ calendar_ui_post_pointer_click :: proc(functional_name: string) -> string {
 	   .Primary_Press not_in shared_control.capabilities {
 		return "The pointer target is not enabled for primary input."
 	}
-	control := calendar_ui_find_control(u64(shared_control.id))
-	if control == nil {return "The pointer target is not in the application registry."}
 	window_point := Point{
-		control.rect.x+control.rect.w/2,
-		control.rect.y+control.rect.h/2,
+		f64(shared_control.rect.x+shared_control.rect.w/2),
+		f64(shared_control.rect.y+shared_control.rect.h/2),
 	}
 	window_number := int(calendar_msg_i64(
 		calendar_ui.window,
@@ -6033,6 +6030,7 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 	modal_start := len(vertices)
 	if calendar_ui.editor_open && !calendar_ui.settings_open &&
 	   !calendar_ui.shortcut_open {
+		calendar_control_scope_begin(.Editor)
 		calendar_push_rect(
 			vertices,
 			{0, 0, calendar_ui.width, calendar_ui.height},
@@ -6125,10 +6123,12 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 				.Editor_Delete,
 			)
 		}
+		calendar_control_scope_end()
 	}
 	if calendar_ui.chore_open && !calendar_ui.settings_open &&
 	   !calendar_ui.shortcut_open &&
 	   !command_palette.is_open(&calendar_ui.palette) {
+		calendar_control_scope_begin(.Chore)
 		calendar_push_rect(
 			vertices,
 			{0, 0, calendar_ui.width, calendar_ui.height},
@@ -6206,9 +6206,11 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 			cancel_rect,
 			.Chore_Cancel,
 		)
+		calendar_control_scope_end()
 	}
 	if calendar_ui.archive_modal_open && !calendar_ui.settings_open &&
 	   !calendar_ui.shortcut_open {
+		calendar_control_scope_begin(.Archive)
 		calendar_push_rect(
 			vertices,
 			{0, 0, calendar_ui.width, calendar_ui.height},
@@ -6259,8 +6261,10 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 			cancel_rect,
 			.Archive_Cancel,
 		)
+		calendar_control_scope_end()
 	}
 	if calendar_ui.archive_import_open {
+		calendar_control_scope_begin(.Agenda_Import)
 		calendar_push_rect(
 			vertices,
 			{0, 0, calendar_ui.width, calendar_ui.height},
@@ -6285,8 +6289,10 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 			replace_rect,
 			{kind = .Import_Agenda_Replace},
 		)
+		calendar_control_scope_end()
 	}
 	if calendar_ui.settings_open && !calendar_ui.shortcut_open {
+		calendar_control_scope_begin(.Settings)
 		calendar_push_rect(
 			vertices,
 			{0, 0, calendar_ui.width, calendar_ui.height},
@@ -6358,8 +6364,10 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 				descriptor.action,
 			)
 		}
+		calendar_control_scope_end()
 	}
 	if calendar_ui.shortcut_open {
+		calendar_control_scope_begin(.Shortcut)
 		calendar_push_rect(
 			vertices,
 			{0, 0, calendar_ui.width, calendar_ui.height},
@@ -6410,8 +6418,10 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 			cancel_rect,
 			{kind = .Shortcut_Cancel},
 		)
+		calendar_control_scope_end()
 	}
 	if command_palette.is_open(&calendar_ui.palette) {
+		calendar_control_scope_begin(.Command_Palette)
 		modal := calendar_ui_palette_rect()
 		calendar_push_rect(
 			vertices,
@@ -6429,8 +6439,10 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 			calendar_text_field_rect(.Command_Palette),
 			{kind = .Command_Palette_Search},
 		)
+		calendar_control_scope_end()
 	}
 	if calendar_ui.discard_changes_open {
+		calendar_control_scope_begin(.Discard_Changes)
 		modal := calendar_ui_discard_rect()
 		calendar_push_rect(vertices, modal, theme.modal)
 		keep := calendar_ui_discard_button_rect(0)
@@ -6450,6 +6462,7 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 			discard,
 			{kind = .Discard_Changes},
 		)
+		calendar_control_scope_end()
 	}
 	for index in 0..<4 {
 		calendar_push_rect(
@@ -8038,7 +8051,17 @@ calendar_render_frame :: proc() {
 		pass,
 	)
 	vertices := make([dynamic]Calendar_Solid_Vertex, context.temp_allocator)
-	calendar_ui_clear_controls()
+	clear(&calendar_ui.control_bindings)
+	control_frame := framework_ui.begin_frame(
+		&calendar_ui.control_context,
+		{viewport = {0, 0, f32(calendar_ui.width), f32(calendar_ui.height)}},
+		allocator = context.temp_allocator,
+	)
+	calendar_control_frame = &control_frame
+	defer {
+		calendar_control_frame = nil
+		framework_ui.frame_destroy(&control_frame)
+	}
 	window_actions := [3]Calendar_UI_Action{
 		.Window_Close,
 		.Window_Minimize,
@@ -8092,7 +8115,7 @@ calendar_render_frame :: proc() {
 		)
 	}
 	modal_start := calendar_build_geometry(&vertices)
-	calendar_publish_shared_registry()
+	calendar_control_frame_finish(&control_frame)
 	calendar_ui_rebuild_accessibility()
 	ordered_ready := calendar_build_ordered_frame(vertices[:], modal_start)
 	if ordered_ready {
@@ -8369,8 +8392,8 @@ calendar_ui_destroy :: proc() {
 	agenda_entries_destroy(&calendar_ui.due_entries)
 	calendar_holiday_countries_destroy(&calendar_ui.holiday_countries)
 	delete(calendar_ui.holiday_occurrences)
-	calendar_ui_clear_controls()
-	delete(calendar_ui.controls)
+	framework_ui.context_destroy(&calendar_ui.control_context)
+	delete(calendar_ui.control_bindings)
 	delete(calendar_ui.palette_query)
 	delete(calendar_ui.palette_actions)
 	delete(calendar_ui.archive_error)
@@ -8454,7 +8477,8 @@ calendar_gui_initialize :: proc() -> bool {
 			calendar_ui.flash_leader = decoded
 		}
 	}
-	calendar_ui.controls = make([dynamic]Calendar_UI_Control)
+	framework_ui.context_init(&calendar_ui.control_context)
+	calendar_ui.control_bindings = make([dynamic]Calendar_Action_Binding)
 	calendar_ui.palette_actions = make([dynamic]Calendar_App_Action)
 	calendar_ui.ax_bindings = make([dynamic]Calendar_UI_AX_Binding)
 	calendar_ui.promoted_holiday_country_index = -1
