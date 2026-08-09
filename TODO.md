@@ -2,7 +2,11 @@
 
 ## Active
 
-- [ ] Produce a Developer ID-signed and notarized build, then verify confirmed native reminder delivery while the application is closed. See [release details](README.md#release-details).
+No active application tasks.
+
+## Completed
+
+- [x] Release Developer ID-signed and notarized 0.1.0 build 2, then confirm native reminder delivery while the application is closed. Completed 2026-08-09.
 
 ## Deferred
 
