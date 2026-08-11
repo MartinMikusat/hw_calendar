@@ -79,15 +79,21 @@ edited form requests confirmation before it discards unsaved changes.
 
 ## Structured commands
 
-Each command writes one JSON result to standard output. A mutation reads one
-versioned JSON document from standard input.
+Each command writes one JSON result to standard output. Entry creation, full
+entry replacement, and proposal submission accept a versioned JSON document
+from standard input. Entry creation and updates also accept first-class flags.
+An update read from standard input replaces the full entry document; a flag
+update preserves omitted fields.
 
 ```sh
 build/hw_calendar entry create < entry.json
+build/hw_calendar entry add --text "Water the plants" --due 2026-04-27 --recurrence 604800
+build/hw_calendar entry create --help
 build/hw_calendar entry get --id 1
 build/hw_calendar entry list
 build/hw_calendar entry search --query bathroom
 build/hw_calendar entry update --id 1 --if-revision 2 < entry.json
+build/hw_calendar entry update --id 1 --if-revision 2 --text "Water the balcony plants"
 build/hw_calendar entry complete --id 1 --if-revision 2
 build/hw_calendar entry reopen --id 1 --if-revision 3
 build/hw_calendar entry dismiss --id 1 --if-revision 3

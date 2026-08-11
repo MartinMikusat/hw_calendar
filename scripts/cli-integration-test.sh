@@ -95,12 +95,17 @@ EOF
 NOTE_ID=$(printf '%s' "$NOTE" | jq -r '.data.entry.id')
 test "$NOTE_ID" = 3
 
-if "$CLI" chore done --id "$NOTE_ID" --if-revision 1 >/dev/null 2>&1
+"$CLI" entry update --id "$NOTE_ID" --if-revision 1 --location "Desk" |
+  jq -e '.ok and .data.entry.original_text == "Review the calendar notes" and .data.entry.location == "Desk" and .data.entry.revision == 2' >/dev/null
+"$CLI" entry update --id "$NOTE_ID" --if-revision 2 --clear-location |
+  jq -e '.ok and .data.entry.original_text == "Review the calendar notes" and .data.entry.location == "" and .data.entry.revision == 3' >/dev/null
+
+if "$CLI" chore done --id "$NOTE_ID" --if-revision 3 >/dev/null 2>&1
 then
   exit 1
 fi
 "$CLI" entry get --id "$NOTE_ID" |
-  jq -e '.data.entry.state == "active" and .data.entry.revision == 1' >/dev/null
+  jq -e '.data.entry.state == "active" and .data.entry.revision == 3' >/dev/null
 
 ARCHIVE="$TMP/agenda.hwcalendar.json"
 "$CLI" archive export --path "$ARCHIVE" |

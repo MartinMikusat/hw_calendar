@@ -64,8 +64,21 @@ agenda_cli_execute :: proc(request: Calendar_CLI_Request) -> Calendar_CLI_Result
 	#partial switch request.command {
 	case .Entry_Create:
 		input: Agenda_Entry_Input
+		if len(strings.trim_space(request.input)) == 0 {
+			return calendar_cli_error(
+				request.command,
+				2,
+				"usage",
+				"entry create requires --text or stdin JSON.",
+			)
+		}
 		if error := json.unmarshal(transmute([]u8)request.input, &input); error != nil {
-			return agenda_cli_mutation_error(request.command, "invalid_entry")
+			return calendar_cli_error(
+				request.command,
+				2,
+				"usage",
+				"entry create expects a valid JSON payload when stdin is used.",
+			)
 		}
 		entry, created := agenda_entry_create(&input)
 		if !created {
@@ -73,14 +86,79 @@ agenda_cli_execute :: proc(request: Calendar_CLI_Request) -> Calendar_CLI_Result
 			return calendar_cli_error(request.command, 6, "storage_failed", sqlite_error(calendar_database))
 		}
 		return agenda_cli_entry_result(request.command, entry)
-	case .Entry_Update:
+	case .Entry_Update, .Entry_Patch:
 		id, valid_id := agenda_cli_id(request)
 		if !valid_id || request.if_revision < 1 {return calendar_cli_error(request.command, 2, "usage", "entry update requires --id and --if-revision.")}
+		if len(strings.trim_space(request.input)) == 0 {
+			return calendar_cli_error(
+				request.command,
+				2,
+				"usage",
+				"entry update requires a field flag or stdin JSON.",
+			)
+		}
 		input: Agenda_Entry_Input
 		if error := json.unmarshal(transmute([]u8)request.input, &input); error != nil {
-			return agenda_cli_mutation_error(request.command, "invalid_entry")
+			return calendar_cli_error(
+				request.command,
+				2,
+				"usage",
+				"entry update expects a valid JSON payload when stdin is used.",
+			)
 		}
-		entry, code := agenda_entry_update(id, request.if_revision, &input)
+		// Protocol-1 clients send full replacement documents as Entry_Update.
+		// Entry_Patch is append-only so an older server rejects it without mutation.
+		if request.command == .Entry_Update {
+			entry, code := agenda_entry_update(id, request.if_revision, &input)
+			if len(code) > 0 {return agenda_cli_mutation_error(request.command, code)}
+			return agenda_cli_entry_result(request.command, entry)
+		}
+		if request.protocol_version != CALENDAR_CLI_PROTOCOL_VERSION {
+			return calendar_cli_error(
+				request.command,
+				6,
+				"protocol_mismatch",
+				"The running application does not support this entry update request.",
+			)
+		}
+		if !calendar_cli_entry_update_has_payload(request) {
+			return calendar_cli_error(
+				request.command,
+				2,
+				"usage",
+				"entry update requires --text or a set/clear field flag.",
+			)
+		}
+		current, found := agenda_entry_get(id, context.temp_allocator)
+		if !found {return agenda_cli_mutation_error(request.command, "not_found")}
+		defer agenda_entry_destroy(&current, context.temp_allocator)
+		patched_input: Agenda_Entry_Input
+		patched_input.schema_version = 1
+		patched_input.original_text = current.original_text
+		patched_input.start_at = current.start_at
+		patched_input.end_at = current.end_at
+		patched_input.due_at = current.due_at
+		patched_input.location = current.location
+		patched_input.source_url = current.source_url
+		patched_input.reminder_at = current.reminder_at
+		patched_input.recurrence_seconds = current.recurrence_seconds
+		if request.set_text {patched_input.original_text = input.original_text}
+		if request.set_start {patched_input.start_at = input.start_at}
+		if request.clear_start {patched_input.start_at = ""}
+		if request.set_end {patched_input.end_at = input.end_at}
+		if request.clear_end {patched_input.end_at = ""}
+		if request.set_due {patched_input.due_at = input.due_at}
+		if request.clear_due {patched_input.due_at = ""}
+		if request.set_location {patched_input.location = input.location}
+		if request.clear_location {patched_input.location = ""}
+		if request.set_source_url {patched_input.source_url = input.source_url}
+		if request.clear_source_url {patched_input.source_url = ""}
+		if request.set_reminder {patched_input.reminder_at = input.reminder_at}
+		if request.clear_reminder {patched_input.reminder_at = ""}
+		if request.set_recurrence {patched_input.recurrence_seconds = input.recurrence_seconds}
+		if request.clear_recurrence {patched_input.recurrence_seconds = 0}
+		if !agenda_input_valid(&patched_input) {return agenda_cli_mutation_error(request.command, "invalid_entry")}
+		entry, code := agenda_entry_update(id, request.if_revision, &patched_input)
 		if len(code) > 0 {return agenda_cli_mutation_error(request.command, code)}
 		return agenda_cli_entry_result(request.command, entry)
 	case .Entry_Get:

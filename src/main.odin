@@ -11,7 +11,7 @@ calendar_process_main :: proc(args := os.args) {
 		result := parse_result
 		if parsed {
 			input_bytes: []u8
-			if calendar_cli_command_reads_input(request.command) {
+			if request.use_stdin_input && calendar_cli_command_reads_input(request.command) {
 				input_bytes, _ = os.read_entire_file(
 					os.stdin,
 					context.allocator,
