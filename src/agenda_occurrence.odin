@@ -15,7 +15,7 @@ agenda_occurrence_from_entry :: proc(
 ) -> (Agenda_Occurrence, bool) {
 	if entry == nil || entry.state != "active" {return {}, false}
 	stamp_text := entry.start_at
-	from_due := len(stamp_text) == 0
+	from_due := entry.recurrence_seconds > 0 || len(stamp_text) == 0
 	if from_due {stamp_text = entry.due_at}
 	start_stamp, valid := strconv.parse_i64(stamp_text)
 	if !valid {return {}, false}

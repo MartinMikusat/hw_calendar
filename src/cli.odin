@@ -219,11 +219,10 @@ Notes:
   - Unix timestamp in seconds (e.g. 1750000000)
   - YYYYMMDD
   - YYYYMMDDTHHMMSS
-  - YYYYMMDDTHHMMSSZ
   - YYYY-MM-DD
   - YYYY-MM-DDTHH:MM:SS
   - YYYY-MM-DD HH:MM:SS
-  - YYYY-MM-DDTHH:MM:SSZ
+- The Z suffix is accepted only for --reminder because entry dates use civil time.
 Examples:
 - hw_calendar entry update --id 7 --if-revision 3 --text "Water the balcony plants"
 - Full replacement: build/hw_calendar entry update --id 7 --if-revision 3 < entry.json`
@@ -236,11 +235,10 @@ Notes:
   - Unix timestamp in seconds (e.g. 1750000000)
   - YYYYMMDD
   - YYYYMMDDTHHMMSS
-  - YYYYMMDDTHHMMSSZ
   - YYYY-MM-DD
   - YYYY-MM-DDTHH:MM:SS
   - YYYY-MM-DD HH:MM:SS
-  - YYYY-MM-DDTHH:MM:SSZ
+- The Z suffix is accepted only for --reminder because entry dates use civil time.
 Examples:
 - hw_calendar entry create --text "Water the plants" --due 2026-04-27 --recurrence 604800
 - hw_calendar entry add --text "Water the plants" --due 20260427 --recurrence 604800
@@ -416,7 +414,10 @@ calendar_cli_datetime_to_unix :: proc(value: Agenda_Date_Time) -> (i64, bool) {
 calendar_cli_parse_entry_timestamp :: proc(value: string) -> (string, bool) {
 	trimmed: string = strings.trim_space(value)
 	parsed_time, datetime_ok := calendar_cli_parse_entry_datetime(trimmed)
-	if datetime_ok {return fmt.tprintf("%d", agenda_date_time_stamp(parsed_time)), true}
+	if datetime_ok {
+		if parsed_time.utc {return "", false}
+		return fmt.tprintf("%d", agenda_date_time_stamp(parsed_time)), true
+	}
 	parsed, parse_ok := strconv.parse_i64(trimmed)
 	if !parse_ok {return "", false}
 	return fmt.tprintf("%d", parsed), true

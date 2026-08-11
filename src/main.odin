@@ -39,7 +39,14 @@ calendar_process_main :: proc(args := os.args) {
 					"The calendar database is owned by another process or could not be opened.",
 				)
 			} else {
+				if request.command == .Reminder_Status {
+					_ = calendar_notification_initialize_direct(false)
+				}
 				result = calendar_cli_execute(request)
+				if result.exit_code == 0 &&
+				   calendar_cli_command_mutates_database(request.command) {
+					_ = calendar_notification_initialize_direct(true)
+				}
 			}
 		}
 		fmt.println(result.output)

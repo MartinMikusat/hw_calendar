@@ -99,6 +99,14 @@ calendar_cli_parses_entry_datetime_as_civil_time_test :: proc(t: ^testing.T) {
 }
 
 @(test)
+calendar_cli_rejects_zoned_entry_timestamp_test :: proc(t: ^testing.T) {
+	_, parsed := calendar_cli_parse_entry_timestamp("20260630T120000Z")
+	testing.expect(t, !parsed)
+	_, parsed = calendar_cli_parse_entry_timestamp("2026-06-30T12:00:00Z")
+	testing.expect(t, !parsed)
+}
+
+@(test)
 calendar_cli_parses_reminder_datetime_with_local_timezone_test :: proc(t: ^testing.T) {
 	previous_tz, had_previous_tz := os.lookup_env("TZ", context.temp_allocator)
 	defer calendar_cli_test_restore_timezone(previous_tz, had_previous_tz)

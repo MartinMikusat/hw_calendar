@@ -34,17 +34,20 @@ download_verified() {
 mkdir -p "$ARCHIVES" "$INSTALL"
 SPARKLE_ARCHIVE="$ARCHIVES/Sparkle-$SPARKLE_VERSION.tar.xz"
 download_verified "$SPARKLE_URL" "$SPARKLE_SHA256" "$SPARKLE_ARCHIVE"
-if [ ! -d "$INSTALL/Sparkle/Sparkle.framework" ]; then
+if [ ! -d "$INSTALL/Sparkle/Sparkle.framework" ] ||
+   ! cmp -s "$LOCK" "$INSTALL/release-dependencies.lock"; then
 	STAGE=$(mktemp -d "${TMPDIR:-/tmp}/hw-calendar-sparkle.XXXXXX")
 	trap 'find "$STAGE" -depth -delete' EXIT HUP INT TERM
 	tar -xJf "$SPARKLE_ARCHIVE" -C "$STAGE"
-	mkdir -p "$INSTALL/Sparkle"
-	ditto "$STAGE/Sparkle.framework" "$INSTALL/Sparkle/Sparkle.framework"
-	cp "$STAGE/LICENSE" "$INSTALL/Sparkle/LICENSE"
+	mkdir -p "$STAGE/install"
+	ditto "$STAGE/Sparkle.framework" "$STAGE/install/Sparkle.framework"
+	cp "$STAGE/LICENSE" "$STAGE/install/LICENSE"
 	for tool in generate_appcast generate_keys sign_update; do
-		cp "$STAGE/bin/$tool" "$INSTALL/Sparkle/$tool"
-		chmod 755 "$INSTALL/Sparkle/$tool"
+		cp "$STAGE/bin/$tool" "$STAGE/install/$tool"
+		chmod 755 "$STAGE/install/$tool"
 	done
+	rm -rf "$INSTALL/Sparkle"
+	mv "$STAGE/install" "$INSTALL/Sparkle"
 	find "$STAGE" -depth -delete
 	trap - EXIT HUP INT TERM
 fi

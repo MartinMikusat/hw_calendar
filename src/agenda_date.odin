@@ -2,6 +2,9 @@ package main
 
 import "core:fmt"
 import "core:strconv"
+import "core:time"
+import dt "core:time/datetime"
+import "core:time/timezone"
 
 Agenda_Weekday :: enum int {
 	Sunday,
@@ -156,6 +159,30 @@ agenda_date_time_from_stamp :: proc(stamp: i64, is_date := false) -> Agenda_Date
 		result.second = int(seconds % 60)
 	}
 	return result
+}
+
+agenda_local_date_at_unix :: proc(stamp: i64) -> Agenda_Date_Time {
+	utc, valid := time.time_to_datetime(time.unix(stamp, 0))
+	if !valid {return agenda_date_time_from_stamp(stamp, true)}
+	region, loaded := timezone.region_load("local", context.temp_allocator)
+	if !loaded {return agenda_date_time_from_stamp(stamp, true)}
+	defer timezone.region_destroy(region, context.temp_allocator)
+	localized: dt.DateTime = utc
+	if region != nil {
+		converted: bool
+		localized, converted = timezone.datetime_to_tz(utc, region)
+		if !converted {return agenda_date_time_from_stamp(stamp, true)}
+	}
+	return {
+		year = int(localized.year),
+		month = int(localized.month),
+		day = int(localized.day),
+		is_date = true,
+	}
+}
+
+agenda_local_today :: proc() -> Agenda_Date_Time {
+	return agenda_local_date_at_unix(time.to_unix_seconds(time.now()))
 }
 
 agenda_weekday :: proc(value: Agenda_Date_Time) -> Agenda_Weekday {

@@ -34,6 +34,63 @@ chore_due_and_rolling_completion_test :: proc(t: ^testing.T) {
 	defer calendar_database_close()
 
 	now_unix := time.to_unix_seconds(time.now())
+	outside, outside_ok := agenda_entry_create(&Agenda_Entry_Input{
+		schema_version = 1,
+		original_text = "Outside numeric range",
+		due_at = "999",
+	})
+	defer agenda_entry_destroy(&outside)
+	inside, inside_ok := agenda_entry_create(&Agenda_Entry_Input{
+		schema_version = 1,
+		original_text = "Inside numeric range",
+		due_at = "1500",
+	})
+	defer agenda_entry_destroy(&inside)
+	recurring_by_due, recurring_by_due_ok := agenda_entry_create(&Agenda_Entry_Input{
+		schema_version = 1,
+		original_text = "Recurring range precedence",
+		start_at = fmt.tprintf("%d", now_unix+1_500),
+		due_at = fmt.tprintf("%d", now_unix+3_000),
+		recurrence_seconds = 86_400,
+	})
+	defer agenda_entry_destroy(&recurring_by_due)
+	if !outside_ok || !inside_ok || !recurring_by_due_ok {
+		testing.fail_now(t, "could not create range fixtures")
+	}
+	bounded := agenda_entries_list("1000", "2000", "")
+	defer agenda_entries_destroy(&bounded)
+	testing.expect_value(t, len(bounded), 1)
+	if len(bounded) == 1 {testing.expect_value(t, bounded[0].id, inside.id)}
+	recurring_bounds := agenda_entries_list(
+		fmt.tprintf("%d", now_unix+1_000),
+		fmt.tprintf("%d", now_unix+2_000),
+		"",
+	)
+	defer agenda_entries_destroy(&recurring_bounds)
+	testing.expect_value(t, len(recurring_bounds), 0)
+
+	proposal, proposal_code := agenda_proposal_submit(&Agenda_Proposal_Input{
+		schema_version = 1,
+		entry_id = inside.id,
+		source_revision = inside.revision,
+	})
+	defer agenda_proposal_destroy(&proposal)
+	testing.expect_value(t, proposal_code, "")
+	changed, change_code := agenda_entry_update(
+		inside.id,
+		inside.revision,
+		&Agenda_Entry_Input{
+			schema_version = 1,
+			original_text = "Changed after proposal",
+			due_at = inside.due_at,
+		},
+	)
+	defer agenda_entry_destroy(&changed)
+	testing.expect_value(t, change_code, "")
+	rejected, reject_code := agenda_proposal_resolve(proposal.id, false)
+	defer agenda_entry_destroy(&rejected)
+	testing.expect_value(t, reject_code, "")
+
 	created, ok := agenda_entry_create(&Agenda_Entry_Input{
 		schema_version = 1,
 		original_text = "Vacuum the floors every week",

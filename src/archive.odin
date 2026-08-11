@@ -282,7 +282,7 @@ calendar_archive_validate :: proc(
 		   !calendar_archive_timestamp_valid(entry.end_at) ||
 		   !calendar_archive_timestamp_valid(entry.due_at) ||
 		   !calendar_archive_timestamp_valid(entry.reminder_at) ||
-		   len(entry.end_at) > 0 && len(entry.start_at) == 0 ||
+		   !agenda_interval_valid(entry.start_at, entry.end_at) ||
 		   entry.recurrence_seconds > 0 && len(entry.due_at) == 0 {
 			return {}, .Invalid_Record
 		}
@@ -316,7 +316,7 @@ calendar_archive_validate :: proc(
 		         calendar_archive_timestamp_valid(fields.end_at) &&
 		         calendar_archive_timestamp_valid(fields.due_at) &&
 		         calendar_archive_timestamp_valid(fields.reminder_at) &&
-		         !(len(fields.end_at) > 0 && len(fields.start_at) == 0) &&
+		         agenda_interval_valid(fields.start_at, fields.end_at) &&
 		         !(fields.recurrence_seconds > 0 && len(fields.due_at) == 0)
 		delete(fields.start_at)
 		delete(fields.end_at)
@@ -351,6 +351,10 @@ calendar_archive_read :: proc(
 	path: string,
 	allocator := context.allocator,
 ) -> (Calendar_Archive, Calendar_Archive_Summary, Calendar_Archive_Error) {
+	file_info, stat_error := os.stat(path, context.temp_allocator)
+	if stat_error != nil {return {}, {}, .Read}
+	defer os.file_info_delete(file_info, context.temp_allocator)
+	if file_info.size > CALENDAR_ARCHIVE_MAX_BYTES {return {}, {}, .Too_Large}
 	bytes, read_error := os.read_entire_file(path, allocator)
 	if read_error != nil {return {}, {}, .Read}
 	defer delete(bytes, allocator)

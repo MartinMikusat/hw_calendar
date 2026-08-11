@@ -89,13 +89,21 @@ agenda_state_valid :: proc(state: string) -> bool {
 	return state == "active" || state == "completed" || state == "dismissed"
 }
 
+agenda_interval_valid :: proc(start_at, end_at: string) -> bool {
+	if len(end_at) == 0 {return true}
+	if len(start_at) == 0 {return false}
+	start, start_ok := strconv.parse_i64(start_at)
+	end, end_ok := strconv.parse_i64(end_at)
+	return start_ok && end_ok && end >= start
+}
+
 agenda_input_valid :: proc(input: ^Agenda_Entry_Input) -> bool {
 	if input == nil || input.schema_version != 1 ||
 	   len(strings.trim_space(input.original_text)) == 0 ||
 	   input.recurrence_seconds < 0 {
 		return false
 	}
-	if len(input.end_at) > 0 && len(input.start_at) == 0 {return false}
+	if !agenda_interval_valid(input.start_at, input.end_at) {return false}
 	if input.recurrence_seconds > 0 && len(input.due_at) == 0 {return false}
 	timestamps := [4]string{input.start_at, input.end_at, input.due_at, input.reminder_at}
 	for value in timestamps {
@@ -192,13 +200,25 @@ agenda_entry_update :: proc(id: i64, expected_revision: int, input: ^Agenda_Entr
 agenda_entries_list :: proc(from, to, query: string, allocator := context.allocator) -> [dynamic]Agenda_Entry {
 	result := make([dynamic]Agenda_Entry, allocator)
 	statement, prepared := sqlite_prepare(calendar_database, AGENDA_ENTRY_SELECT+
-		` WHERE (? = '' OR start_at = '' OR start_at >= ? OR due_at >= ?)
-		AND (? = '' OR start_at = '' OR start_at < ? OR due_at < ?)
+		` WHERE (? = '' OR CASE
+			WHEN recurrence_seconds > 0 AND due_at != '' THEN CAST(due_at AS INTEGER)
+			WHEN start_at != '' THEN CAST(start_at AS INTEGER)
+			WHEN due_at != '' THEN CAST(due_at AS INTEGER)
+			ELSE NULL END >= CAST(? AS INTEGER))
+		AND (? = '' OR CASE
+			WHEN recurrence_seconds > 0 AND due_at != '' THEN CAST(due_at AS INTEGER)
+			WHEN start_at != '' THEN CAST(start_at AS INTEGER)
+			WHEN due_at != '' THEN CAST(due_at AS INTEGER)
+			ELSE NULL END < CAST(? AS INTEGER))
 		AND (? = '' OR original_text LIKE '%' || ? || '%' OR location LIKE '%' || ? || '%')
-		ORDER BY CASE WHEN due_at != '' THEN due_at WHEN start_at != '' THEN start_at ELSE '9999' END, id;`)
+		ORDER BY CASE
+			WHEN recurrence_seconds > 0 AND due_at != '' THEN CAST(due_at AS INTEGER)
+			WHEN start_at != '' THEN CAST(start_at AS INTEGER)
+			WHEN due_at != '' THEN CAST(due_at AS INTEGER)
+			ELSE 9223372036854775807 END, id;`)
 	if !prepared {return result}
 	defer sqlite3_finalize(statement)
-	values := [9]string{from, from, from, to, to, to, query, query, query}
+	values := [7]string{from, from, to, to, query, query, query}
 	for value, index in values {if !sqlite_bind_text_value(statement, index+1, value) {return result}}
 	for sqlite3_step(statement) == SQLITE_ROW {append(&result, agenda_entry_from_statement(statement, allocator))}
 	return result
@@ -267,7 +287,7 @@ agenda_entry_set_state :: proc(id: i64, expected_revision: int, state: string) -
 				     sqlite3_bind_int(statement, 4, i32(expected_revision)) == SQLITE_OK &&
 				     sqlite3_step(statement) == SQLITE_DONE
 				sqlite3_finalize(statement)
-			}
+			} else {ok = false}
 		} else {
 			statement, ready := sqlite_prepare(calendar_database, `UPDATE agenda_entries SET
 				state='completed', revision=revision+1, updated_at_ms=? WHERE id=? AND revision=?;`)
@@ -281,7 +301,10 @@ agenda_entry_set_state :: proc(id: i64, expected_revision: int, state: string) -
 		}
 		if !ok {_ = sqlite_execute(calendar_database, "ROLLBACK;"); return {}, "storage_failed"}
 		if sqlite3_changes(calendar_database) == 0 {_ = sqlite_execute(calendar_database, "ROLLBACK;"); return {}, "revision_conflict"}
-		if !sqlite_execute(calendar_database, "COMMIT;") {return {}, "storage_failed"}
+		if !sqlite_execute(calendar_database, "COMMIT;") {
+			_ = sqlite_execute(calendar_database, "ROLLBACK;")
+			return {}, "storage_failed"
+		}
 		result, result_found := agenda_entry_get(id)
 		if !result_found {return {}, "storage_failed"}
 		return result, ""
@@ -307,6 +330,7 @@ agenda_proposal_submit :: proc(input: ^Agenda_Proposal_Input) -> (Agenda_Proposa
 		return {}, "invalid_proposal"
 	}
 	if input.fields.recurrence_seconds > 0 && len(input.fields.due_at) == 0 {return {}, "invalid_proposal"}
+	if !agenda_interval_valid(input.fields.start_at, input.fields.end_at) {return {}, "invalid_proposal"}
 	timestamps := [4]string{input.fields.start_at, input.fields.end_at, input.fields.due_at, input.fields.reminder_at}
 	for value in timestamps {
 		if len(value) > 0 {if _, ok := strconv.parse_i64(value); !ok {return {}, "invalid_proposal"}}
@@ -393,7 +417,9 @@ agenda_proposal_resolve :: proc(id: i64, confirm: bool) -> (Agenda_Entry, string
 	entry, entry_found := agenda_entry_get(proposal.entry_id, context.temp_allocator)
 	if !entry_found {return {}, "not_found"}
 	defer agenda_entry_destroy(&entry, context.temp_allocator)
-	if entry.revision != proposal.source_revision {return {}, "revision_conflict"}
+	if confirm && entry.revision != proposal.source_revision {
+		return {}, "revision_conflict"
+	}
 	if !sqlite_execute(calendar_database, "BEGIN IMMEDIATE;") {return {}, "storage_failed"}
 	if confirm {
 		input := Agenda_Entry_Input{
@@ -426,7 +452,10 @@ agenda_proposal_resolve :: proc(id: i64, confirm: bool) -> (Agenda_Entry, string
 		_ = sqlite_execute(calendar_database, "ROLLBACK;")
 		return {}, "storage_failed"
 	}
-	if !sqlite_execute(calendar_database, "COMMIT;") {return {}, "storage_failed"}
+	if !sqlite_execute(calendar_database, "COMMIT;") {
+		_ = sqlite_execute(calendar_database, "ROLLBACK;")
+		return {}, "storage_failed"
+	}
 	result, result_found := agenda_entry_get(entry.id)
 	if !result_found {return {}, "storage_failed"}
 	return result, ""

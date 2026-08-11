@@ -71,12 +71,36 @@ if gh release view "$TAG" --repo "$REPOSITORY" >/dev/null 2>&1; then
 fi
 
 LATEST_APPCAST=$(mktemp "${TMPDIR:-/tmp}/hw-calendar-appcast.XXXXXX")
-curl --fail --silent --location \
-	"https://www.halwayland.com/updates/hw_calendar/stable/appcast.xml" \
-	--output "$LATEST_APPCAST" 2>/dev/null || true
-LATEST_BUILD=$(xmllint --xpath \
-	'string((//*[local-name()="item"][1]/*[local-name()="version"])[1])' \
-	"$LATEST_APPCAST" 2>/dev/null || true)
+if ! LATEST_APPCAST_STATUS=$(curl --silent --show-error --location \
+	--output "$LATEST_APPCAST" --write-out '%{http_code}' \
+	"https://www.halwayland.com/updates/hw_calendar/stable/appcast.xml"); then
+	echo "[release] could not fetch the published appcast" >&2
+	exit 1
+fi
+case "$LATEST_APPCAST_STATUS" in
+	200)
+		if ! LATEST_BUILD=$(xmllint --xpath \
+			'string((//*[local-name()="item"][1]/*[local-name()="version"])[1])' \
+			"$LATEST_APPCAST" 2>/dev/null) ||
+		   ! printf '%s\n' "$LATEST_BUILD" | grep -Eq '^[1-9][0-9]*$'; then
+			echo "[release] published appcast has no valid build number" >&2
+			exit 1
+		fi
+		;;
+	404)
+		if ! PUBLISHED_RELEASE_COUNT=$(gh release list --repo "$REPOSITORY" \
+			--limit 1 --json tagName --jq 'length') ||
+		   [ "$PUBLISHED_RELEASE_COUNT" -ne 0 ]; then
+			echo "[release] published appcast is missing for an existing release" >&2
+			exit 1
+		fi
+		LATEST_BUILD=""
+		;;
+	*)
+		echo "[release] published appcast returned HTTP $LATEST_APPCAST_STATUS" >&2
+		exit 1
+		;;
+esac
 if [ -n "$LATEST_BUILD" ] && [ "$BUILD" -le "$LATEST_BUILD" ]; then
 	echo "[release] build $BUILD must be greater than published build $LATEST_BUILD" >&2
 	exit 1

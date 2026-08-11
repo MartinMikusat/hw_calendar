@@ -265,6 +265,8 @@ Calendar_UI_State :: struct {
 	window_has_zoom_restore: bool,
 	frame_index: int,
 	notification_reconcile_stamp: i64,
+	notification_next_reconcile_stamp: i64,
+	local_day_stamp: i64,
 	day_offset: int,
 	number_prefix: int,
 	number_prefix_deadline_ms: i64,
@@ -313,6 +315,7 @@ Calendar_UI_State :: struct {
 	navigation_holiday_country_index: int,
 	navigation_holiday_definition_index: int,
 	details_scroll: f64,
+	details_error: string,
 	due_first_row: int,
 	archive_modal_open: bool,
 	archive_error: string,
@@ -1352,12 +1355,13 @@ calendar_next_chore_due_stamp :: proc(
 calendar_ui_reload_data :: proc() {
 	agenda_entries_destroy(&calendar_ui.entries)
 	delete(calendar_ui.occurrences)
-	clear(&calendar_ui.holiday_occurrences)
+	delete(calendar_ui.holiday_occurrences)
 	agenda_entries_destroy(&calendar_ui.due_entries)
 	calendar_ui.entries = agenda_entries_list("", "", "")
 	calendar_ui.occurrences = make([dynamic]Agenda_Occurrence)
 	now_stamp := time.to_unix_seconds(time.now())
-	now := agenda_date_time_from_stamp(now_stamp, true)
+	now := agenda_local_date_at_unix(now_stamp)
+	calendar_ui.local_day_stamp = agenda_date_time_stamp(now)
 	calendar_ui.due_entries = agenda_due_entries(now_stamp)
 	calendar_ui.next_chore_due_stamp = calendar_next_chore_due_stamp(
 		calendar_ui.entries[:],
@@ -1439,6 +1443,8 @@ calendar_ui_clear_holiday_promotion :: proc() {
 }
 
 calendar_ui_clear_navigation_selection :: proc() {
+	delete(calendar_ui.details_error)
+	calendar_ui.details_error = ""
 	calendar_ui.navigation_active = false
 	calendar_ui.navigation_event_index = -1
 	calendar_ui.navigation_start_stamp = 0
@@ -1488,6 +1494,8 @@ calendar_navigation_item_matches_selection :: proc(
 }
 
 calendar_ui_set_navigation_selection :: proc(item: Calendar_Navigation_Item) {
+	delete(calendar_ui.details_error)
+	calendar_ui.details_error = ""
 	calendar_ui.navigation_active = true
 	calendar_ui.details_scroll = 0
 	calendar_ui.navigation_kind = item.kind
@@ -1506,7 +1514,7 @@ calendar_ui_set_navigation_selection :: proc(item: Calendar_Navigation_Item) {
 }
 
 calendar_ui_day_offset_for_stamp :: proc(stamp, now_stamp: i64) -> int {
-	now := agenda_date_time_from_stamp(now_stamp, true)
+	now := agenda_local_date_at_unix(now_stamp)
 	return int(
 		stamp/86400-
 		agenda_days_from_civil(now.year, now.month, now.day),
@@ -1809,7 +1817,7 @@ calendar_navigation_find_day :: proc(
 }
 
 calendar_ui_navigate :: proc(direction: Calendar_Navigation_Direction) {
-	now := agenda_date_time_from_stamp(time.to_unix_seconds(time.now()), true)
+	now := agenda_local_today()
 	anchor_days := agenda_days_from_civil(now.year, now.month, now.day) +
 	               i64(calendar_ui.day_offset)
 	selected_day_stamp := anchor_days*86400
@@ -2582,7 +2590,7 @@ calendar_ui_editor_open :: proc(event_index := -1) {
 			}
 		}
 	} else {
-		now := agenda_date_time_from_stamp(time.to_unix_seconds(time.now()), true)
+		now := agenda_local_today()
 		day := agenda_days_from_civil(now.year, now.month, now.day) +
 		       i64(calendar_ui.day_offset)
 		start := agenda_date_time_from_stamp(day*86400+9*3600)
@@ -2995,10 +3003,6 @@ calendar_ui_editor_commit :: proc(cancelled := false) {
 	   calendar_ui.editor_event_index >= len(calendar_ui.entries)) {
 		return
 	}
-	if len(strings.trim_space(calendar_ui.editor_summary)) == 0 {
-		calendar_ui_editor_set_error("ENTRY TEXT IS REQUIRED")
-		return
-	}
 	entry_id: i64
 	expected_revision := 0
 	if calendar_ui.editor_event_index >= 0 && calendar_ui.editor_event_index < len(calendar_ui.entries) {
@@ -3006,16 +3010,42 @@ calendar_ui_editor_commit :: proc(cancelled := false) {
 		expected_revision = calendar_ui.entries[calendar_ui.editor_event_index].revision
 	}
 	if cancelled {
-		_, code := agenda_entry_set_state(entry_id, expected_revision, "dismissed")
+		updated, code := agenda_entry_set_state(entry_id, expected_revision, "dismissed")
 		if len(code) > 0 {calendar_ui_editor_set_error("THE ENTRY COULD NOT BE DISMISSED"); return}
+		agenda_entry_destroy(&updated)
 		calendar_ui_editor_close()
 		calendar_ui_reload_data()
+		calendar_notification_reconcile()
+		return
+	}
+	if len(strings.trim_space(calendar_ui.editor_summary)) == 0 {
+		calendar_ui_editor_set_error("ENTRY TEXT IS REQUIRED")
 		return
 	}
 	start_text := ""
 	end_text := ""
-	if start, ok := agenda_parse_date_time(calendar_ui.editor_start); ok {start_text = fmt.tprintf("%d", agenda_date_time_stamp(start))}
-	if end, ok := agenda_parse_date_time(calendar_ui.editor_end); ok {end_text = fmt.tprintf("%d", agenda_date_time_stamp(end))}
+	if len(strings.trim_space(calendar_ui.editor_start)) > 0 {
+		start, ok := agenda_parse_date_time(calendar_ui.editor_start)
+		if !ok {calendar_ui_editor_set_error("CHECK THE START VALUE"); return}
+		start_text = fmt.tprintf("%d", agenda_date_time_stamp(start))
+	}
+	if len(strings.trim_space(calendar_ui.editor_end)) > 0 {
+		end, ok := agenda_parse_date_time(calendar_ui.editor_end)
+		if !ok {calendar_ui_editor_set_error("CHECK THE END VALUE"); return}
+		end_text = fmt.tprintf("%d", agenda_date_time_stamp(end))
+	}
+	if len(end_text) > 0 && len(start_text) == 0 {
+		calendar_ui_editor_set_error("START IS REQUIRED WHEN END IS SET")
+		return
+	}
+	if len(end_text) > 0 {
+		start_stamp, _ := strconv.parse_i64(start_text)
+		end_stamp, _ := strconv.parse_i64(end_text)
+		if end_stamp < start_stamp {
+			calendar_ui_editor_set_error("END MUST NOT PRECEDE START")
+			return
+		}
+	}
 	input := Agenda_Entry_Input{
 		schema_version = 1,
 		original_text = calendar_ui.editor_summary,
@@ -3200,10 +3230,7 @@ calendar_ui_execute_action :: proc(action: Calendar_App_Action) {
 			country := &calendar_ui.holiday_countries[action.index]
 			if action.definition_index >= 0 &&
 			   action.definition_index < len(country.entries) {
-				now := agenda_date_time_from_stamp(
-					time.to_unix_seconds(time.now()),
-					true,
-				)
+				now := agenda_local_today()
 				if date, found := calendar_holiday_next_date(
 					country,
 					&country.entries[action.definition_index],
@@ -3318,6 +3345,8 @@ calendar_ui_execute_action :: proc(action: Calendar_App_Action) {
 		}
 	case .Action_Confirm_Proposal, .Action_Reject_Proposal:
 		if calendar_ui_action_available(action.kind) {
+			delete(calendar_ui.details_error)
+			calendar_ui.details_error = ""
 			event := &calendar_ui.entries[calendar_ui.navigation_event_index]
 			proposal, found := agenda_proposal_pending_for_entry(event.id, context.temp_allocator)
 			if found {
@@ -3328,6 +3357,15 @@ calendar_ui_execute_action :: proc(action: Calendar_App_Action) {
 					calendar_ui_clear_navigation_selection()
 					calendar_ui_reload_data()
 					calendar_notification_reconcile()
+				} else {
+					message := "THE PROPOSAL COULD NOT BE REJECTED"
+					if action.kind == .Action_Confirm_Proposal {
+						message = "THE PROPOSAL COULD NOT BE CONFIRMED"
+					}
+					calendar_ui.details_error = strings.clone(
+						message,
+					)
+					calendar_ui.needs_redraw = true
 				}
 			}
 		}
@@ -3950,7 +3988,7 @@ calendar_on_key_down :: proc "c" (self: Id, command: Sel, event: Id) {
 			direction := 1
 			if shift_down {direction = -1}
 			calendar_ui.editor_field =
-				(calendar_ui.editor_field+direction+10)%10
+				(calendar_ui.editor_field+direction+5)%5
 			calendar_text_focus(
 				calendar_text_editor_field(calendar_ui.editor_field),
 			)
@@ -4573,7 +4611,7 @@ CALENDAR_DAY_AGENDA_HEADER_HEIGHT :: 48.0
 CALENDAR_DAY_AGENDA_ROW_HEIGHT :: 58.0
 
 calendar_ui_selected_day :: proc() -> Agenda_Date_Time {
-	now := agenda_date_time_from_stamp(time.to_unix_seconds(time.now()), true)
+	now := agenda_local_today()
 	day := agenda_days_from_civil(now.year, now.month, now.day) +
 	       i64(calendar_ui.day_offset)
 	return agenda_date_time_from_stamp(day*86400, true)
@@ -4885,6 +4923,12 @@ calendar_draw_details :: proc(
 	   calendar_ui.navigation_event_index >= 0 &&
 	   calendar_ui.navigation_event_index < len(calendar_ui.entries) {
 		event := &calendar_ui.entries[calendar_ui.navigation_event_index]
+		if len(calendar_ui.details_error) > 0 {
+			calendar_detail_draw_field(
+				ctx, font, "ERROR", calendar_ui.details_error,
+				panel, &cursor, muted, ink,
+			)
+		}
 		end := ""
 		for occurrence in calendar_ui.occurrences {
 			if calendar_event_occurrence_is_navigation_selected(occurrence) {
@@ -5029,7 +5073,7 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 	for rect in buttons {
 		calendar_push_rect(vertices, rect, button)
 	}
-	now := agenda_date_time_from_stamp(time.to_unix_seconds(time.now()), true)
+	now := agenda_local_today()
 	anchor := agenda_days_from_civil(now.year, now.month, now.day) +
 	          i64(calendar_ui.day_offset)
 	visible := calendar_ui_visible_day_count()
@@ -6312,7 +6356,7 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 	calendar_draw_text(ctx, font, "TODAY", calendar_ui_today_rect(), today_color, 0, .Center)
 	calendar_draw_text(ctx, font, "SEARCH", calendar_ui_search_rect(), search_color, 0, .Center)
 	calendar_draw_text(ctx, font, "NEW EVENT", calendar_ui_new_rect(), new_color, 0, .Center)
-	now := agenda_date_time_from_stamp(time.to_unix_seconds(time.now()), true)
+	now := agenda_local_today()
 	anchor := agenda_days_from_civil(now.year, now.month, now.day) +
 	          i64(calendar_ui.day_offset)
 	visible := calendar_ui_visible_day_count()
@@ -7214,13 +7258,19 @@ calendar_on_frame :: proc "c" (self: Id, command: Sel, timer: Id) {
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 	_ = calendar_expire_number_prefix_at(calendar_number_time_ms())
 	now_stamp := time.to_unix_seconds(time.now())
+	local_day := agenda_local_date_at_unix(now_stamp)
+	local_day_stamp := agenda_date_time_stamp(local_day)
+	if calendar_ui.local_day_stamp != local_day_stamp {
+		calendar_ui_reload_data()
+		calendar_ui.needs_redraw = true
+	}
 	if calendar_ui.next_chore_due_stamp > 0 &&
 	   now_stamp >= calendar_ui.next_chore_due_stamp {
 		calendar_ui_reload_data()
 		calendar_ui.needs_redraw = true
 	}
-	if calendar_ui.notification_reconcile_stamp == 0 ||
-	   now_stamp-calendar_ui.notification_reconcile_stamp >= 3600 {
+	if calendar_ui.notification_next_reconcile_stamp == 0 ||
+	   now_stamp >= calendar_ui.notification_next_reconcile_stamp {
 		calendar_notification_reconcile()
 	}
 	frame := msg_rect(calendar_ui.view, sel_registerName("bounds"))
@@ -7284,6 +7334,12 @@ calendar_register_classes :: proc() -> Id {
 		delegate_class,
 		sel_registerName("calendarCLIRequest:"),
 		rawptr(calendar_on_cli_ipc_request),
+		"v@:@",
+	)
+	class_addMethod(
+		delegate_class,
+		sel_registerName("calendarNotificationReconcile:"),
+		rawptr(calendar_notification_reconcile_on_main),
 		"v@:@",
 	)
 	class_addMethod(
@@ -7460,6 +7516,7 @@ calendar_ui_destroy :: proc() {
 	delete(calendar_ui.palette_query)
 	delete(calendar_ui.palette_actions)
 	delete(calendar_ui.archive_error)
+	delete(calendar_ui.details_error)
 	delete(calendar_ui.settings_query)
 	delete(calendar_ui.settings_error)
 	delete(calendar_ui.archive_import_path)

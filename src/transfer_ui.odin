@@ -2,7 +2,6 @@ package main
 
 import "core:fmt"
 import "core:strings"
-import "core:time"
 import flash "flash:."
 
 calendar_ui_archive_import_rect :: proc() -> Calendar_UI_Rect {
@@ -51,7 +50,7 @@ calendar_archive_panel_path :: proc(save: bool) -> (string, bool) {
 	msg_void_id(panel, sel_registerName("setAllowedFileTypes:"), extensions)
 	msg_void_bool(panel, sel_registerName("setCanCreateDirectories:"), true)
 	if save {
-		now := agenda_date_time_from_stamp(time.to_unix_seconds(time.now()), true)
+		now := agenda_local_today()
 		name := fmt.tprintf(
 			"hw_calendar-%04d-%02d-%02d.hwcalendar.json",
 			now.year,

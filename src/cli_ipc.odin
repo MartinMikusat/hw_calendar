@@ -77,7 +77,8 @@ calendar_on_cli_ipc_request :: proc "c" (
 	calendar_cli_ipc_work.result = calendar_cli_execute(
 		calendar_cli_ipc_work.request,
 	)
-	if calendar_cli_command_mutates_database(
+	if calendar_cli_ipc_work.result.exit_code == 0 &&
+	   calendar_cli_command_mutates_database(
 		calendar_cli_ipc_work.request.command,
 	) {
 		calendar_ui_reload_data()
