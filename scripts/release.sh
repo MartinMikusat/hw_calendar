@@ -152,7 +152,7 @@ if [ "$RESUME_PUBLICATION" = false ]; then
 	xcrun stapler validate "$DMG"
 	spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG"
 
-	"$ROOT/scripts/test-private-update.sh" "$APP" "$SIGNING_IDENTITY"
+	"$ROOT/scripts/test-public-update.sh" "$APP" "$SIGNING_IDENTITY"
 	"$ROOT/scripts/test-native-reminder.sh" "$APP"
 
 	cp "$DMG" "$APPCAST_STAGE/$ASSET"

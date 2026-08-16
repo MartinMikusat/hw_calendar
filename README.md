@@ -265,11 +265,11 @@ to verify these inputs.
 
 Run `./scripts/release.sh` from clean and synchronized `hw_calendar` `main` and
 `hal_wayland` `staging` branches. The command executes the tests, signs and
-notarizes the DMG, installs exact build 2 over private build 1 through Sparkle,
-and schedules a native reminder before it closes the test application. The
-release continues after the observed reminder is confirmed. Publication creates
-the GitHub Release, signs the stable appcast, enables the product page, and
-fast-forwards the website from `staging` to `main`.
+notarizes the DMG, installs the signed candidate over the latest public
+stable release through Sparkle, and schedules a native reminder before it
+closes the test application. The release continues after the observed reminder
+is confirmed. Publication creates the GitHub Release, signs the stable
+appcast, enables the product page, and fast-forwards the website from
+`staging` to `main`.
 
-The current release task is tracked in [TODO.md](TODO.md). Mark it complete only
-after the closed-application reminder delivery is observed.
+The current release task is tracked in [TODO.md](TODO.md).
