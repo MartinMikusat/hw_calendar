@@ -22,10 +22,6 @@ lock_checksum() {
   checksum "$LOCK_FILE"
 }
 
-odin_root() {
-  printf '%s/odin/%s-%s\n' "$DEPS_DIR" "$ODIN_TAG" "$ODIN_SHA"
-}
-
 dependency_set_root() {
   printf '%s/sets/%s\n' "$DEPS_DIR" "$(lock_checksum)"
 }
@@ -34,12 +30,6 @@ load_lock() {
   [ -f "$LOCK_FILE" ] || fail "missing dependency lock: $LOCK_FILE"
 
   LOCK_VERSION=
-  ODIN_TAG=
-  ODIN_COMMIT=
-  ODIN_URL=
-  ODIN_SHA=
-  ODIN_PLATFORM=
-  ODIN_BINARY_COMMIT=
   LLVM_VERSION=
   LLVM_URL=
   LLVM_SHA=
@@ -64,24 +54,6 @@ load_lock() {
           fail "invalid lock-version entry"
         [ -z "$LOCK_VERSION" ] || fail "duplicate lock-version entry"
         LOCK_VERSION=$a
-        ;;
-      odin)
-        [ -n "$a" ] && [ -n "$b" ] && [ -n "$c" ] &&
-          [ -n "$d" ] && [ -n "$e" ] && [ -z "$extra" ] ||
-          fail "invalid Odin lock entry"
-        [ -z "$ODIN_TAG" ] || fail "duplicate Odin lock entry"
-        ODIN_TAG=$a
-        ODIN_COMMIT=$b
-        ODIN_URL=$c
-        ODIN_SHA=$d
-        ODIN_PLATFORM=$e
-        ;;
-      odin-binary)
-        [ -n "$a" ] && [ -z "$b" ] && [ -z "$c" ] &&
-          [ -z "$d" ] && [ -z "$e" ] && [ -z "$extra" ] ||
-          fail "invalid Odin binary entry"
-        [ -z "$ODIN_BINARY_COMMIT" ] || fail "duplicate Odin binary entry"
-        ODIN_BINARY_COMMIT=$a
         ;;
       llvm)
         [ -n "$a" ] && [ -n "$b" ] && [ -n "$c" ] &&
@@ -144,9 +116,6 @@ load_lock() {
   done < "$LOCK_FILE"
 
   [ "$LOCK_VERSION" = 2 ] || fail "unsupported dependency lock version: ${LOCK_VERSION:-<missing>}"
-  [ -n "$ODIN_TAG" ] || fail "dependency lock does not contain Odin"
-  [ -n "$ODIN_BINARY_COMMIT" ] || fail "dependency lock does not contain the Odin binary commit"
-  [ "$ODIN_PLATFORM" = macos-arm64 ] || fail "unsupported Odin platform: $ODIN_PLATFORM"
   [ -n "$LLVM_VERSION" ] || fail "dependency lock does not contain LLVM"
   [ "$LLVM_PLATFORM" = homebrew-arm64 ] || fail "unsupported LLVM platform: $LLVM_PLATFORM"
   [ -n "$LLVM_CLANG_SHA" ] || fail "dependency lock does not contain the LLVM clang checksum"
@@ -157,7 +126,7 @@ load_lock() {
   esac
   [ "$GIT_COUNT" -eq 6 ] || fail "dependency lock must contain six sibling repositories"
   [ -n "$ICONOIR_TAG" ] || fail "dependency lock does not contain Iconoir"
-  [ "$ICON_FILE_COUNT" -eq 6 ] || fail "dependency lock must contain six Iconoir files"
+  [ "$ICON_FILE_COUNT" -eq 2 ] || fail "dependency lock must contain two Iconoir files"
 
   for required in \
     hw_odin_matchSorter \
@@ -172,24 +141,6 @@ load_lock() {
       *) fail "dependency lock does not contain $required" ;;
     esac
   done
-}
-
-odin_is_valid() {
-  local root executable version short_commit
-  root=$(odin_root)
-  executable="$root/odin"
-  [ -x "$executable" ] || return 1
-  [ "$(uname -m)" = arm64 ] || return 1
-  version=$($executable version 2>/dev/null || true)
-  short_commit=$(printf '%.7s' "$ODIN_BINARY_COMMIT")
-  case "$version" in
-    *"$short_commit"*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-check_odin() {
-  odin_is_valid || fail "locked Odin is missing or invalid; run ./scripts/dependencies.sh sync"
 }
 
 check_llvm() {
@@ -244,8 +195,8 @@ check_iconoir() {
 
 check_dependencies() {
   load_lock
+  hw-odin toolchain doctor >/dev/null || fail "global Odin toolchain is unavailable"
   check_llvm
-  check_odin
   check_repositories
   check_iconoir
   printf '[hw_calendar] dependencies match lock %s\n' "$(lock_checksum)"
@@ -270,27 +221,6 @@ download_locked_file() {
     fail "download checksum mismatch: $download_url"
   fi
   mv "$temporary" "$download_target"
-}
-
-sync_odin() {
-  local target archive extracted
-  target=$(odin_root)
-  if [ -d "$target" ]; then
-    if odin_is_valid; then
-      return
-    fi
-    find "$target" -depth -delete
-  fi
-
-  archive="$DEPS_DIR/downloads/odin-$ODIN_TAG-$ODIN_SHA.tar.gz"
-  download_locked_file "$ODIN_URL" "$ODIN_SHA" "$archive"
-  SYNC_TEMP_ODIN=$(mktemp -d "$DEPS_DIR/odin/.extract.XXXXXX")
-  tar -xzf "$archive" -C "$SYNC_TEMP_ODIN"
-  extracted=$(find "$SYNC_TEMP_ODIN" -mindepth 1 -maxdepth 1 -type d -print -quit)
-  [ -n "$extracted" ] && [ -x "$extracted/odin" ] || fail "Odin archive has an invalid layout"
-  mv "$extracted" "$target"
-  rmdir "$SYNC_TEMP_ODIN"
-  SYNC_TEMP_ODIN=
 }
 
 sync_repository_set() {
@@ -329,9 +259,6 @@ sync_repository_set() {
 }
 
 cleanup_sync() {
-  if [ -n "${SYNC_TEMP_ODIN:-}" ] && [ -d "$SYNC_TEMP_ODIN" ]; then
-    find "$SYNC_TEMP_ODIN" -depth -delete
-  fi
   if [ -n "${SYNC_TEMP_SET:-}" ] && [ -d "$SYNC_TEMP_SET" ]; then
     find "$SYNC_TEMP_SET" -depth -delete
   fi
@@ -345,9 +272,8 @@ cleanup_sync() {
 sync_dependencies() {
   local existing_pid
   load_lock
-  mkdir -p "$DEPS_DIR/downloads" "$DEPS_DIR/odin" "$DEPS_DIR/sets"
+  mkdir -p "$DEPS_DIR/downloads" "$DEPS_DIR/sets"
   SYNC_LOCK_DIR="$DEPS_DIR/.sync-lock"
-  SYNC_TEMP_ODIN=
   SYNC_TEMP_SET=
   if ! mkdir "$SYNC_LOCK_DIR" 2>/dev/null; then
     existing_pid=$(cat "$SYNC_LOCK_DIR/pid" 2>/dev/null || true)
@@ -365,7 +291,6 @@ sync_dependencies() {
   fi
   printf '%s\n' "$$" > "$SYNC_LOCK_DIR/pid"
   trap cleanup_sync EXIT HUP INT TERM
-  sync_odin
   sync_repository_set
   rm "$SYNC_LOCK_DIR/pid"
   rmdir "$SYNC_LOCK_DIR"
@@ -378,7 +303,6 @@ print_path() {
   local name
   load_lock
   case "${1:-}" in
-    odin) printf '%s/odin\n' "$(odin_root)" ;;
     llvm-bin) printf '%s\n' /opt/homebrew/opt/llvm/bin ;;
     cache) printf '%s\n' "$DEPS_DIR" ;;
     repo)
@@ -388,7 +312,7 @@ print_path() {
         *) fail "unknown dependency repository: ${name:-<missing>}" ;;
       esac
       ;;
-    *) fail "usage: ./scripts/dependencies.sh path [odin|llvm-bin|cache|repo NAME]" ;;
+    *) fail "usage: ./scripts/dependencies.sh path [llvm-bin|cache|repo NAME]" ;;
   esac
 }
 
@@ -411,11 +335,7 @@ doctor_dependencies() {
   else
     printf 'metal-toolchain: missing (required for release builds)\n'
   fi
-  if [ -x "$(odin_root)/odin" ]; then
-    printf 'odin: %s\n' "$("$(odin_root)/odin" version)"
-  else
-    printf 'odin: not synchronized (%s)\n' "$ODIN_TAG"
-  fi
+  printf 'odin: %s\n' "$(hw-odin version | awk '{print $NF}')"
   if [ -x /opt/homebrew/opt/llvm/bin/llvm-config ]; then
     printf 'llvm: %s (locked %s)\n' \
       "$(/opt/homebrew/opt/llvm/bin/llvm-config --version)" "$LLVM_VERSION"

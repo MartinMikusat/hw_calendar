@@ -47,7 +47,14 @@ calendar_text_field_rect :: proc(field: Calendar_Text_Field) -> Calendar_UI_Rect
 	switch field {
 	case .Command_Palette:
 		modal := calendar_ui_palette_rect()
-		return {modal.x+16, modal.y+modal.h-48, modal.w-32, 34}
+		pad := calendar_half_cell()
+		cell := calendar_cell_height()
+		return {
+			modal.x+pad,
+			modal.y+modal.h-pad-cell,
+			modal.w-pad*2,
+			cell,
+		}
 	case .Settings_Search:
 		return calendar_settings_search_rect()
 	case .Editor_Summary, .Editor_Start, .Editor_End, .Editor_Location,
@@ -515,7 +522,7 @@ calendar_text_offset_at_point :: proc(
 ) -> int {
 	target := calendar_text_target(field)
 	if target == nil || len(target^) == 0 {return 0}
-	font := calendar_system_monospaced_font(11*calendar_ui.scale)
+	font := calendar_system_monospaced_font(CALENDAR_TEXT_BASE_SIZE*calendar_ui.scale)
 	if font == nil {return 0}
 	defer CFRelease(font)
 	run := calendar_text_run(font, target^)
@@ -524,7 +531,7 @@ calendar_text_offset_at_point :: proc(
 	rect := calendar_text_field_rect(field)
 	x := max(
 		0,
-		(point.x-rect.x-8+calendar_ui.input_state.scroll_x)*
+		(point.x-rect.x-calendar_field_prompt_inset()+calendar_ui.input_state.scroll_x)*
 		calendar_ui.scale,
 	)
 	utf16 := CTLineGetStringIndexForPosition(run.line, {x, 0})
@@ -585,14 +592,24 @@ calendar_draw_editable_text :: proc(
 	text, placeholder: string,
 	rect: Calendar_UI_Rect,
 	text_color, placeholder_color, caret_color: [4]f64,
-	inset := 8.0,
+	inset := 0.0,
 ) {
+	prompt_w := calendar_field_prompt_inset()
+	text_inset := inset if inset != 0 else prompt_w
 	if calendar_text_active_field() != field {
 		value, color := text, text_color
 		if len(value) == 0 {value, color = placeholder, placeholder_color}
-		calendar_draw_text(ctx, font, value, rect, color, inset)
+		calendar_draw_text(ctx, font, calendar_field_label(value, false), rect, color, 0)
 		return
 	}
+	calendar_draw_text(
+		ctx,
+		font,
+		CALENDAR_FIELD_PROMPT,
+		{rect.x, rect.y, prompt_w, rect.h},
+		text_color,
+		0,
+	)
 	run_text := text
 	if len(run_text) == 0 {run_text = " "}
 	run := calendar_text_run(font, run_text)
@@ -610,9 +627,9 @@ calendar_draw_editable_text :: proc(
 	scroll := text_input.update_horizontal_scroll(
 		&calendar_ui.input_state,
 		caret_advance,
-		max(0, rect.w-inset*2),
+		max(0, rect.w-text_inset-calendar_cell_width()),
 	)
-	origin_x := rect.x+inset-scroll
+	origin_x := rect.x+text_inset-scroll
 	origin_y := rect.y+
 	            (rect.h-(run.ascent+run.descent)/calendar_ui.scale)/2+
 	            run.descent/calendar_ui.scale
@@ -675,15 +692,18 @@ calendar_draw_editable_text :: proc(
 		}
 	}
 	if start == end {
-		calendar_fill_overlay_rect(
+		calendar_draw_text(
 			ctx,
+			font,
+			"█",
 			{
 				origin_x+caret_advance,
-				rect.y+5,
-				max(1/calendar_ui.scale, 0.5),
-				max(1, rect.h-10),
+				rect.y,
+				calendar_cell_width(),
+				rect.h,
 			},
 			caret_color,
+			0,
 		)
 	}
 }

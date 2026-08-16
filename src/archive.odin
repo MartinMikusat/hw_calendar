@@ -46,6 +46,17 @@ Calendar_Archive_Completion :: struct {
 	previous_due_at: string,
 }
 
+Calendar_Archive_Birthday :: struct {
+	id: i64,
+	name: string,
+	month: int,
+	day: int,
+	year: int,
+	advance_days: int,
+	created_at_ms: i64,
+	updated_at_ms: i64,
+}
+
 Calendar_Archive :: struct {
 	format: string,
 	version: int,
@@ -53,6 +64,7 @@ Calendar_Archive :: struct {
 	entries: [dynamic]Calendar_Archive_Entry,
 	proposals: [dynamic]Calendar_Archive_Proposal,
 	completion_history: [dynamic]Calendar_Archive_Completion,
+	birthdays: [dynamic]Calendar_Archive_Birthday,
 }
 
 Calendar_Archive_Summary :: struct {
@@ -60,6 +72,7 @@ Calendar_Archive_Summary :: struct {
 	entry_count: int,
 	proposal_count: int,
 	completion_count: int,
+	birthday_count: int,
 	earliest_date: i64,
 	latest_date: i64,
 }
@@ -149,6 +162,10 @@ calendar_archive_destroy :: proc(
 		delete(completion.previous_due_at, allocator)
 	}
 	delete(archive.completion_history)
+	for &birthday in archive.birthdays {
+		delete(birthday.name, allocator)
+	}
+	delete(archive.birthdays)
 	archive^ = {}
 }
 
@@ -162,6 +179,7 @@ calendar_archive_collect :: proc(
 		entries = make([dynamic]Calendar_Archive_Entry, allocator),
 		proposals = make([dynamic]Calendar_Archive_Proposal, allocator),
 		completion_history = make([dynamic]Calendar_Archive_Completion, allocator),
+		birthdays = make([dynamic]Calendar_Archive_Birthday, allocator),
 	}
 	loaded := false
 	defer if !loaded {calendar_archive_destroy(&archive, allocator)}
@@ -242,6 +260,22 @@ calendar_archive_collect :: proc(
 		})
 	}
 	sqlite3_finalize(history_statement)
+
+	birthdays := birthday_list(allocator)
+	defer delete(birthdays)
+	for &birthday in birthdays {
+		append(&archive.birthdays, Calendar_Archive_Birthday{
+			id = birthday.id,
+			name = birthday.name,
+			month = birthday.month,
+			day = birthday.day,
+			year = birthday.year,
+			advance_days = birthday.advance_days,
+			created_at_ms = birthday.created_at_ms,
+			updated_at_ms = birthday.updated_at_ms,
+		})
+	}
+
 	loaded = true
 	return archive, true
 }
@@ -268,6 +302,7 @@ calendar_archive_validate :: proc(
 	entry_ids := make(map[i64]bool, context.temp_allocator)
 	proposal_ids := make(map[i64]bool, context.temp_allocator)
 	history_ids := make(map[i64]bool, context.temp_allocator)
+	birthday_ids := make(map[i64]bool, context.temp_allocator)
 	entry_revisions := make(map[i64]int, context.temp_allocator)
 	earliest, latest := i64(0), i64(0)
 	for entry in archive.entries {
@@ -337,11 +372,23 @@ calendar_archive_validate :: proc(
 			return {}, .Invalid_Record
 		}
 	}
+	for birthday in archive.birthdays {
+		if birthday.id <= 0 || birthday_ids[birthday.id] {return {}, .Duplicate}
+		birthday_ids[birthday.id] = true
+		if len(strings.trim_space(birthday.name)) == 0 ||
+		   !birthday_date_valid(birthday.year, birthday.month, birthday.day) ||
+		   birthday.advance_days < 0 ||
+		   birthday.created_at_ms < 0 ||
+		   birthday.updated_at_ms < birthday.created_at_ms {
+			return {}, .Invalid_Record
+		}
+	}
 	return {
 		exported_at_unix = archive.exported_at_unix,
 		entry_count = len(archive.entries),
 		proposal_count = len(archive.proposals),
 		completion_count = len(archive.completion_history),
+		birthday_count = len(archive.birthdays),
 		earliest_date = earliest,
 		latest_date = latest,
 	}, .None
@@ -607,6 +654,27 @@ calendar_archive_insert_completion :: proc(
 	       sqlite3_step(statement) == SQLITE_DONE
 }
 
+calendar_archive_insert_birthday :: proc(
+	birthday: ^Calendar_Archive_Birthday,
+) -> bool {
+	statement, prepared := sqlite_prepare(calendar_database, `
+		INSERT INTO birthdays (
+			id, name, month, day, year, advance_days, created_at_ms, updated_at_ms
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+	`)
+	if !prepared {return false}
+	defer sqlite3_finalize(statement)
+	return sqlite3_bind_int64(statement, 1, birthday.id) == SQLITE_OK &&
+	       sqlite_bind_text_value(statement, 2, birthday.name) &&
+	       sqlite3_bind_int64(statement, 3, i64(birthday.month)) == SQLITE_OK &&
+	       sqlite3_bind_int64(statement, 4, i64(birthday.day)) == SQLITE_OK &&
+	       sqlite3_bind_int64(statement, 5, i64(birthday.year)) == SQLITE_OK &&
+	       sqlite3_bind_int64(statement, 6, i64(birthday.advance_days)) == SQLITE_OK &&
+	       sqlite3_bind_int64(statement, 7, birthday.created_at_ms) == SQLITE_OK &&
+	       sqlite3_bind_int64(statement, 8, birthday.updated_at_ms) == SQLITE_OK &&
+	       sqlite3_step(statement) == SQLITE_DONE
+}
+
 calendar_archive_restore_backup :: proc(path: string) -> bool {
 	calendar_database_close()
 	active := calendar_database_path()
@@ -632,7 +700,8 @@ calendar_archive_install :: proc(
 	defer if !committed {_ = sqlite_execute(calendar_database, "ROLLBACK;")}
 	if !sqlite_execute(calendar_database, "DELETE FROM agenda_completion_history;") ||
 	   !sqlite_execute(calendar_database, "DELETE FROM agenda_proposals;") ||
-	   !sqlite_execute(calendar_database, "DELETE FROM agenda_entries;") {
+	   !sqlite_execute(calendar_database, "DELETE FROM agenda_entries;") ||
+	   !sqlite_execute(calendar_database, "DELETE FROM birthdays;") {
 		return "", .Database
 	}
 	for &entry in archive.entries {
@@ -643,6 +712,9 @@ calendar_archive_install :: proc(
 	}
 	for &completion in archive.completion_history {
 		if !calendar_archive_insert_completion(&completion) {return "", .Database}
+	}
+	for &birthday in archive.birthdays {
+		if !calendar_archive_insert_birthday(&birthday) {return "", .Database}
 	}
 	if !calendar_archive_foreign_keys_valid(calendar_database) ||
 	   !sqlite_execute(calendar_database, "COMMIT;") {

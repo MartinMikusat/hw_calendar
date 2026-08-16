@@ -5,15 +5,19 @@ import "core:strings"
 import flash "flash:."
 
 calendar_ui_archive_import_rect :: proc() -> Calendar_UI_Rect {
-	width := min(560.0, calendar_ui.width-48)
-	height := 228.0
+	cell := calendar_cell_height()
+	pad := calendar_half_cell()
+	width := calendar_modal_width(560, calendar_ui.width)
+	height := cell*8+pad*2
 	return {(calendar_ui.width-width)/2, (calendar_ui.height-height)/2, width, height}
 }
 
 calendar_ui_archive_import_button_rect :: proc(index: int) -> Calendar_UI_Rect {
 	modal := calendar_ui_archive_import_rect()
-	width := (modal.w-56)/2
-	return {modal.x+24+f64(index)*(width+8), modal.y+24, width, 36}
+	gap := calendar_cell_width()
+	pad := calendar_half_cell()
+	width := (modal.w-pad*2-gap)/2
+	return {modal.x+pad+f64(index)*(width+gap), modal.y+pad, width, calendar_cell_height()}
 }
 
 calendar_ui_set_settings_message :: proc(message: string, is_error := false) {

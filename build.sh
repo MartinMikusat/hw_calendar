@@ -7,7 +7,7 @@ ICON_ROOT="$ROOT/resources/icons/iconoir"
 HOLIDAY_ROOT="$ROOT/resources/holidays"
 
 "$ROOT/scripts/dependencies.sh" check
-ODIN=$("$ROOT/scripts/dependencies.sh" path odin)
+ODIN=hw-odin
 LLVM_BIN=$("$ROOT/scripts/dependencies.sh" path llvm-bin)
 PATH="$LLVM_BIN:$PATH"
 export PATH
@@ -97,10 +97,6 @@ cd "$TEMP"
 cp "$INFO_PLIST_SOURCE" "$APP/Contents/Info.plist"
 cp "$ROOT/resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 cp "$ICON_ROOT/calendar.svg" "$APP/Contents/Resources/Icons/Iconoir/calendar.svg"
-cp "$ICON_ROOT/xmark.svg" "$APP/Contents/Resources/Icons/Iconoir/xmark.svg"
-cp "$ICON_ROOT/minus.svg" "$APP/Contents/Resources/Icons/Iconoir/minus.svg"
-cp "$ICON_ROOT/maximize.svg" "$APP/Contents/Resources/Icons/Iconoir/maximize.svg"
-cp "$ICON_ROOT/settings.svg" "$APP/Contents/Resources/Icons/Iconoir/settings.svg"
 cp "$ICON_ROOT/LICENSE" "$APP/Contents/Resources/Icons/Iconoir/LICENSE"
 cp "$HOLIDAY_ROOT/sk.json" "$APP/Contents/Resources/Holidays/sk.json"
 if [ "$MODE" = "release" ]; then

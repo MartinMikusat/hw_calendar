@@ -64,67 +64,6 @@ tag_commit() {
   printf '%s\n' "$commit"
 }
 
-ODIN_RELEASES="$TEMP_ROOT/odin-releases.json"
-curl -fsSL --retry 3 \
-  'https://api.github.com/repos/odin-lang/Odin/releases?per_page=20' \
-  -o "$ODIN_RELEASES"
-ODIN_TAG=$(jq -r '[.[] | select(.draft == false and .prerelease == false and (.tag_name | test("^dev-[0-9]{4}-[0-9]{2}[a-z]*$")))][0].tag_name // empty' "$ODIN_RELEASES")
-[ -n "$ODIN_TAG" ] || {
-  echo '[dependency-update] no official Odin monthly release was found' >&2
-  exit 1
-}
-ODIN_ASSET="odin-macos-arm64-$ODIN_TAG.tar.gz"
-ODIN_URL=$(jq -r --arg tag "$ODIN_TAG" --arg asset "$ODIN_ASSET" \
-  '.[] | select(.tag_name == $tag) | .assets[] | select(.name == $asset) | .browser_download_url' \
-  "$ODIN_RELEASES")
-[ -n "$ODIN_URL" ] || {
-  printf '[dependency-update] Odin release %s has no macOS ARM64 archive\n' "$ODIN_TAG" >&2
-  exit 1
-}
-ODIN_COMMIT=$(tag_commit https://github.com/odin-lang/Odin.git "$ODIN_TAG")
-ODIN_SHA=$(jq -r --arg tag "$ODIN_TAG" --arg asset "$ODIN_ASSET" \
-  '.[] | select(.tag_name == $tag) | .assets[] | select(.name == $asset) | .digest // empty' \
-  "$ODIN_RELEASES" | sed 's/^sha256://')
-mkdir -p "$DEPS_DIR/downloads"
-if [ -n "$ODIN_SHA" ]; then
-  ODIN_ARCHIVE="$DEPS_DIR/downloads/odin-$ODIN_TAG-$ODIN_SHA.tar.gz"
-  if [ ! -f "$ODIN_ARCHIVE" ] || [ "$(checksum "$ODIN_ARCHIVE")" != "$ODIN_SHA" ]; then
-    ODIN_DOWNLOAD="$TEMP_ROOT/$ODIN_ASSET"
-    curl -fL --retry 3 -o "$ODIN_DOWNLOAD" "$ODIN_URL"
-    [ "$(checksum "$ODIN_DOWNLOAD")" = "$ODIN_SHA" ] || {
-      echo '[dependency-update] Odin archive checksum mismatch' >&2
-      exit 1
-    }
-    mv "$ODIN_DOWNLOAD" "$ODIN_ARCHIVE"
-  fi
-else
-  ODIN_ARCHIVE="$TEMP_ROOT/$ODIN_ASSET"
-  curl -fL --retry 3 -o "$ODIN_ARCHIVE" "$ODIN_URL"
-  ODIN_SHA=$(checksum "$ODIN_ARCHIVE")
-fi
-ODIN_EXTRACT="$TEMP_ROOT/odin"
-mkdir -p "$ODIN_EXTRACT"
-tar -xzf "$ODIN_ARCHIVE" -C "$ODIN_EXTRACT"
-ODIN_ROOT=$(find "$ODIN_EXTRACT" -mindepth 1 -maxdepth 1 -type d -print -quit)
-[ -n "$ODIN_ROOT" ] && [ -x "$ODIN_ROOT/odin" ] || {
-  echo '[dependency-update] Odin archive has an invalid layout' >&2
-  exit 1
-}
-ODIN_BINARY_SHORT=$("$ODIN_ROOT/odin" version | sed -n 's/.*:\([0-9a-f][0-9a-f]*\)$/\1/p')
-[ -n "$ODIN_BINARY_SHORT" ] || {
-  echo '[dependency-update] Odin binary does not report its source commit' >&2
-  exit 1
-}
-ODIN_BINARY_METADATA="$TEMP_ROOT/odin-binary-commit.json"
-curl -fsSL --retry 3 \
-  "https://api.github.com/repos/odin-lang/Odin/commits/$ODIN_BINARY_SHORT" \
-  -o "$ODIN_BINARY_METADATA"
-ODIN_BINARY_COMMIT=$(jq -r '.sha // empty' "$ODIN_BINARY_METADATA")
-[ -n "$ODIN_BINARY_COMMIT" ] || {
-  echo '[dependency-update] Odin binary commit does not resolve in the official repository' >&2
-  exit 1
-}
-
 LLVM_FORMULA="$TEMP_ROOT/llvm-formula.json"
 brew info --json=v2 llvm > "$LLVM_FORMULA"
 LLVM_VERSION=$(jq -r '.formulae[0].versions.stable // empty' "$LLVM_FORMULA")
@@ -182,7 +121,7 @@ ICONOIR_ROOT=$(find "$ICONOIR_EXTRACT" -mindepth 1 -maxdepth 1 -type d -print -q
   echo '[dependency-update] Iconoir archive has an invalid layout' >&2
   exit 1
 }
-for name in calendar.svg maximize.svg minus.svg settings.svg xmark.svg; do
+for name in calendar.svg; do
   cp "$ICONOIR_ROOT/icons/regular/$name" "$ICON_TARGET/$name"
 done
 cp "$ICONOIR_ROOT/LICENSE" "$ICON_TARGET/LICENSE"
@@ -191,10 +130,6 @@ CANDIDATE_LOCK="$WORKTREE/dependencies.lock"
 {
   printf '# hw_calendar dependency lock, format 2.\n'
   printf 'lock-version 2\n\n'
-  printf '# Official Odin monthly release for macOS ARM64.\n'
-  printf 'odin %s %s %s %s macos-arm64\n' \
-    "$ODIN_TAG" "$ODIN_COMMIT" "$ODIN_URL" "$ODIN_SHA"
-  printf 'odin-binary %s\n\n' "$ODIN_BINARY_COMMIT"
   printf 'llvm %s %s %s homebrew-arm64\n\n' \
     "$LLVM_VERSION" "$LLVM_URL" "$LLVM_SHA"
   printf 'llvm-file clang %s\n' "$LLVM_CLANG_SHA"
@@ -212,7 +147,7 @@ CANDIDATE_LOCK="$WORKTREE/dependencies.lock"
   printf '\n# Bundled Iconoir release and file checksums.\n'
   printf 'iconoir %s %s %s %s\n' \
     "$ICONOIR_TAG" "$ICONOIR_COMMIT" "$ICONOIR_URL" "$ICONOIR_SHA"
-  for name in calendar.svg maximize.svg minus.svg settings.svg xmark.svg LICENSE; do
+  for name in calendar.svg LICENSE; do
     printf 'iconoir-file %s %s\n' "$name" "$(checksum "$ICON_TARGET/$name")"
   done
 } > "$CANDIDATE_LOCK"
@@ -229,7 +164,6 @@ sed -i '' -E \
 
 if git -C "$WORKTREE" diff --quiet; then
   printf '[dependency-update] no dependency changes from %s\n' "$BASE_COMMIT"
-  printf 'odin: %s %s\n' "$ODIN_TAG" "$ODIN_COMMIT"
   printf 'llvm: %s %s\n' "$LLVM_VERSION" "$LLVM_SHA"
   printf 'iconoir: %s %s\n' "$ICONOIR_TAG" "$ICONOIR_COMMIT"
   exit 0
@@ -249,7 +183,6 @@ do
 done
 
 printf '[dependency-update] validating candidate from %s\n' "$BASE_COMMIT"
-printf 'odin: %s %s\n' "$ODIN_TAG" "$ODIN_COMMIT"
 printf 'llvm: %s %s\n' "$LLVM_VERSION" "$LLVM_SHA"
 printf 'iconoir: %s %s\n' "$ICONOIR_TAG" "$ICONOIR_COMMIT"
 

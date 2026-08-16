@@ -107,6 +107,16 @@ calendar_database_create_schema :: proc() -> bool {
 		);
 		CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 		CREATE TABLE IF NOT EXISTS calendar_preferences (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+		CREATE TABLE IF NOT EXISTS birthdays (
+			id INTEGER PRIMARY KEY,
+			name TEXT NOT NULL,
+			month INTEGER NOT NULL,
+			day INTEGER NOT NULL,
+			year INTEGER NOT NULL DEFAULT 0,
+			advance_days INTEGER NOT NULL DEFAULT 0,
+			created_at_ms INTEGER NOT NULL,
+			updated_at_ms INTEGER NOT NULL
+		);
 		PRAGMA user_version=1;
 	`)
 }

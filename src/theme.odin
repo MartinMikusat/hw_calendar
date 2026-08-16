@@ -1,6 +1,22 @@
 package main
 
-import hal_ui "ui_framework:hal_wayland"
+import "core:fmt"
+
+CALENDAR_BODY_SIZE :: 10.5
+CALENDAR_LINE_HEIGHT :: 1.2
+CALENDAR_TRACKING :: -0.45
+CALENDAR_CELL_WIDTH :: 7.0
+CALENDAR_CELL_HEIGHT :: CALENDAR_BODY_SIZE * CALENDAR_LINE_HEIGHT
+CALENDAR_CHROME_HEIGHT :: CALENDAR_CELL_HEIGHT
+CALENDAR_HAIRLINE_MIX :: 0.75
+CALENDAR_TICK_WIDTH :: 2.0
+CALENDAR_BANNER_ACCENT :: 3.0
+CALENDAR_DIM_ALPHA :: 0.45
+CALENDAR_CHROME_BUTTON_CHARS :: 3
+CALENDAR_PAPER :: [4]f32{250.0 / 255.0, 250.0 / 255.0, 249.0 / 255.0, 1}
+CALENDAR_INK :: [4]f32{16.0 / 255.0, 16.0 / 255.0, 16.0 / 255.0, 1}
+CALENDAR_LIGHT_DESTRUCTIVE :: [4]f32{168.0 / 255.0, 32.0 / 255.0, 28.0 / 255.0, 1}
+CALENDAR_DARK_DESTRUCTIVE :: [4]f32{208.0 / 255.0, 64.0 / 255.0, 56.0 / 255.0, 1}
 
 Calendar_Theme_ID :: enum {
 	HW_Light,
@@ -23,6 +39,7 @@ Calendar_UI_Theme :: struct {
 	text_soft: [4]f32,
 	muted: [4]f32,
 	inverse: [4]f32,
+	hairline: [4]f32,
 	warm: [4]f32,
 	warm_strong: [4]f32,
 	cool: [4]f32,
@@ -38,7 +55,39 @@ Calendar_UI_Theme :: struct {
 }
 
 calendar_color :: proc(r, g, b: u8) -> [4]f32 {
-	return {f32(r)/255, f32(g)/255, f32(b)/255, 1}
+	return {f32(r) / 255, f32(g) / 255, f32(b) / 255, 1}
+}
+
+calendar_blend :: proc(base, accent: [4]f32, amount: f32) -> [4]f32 {
+	t := clamp(amount, 0, 1)
+	return {
+		base[0] + (accent[0] - base[0]) * t,
+		base[1] + (accent[1] - base[1]) * t,
+		base[2] + (accent[2] - base[2]) * t,
+		base[3] + (accent[3] - base[3]) * t,
+	}
+}
+
+calendar_hairline :: proc(paper, ink: [4]f32) -> [4]f32 {
+	return calendar_blend(paper, ink, CALENDAR_HAIRLINE_MIX)
+}
+
+calendar_bracket :: proc(label: string) -> string {
+	return fmt.tprintf("[%s]", label)
+}
+
+calendar_field_label :: proc(sample: string, focused: bool) -> string {
+	caret := "_"
+	if focused {caret = "█"}
+	return fmt.tprintf("> %s%s", sample, caret)
+}
+
+calendar_toggle_mark :: proc(checked: bool) -> string {
+	return "[x]" if checked else "[ ]"
+}
+
+calendar_chrome_button_width :: proc() -> f64 {
+	return CALENDAR_CELL_WIDTH * CALENDAR_CHROME_BUTTON_CHARS
 }
 
 calendar_color64 :: proc(color: [4]f32) -> [4]f64 {
@@ -46,36 +95,44 @@ calendar_color64 :: proc(color: [4]f32) -> [4]f64 {
 }
 
 calendar_theme :: proc(id: Calendar_Theme_ID) -> Calendar_UI_Theme {
-	shared_id := id == .HW_Dark ? hal_ui.Theme_ID.HW_Dark : hal_ui.Theme_ID.HW_Light
-	shared := hal_ui.palette(shared_id)
+	paper := CALENDAR_PAPER
+	ink := CALENDAR_INK
+	destructive := CALENDAR_LIGHT_DESTRUCTIVE
+	if id == .HW_Dark {
+		paper = CALENDAR_INK
+		ink = CALENDAR_PAPER
+		destructive = CALENDAR_DARK_DESTRUCTIVE
+	}
+	muted := calendar_blend(ink, paper, 0.50)
 	return {
 		id = id,
-		name = id == .HW_Dark ? "HW Dark" : "HW Light",
+		name = id == .HW_Dark ? "Dark" : "Light",
 		storage_id = id == .HW_Dark ? "hw-dark" : "hw-light",
 		dark = id == .HW_Dark,
-		canvas = shared.canvas,
-		header = shared.header,
-		surface = shared.surface,
-		raised = shared.raised,
-		control = shared.field,
-		modal = shared.modal,
-		overlay = shared.backdrop,
-		text = shared.text,
-		text_soft = shared.text_soft,
-		muted = shared.muted,
-		inverse = calendar_color(247, 242, 224),
-		warm = shared.primary,
-		warm_strong = shared.destructive,
-		cool = shared.alternate,
-		cool_strong = shared.focus,
-		focus = shared.focus,
-		personal = calendar_color(127, 75, 48),
-		work = calendar_color(23, 49, 37),
-		important = calendar_color(178, 125, 87),
-		holiday = calendar_color(178, 125, 87),
-		memorial = calendar_color(125, 135, 105),
-		positive = shared.positive,
-		destructive = shared.destructive,
+		canvas = paper,
+		header = paper,
+		surface = paper,
+		raised = paper,
+		control = paper,
+		modal = paper,
+		overlay = {0, 0, 0, CALENDAR_DIM_ALPHA},
+		text = ink,
+		text_soft = calendar_blend(ink, paper, 0.30),
+		muted = muted,
+		inverse = paper,
+		hairline = calendar_hairline(paper, ink),
+		warm = ink,
+		warm_strong = destructive,
+		cool = ink,
+		cool_strong = ink,
+		focus = ink,
+		personal = ink,
+		work = ink,
+		important = ink,
+		holiday = muted,
+		memorial = muted,
+		positive = ink,
+		destructive = destructive,
 	}
 }
 

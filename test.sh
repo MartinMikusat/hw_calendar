@@ -3,7 +3,7 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 "$ROOT/scripts/dependencies.sh" check
-ODIN=$("$ROOT/scripts/dependencies.sh" path odin)
+ODIN=hw-odin
 LLVM_BIN=$("$ROOT/scripts/dependencies.sh" path llvm-bin)
 PATH="$LLVM_BIN:$PATH"
 export PATH

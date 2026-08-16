@@ -14,6 +14,10 @@ calendar_theme_registry_has_stable_unique_identifiers_test :: proc(t: ^testing.T
 		testing.expect_value(t, theme.id, id)
 		testing.expect_value(t, theme.canvas[3], f32(1))
 		testing.expect_value(t, theme.text[3], f32(1))
+		testing.expect_value(t, theme.personal, theme.text)
+		testing.expect_value(t, theme.cool, theme.text)
+		testing.expect_value(t, theme.positive, theme.text)
+		testing.expect(t, theme.destructive != theme.text)
 	}
 	testing.expect_value(t, len(seen), 2)
 }

@@ -239,6 +239,7 @@ chore_due_and_rolling_completion_test :: proc(t: ^testing.T) {
 	agenda_entries_destroy(&calendar_ui.entries)
 	delete(calendar_ui.occurrences)
 	agenda_entries_destroy(&calendar_ui.due_entries)
+	birthday_upcoming_destroy(&calendar_ui.birthday_upcoming)
 }
 
 agenda_completion_recent :: proc(entry_id: i64, allocator := context.allocator) -> (string, bool) {

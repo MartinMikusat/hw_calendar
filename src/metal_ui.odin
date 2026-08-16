@@ -18,8 +18,6 @@ import framework_ui "ui_framework:core"
 import framework_draw "ui_framework:draw"
 import framework_macos "ui_framework:macos"
 import framework_metal "ui_framework:metal"
-import hal_ui "ui_framework:hal_wayland"
-
 foreign import metal "system:Metal.framework"
 foreign metal {
 	MTLCreateSystemDefaultDevice :: proc "c" () -> Id ---
@@ -331,6 +329,7 @@ Calendar_UI_State :: struct {
 	editor_all_day: bool,
 	editor_initial_hash: u64,
 	due_entries: [dynamic]Agenda_Entry,
+	birthday_upcoming: [dynamic]Birthday_Upcoming,
 	next_chore_due_stamp: i64,
 	chore_open: bool,
 	chore_name: string,
@@ -420,8 +419,8 @@ calendar_ordered_destroy :: proc() {
 	calendar_ordered_ready = false
 }
 
-CALENDAR_HEADER_HEIGHT :: f64(hal_ui.METRICS.header_height)
-CALENDAR_HEADER_CONTROL_HEIGHT :: f64(hal_ui.METRICS.window_control)
+CALENDAR_HEADER_HEIGHT :: CALENDAR_CHROME_HEIGHT
+CALENDAR_HEADER_CONTROL_HEIGHT :: CALENDAR_CELL_HEIGHT
 CALENDAR_EVENT_MODIFIER_SHIFT :: uint(1 << 17)
 CALENDAR_EVENT_MODIFIER_OPTION :: uint(1 << 19)
 CALENDAR_EVENT_MODIFIER_COMMAND :: uint(1 << 20)
@@ -429,27 +428,288 @@ CALENDAR_EVENT_TYPE_KEY_DOWN :: uint(10)
 CALENDAR_EVENT_TYPE_KEY_UP :: uint(11)
 CALENDAR_DEFAULT_WINDOW_WIDTH :: 1280.0
 CALENDAR_DEFAULT_WINDOW_HEIGHT :: 760.0
-CALENDAR_DAY_ROW_HEIGHT :: 28.0
-CALENDAR_DAY_ROW_PITCH :: 30.0
-CALENDAR_LAYOUT_MARGIN :: f64(hal_ui.METRICS.margin)
-CALENDAR_PANEL_GAP :: f64(hal_ui.METRICS.gap)
+CALENDAR_DAY_ROW_HEIGHT :: CALENDAR_CELL_HEIGHT * 2
+CALENDAR_DAY_ROW_PITCH :: CALENDAR_CELL_HEIGHT * 2
+CALENDAR_LAYOUT_MARGIN :: CALENDAR_CELL_HEIGHT
+CALENDAR_PANEL_GAP :: CALENDAR_CELL_WIDTH
 CALENDAR_DAY_TOP_GAP :: CALENDAR_LAYOUT_MARGIN
-CALENDAR_ACTION_BAR_HEIGHT :: 28.0
-CALENDAR_ACTION_BAR_GAP :: 6.0
-CALENDAR_ACTION_BAR_ROW_GAP :: 6.0
+CALENDAR_ACTION_BAR_HEIGHT :: CALENDAR_CELL_HEIGHT
+CALENDAR_ACTION_BAR_GAP :: CALENDAR_CELL_WIDTH
+CALENDAR_ACTION_BAR_ROW_GAP :: CALENDAR_CELL_HEIGHT
 CALENDAR_ACTION_BAR_BOTTOM :: CALENDAR_LAYOUT_MARGIN
 CALENDAR_WINDOW_STYLE :: uint(14)
 CALENDAR_WINDOW_MINIMIZE_STYLE :: uint(15)
 CALENDAR_WINDOW_RESIZE_INSET :: 6.0
-CALENDAR_TEXT_BASE_SIZE :: 11.0
+CALENDAR_TEXT_BASE_SIZE :: CALENDAR_BODY_SIZE
+CALENDAR_FIELD_PROMPT :: "> "
+CALENDAR_DIALOG_VIEWPORT_INSET :: 48.0
+CALENDAR_DIALOG_MIN_WIDTH :: 240.0
+CALENDAR_DIALOG_MAX_WIDTH :: 420.0
+CALENDAR_CARD_PAD_CELLS :: 0.5
+
+calendar_measured_cell_width: f64
+
+Calendar_Action_Bar_Item :: struct {
+	minimum_width: f64,
+	section:       int,
+}
+
+Calendar_Action_Bar_Result :: struct {
+	row_count:       int,
+	first_row_count: int,
+	required_width:  f64,
+	required_height: f64,
+	fits:            bool,
+}
+
+calendar_cell_width :: proc() -> f64 {
+	if calendar_measured_cell_width > 0 {return calendar_measured_cell_width}
+	return CALENDAR_CELL_WIDTH
+}
+
+calendar_cell_height :: proc() -> f64 {
+	return CALENDAR_CELL_HEIGHT
+}
+
+calendar_half_cell :: proc() -> f64 {
+	return calendar_cell_height()*CALENDAR_CARD_PAD_CELLS
+}
+
+calendar_field_prompt_inset :: proc() -> f64 {
+	return f64(len(CALENDAR_FIELD_PROMPT))*calendar_cell_width()
+}
+
+calendar_label_width :: proc(text: string) -> f64 {
+	return f64(len(text))*calendar_cell_width()
+}
+
+calendar_refresh_cell_width :: proc() {
+	font := calendar_system_monospaced_font(CALENDAR_TEXT_BASE_SIZE*max(calendar_ui.scale, 1))
+	if font == nil {return}
+	defer CFRelease(font)
+	run := calendar_text_run(font, "0")
+	if run.line == nil {return}
+	defer CFRelease(run.line)
+	if run.advance <= 0 {return}
+	calendar_measured_cell_width = run.advance/max(calendar_ui.scale, 1)
+}
+
+calendar_dialog_width :: proc(preferred, view_width: f64) -> f64 {
+	inset := CALENDAR_DIALOG_VIEWPORT_INSET*2
+	available := max(CALENDAR_DIALOG_MIN_WIDTH, view_width-inset)
+	width := min(preferred, available)
+	width = min(width, CALENDAR_DIALOG_MAX_WIDTH)
+	return max(CALENDAR_DIALOG_MIN_WIDTH, width)
+}
+
+calendar_modal_width :: proc(preferred, view_width: f64) -> f64 {
+	inset := CALENDAR_DIALOG_VIEWPORT_INSET*2
+	available := max(CALENDAR_DIALOG_MIN_WIDTH, view_width-inset)
+	return max(CALENDAR_DIALOG_MIN_WIDTH, min(preferred, available))
+}
+
+calendar_window_control_labels :: proc() -> [4]string {
+	return {"x", "-", "+", "set"}
+}
+
+CALENDAR_ACTION_NUMBER_SCALE :: 0.75
+
+calendar_action_number_width :: proc(number: int) -> f64 {
+	text := fmt.tprintf("%d", number)
+	return f64(len(text))*calendar_cell_width()*CALENDAR_ACTION_NUMBER_SCALE
+}
+
+calendar_numbered_action_width :: proc(number: int, label: string) -> f64 {
+	// `[` + scaled digits + ` LABEL]`
+	return calendar_label_width("[")+
+	       calendar_action_number_width(number)+
+	       calendar_label_width(fmt.tprintf(" %s]", label))
+}
+
+calendar_action_bar_labels :: proc() -> [7]string {
+	return {
+		"EDIT",
+		"OPEN URL",
+		"DISMISS",
+		"COMPLETE",
+		"CONFIRM",
+		"REJECT",
+		"NEW CHORE",
+	}
+}
+
+calendar_action_bar_codes :: proc() -> [7]int {
+	return {11, 12, 13, 14, 15, 16, 21}
+}
+
+calendar_action_bar_caption :: proc(index: int) -> string {
+	labels := calendar_action_bar_labels()
+	codes := calendar_action_bar_codes()
+	if index < 0 || index >= len(labels) {return ""}
+	return calendar_bracket(fmt.tprintf("%d %s", codes[index], labels[index]))
+}
+
+calendar_action_bar_item_width :: proc(index: int) -> f64 {
+	labels := calendar_action_bar_labels()
+	codes := calendar_action_bar_codes()
+	if index < 0 || index >= len(labels) {return 0}
+	return calendar_numbered_action_width(codes[index], labels[index])
+}
+
+calendar_action_bar_row_required_width :: proc(
+	items: []Calendar_Action_Bar_Item,
+	start, count: int,
+	item_gap, section_gap: f64,
+) -> f64 {
+	if count <= 0 {return 0}
+	result: f64
+	for offset in 0..<count {
+		index := start+offset
+		result += max(f64(0), items[index].minimum_width)
+		if offset+1 < count {
+			gap := item_gap
+			if items[index].section != items[index+1].section {
+				gap = section_gap
+			}
+			result += max(f64(0), gap)
+		}
+	}
+	return result
+}
+
+calendar_action_bar_layout_row :: proc(
+	bounds: Calendar_UI_Rect,
+	row_height: f64,
+	items: []Calendar_Action_Bar_Item,
+	rects: []Calendar_UI_Rect,
+	start, count: int,
+	y, required_width, item_gap, section_gap: f64,
+) {
+	// Keep each control at its caption width, matching header chrome buttons.
+	// Stretching leftover footer space made these look larger than [TODAY]/[SEARCH].
+	_ = required_width
+	if count <= 0 {return}
+	x := bounds.x
+	for offset in 0..<count {
+		index := start+offset
+		width := max(f64(0), items[index].minimum_width)
+		rects[index] = {x, y, width, row_height}
+		x += width
+		if offset+1 < count {
+			gap := item_gap
+			if items[index].section != items[index+1].section {
+				gap = section_gap
+			}
+			x += max(f64(0), gap)
+		}
+	}
+}
+
+calendar_action_bar_layout :: proc(
+	bounds: Calendar_UI_Rect,
+	row_height, item_gap, section_gap, row_gap: f64,
+	items: []Calendar_Action_Bar_Item,
+	rects: []Calendar_UI_Rect,
+) -> Calendar_Action_Bar_Result {
+	result := Calendar_Action_Bar_Result{fits = len(items) == 0}
+	if len(items) == 0 {return result}
+	if len(rects) < len(items) || bounds.w < 0 || row_height <= 0 {return result}
+	one_row_width := calendar_action_bar_row_required_width(
+		items,
+		0,
+		len(items),
+		item_gap,
+		section_gap,
+	)
+	if one_row_width <= bounds.w {
+		result = {
+			row_count = 1,
+			first_row_count = len(items),
+			required_width = one_row_width,
+			required_height = row_height,
+			fits = true,
+		}
+		calendar_action_bar_layout_row(
+			bounds,
+			row_height,
+			items,
+			rects,
+			0,
+			len(items),
+			bounds.y,
+			one_row_width,
+			item_gap,
+			section_gap,
+		)
+		return result
+	}
+	if len(items) == 1 {
+		return {
+			row_count = 1,
+			first_row_count = 1,
+			required_width = one_row_width,
+			required_height = row_height,
+			fits = false,
+		}
+	}
+	first_count := (len(items)+1)/2
+	second_count := len(items)-first_count
+	first_width := calendar_action_bar_row_required_width(
+		items,
+		0,
+		first_count,
+		item_gap,
+		section_gap,
+	)
+	second_width := calendar_action_bar_row_required_width(
+		items,
+		first_count,
+		second_count,
+		item_gap,
+		section_gap,
+	)
+	result = {
+		row_count = 2,
+		first_row_count = first_count,
+		required_width = max(first_width, second_width),
+		required_height = row_height*2+max(f64(0), row_gap),
+		fits = first_width <= bounds.w && second_width <= bounds.w,
+	}
+	if !result.fits {return result}
+	calendar_action_bar_layout_row(
+		bounds,
+		row_height,
+		items,
+		rects,
+		0,
+		first_count,
+		bounds.y+row_height+max(f64(0), row_gap),
+		first_width,
+		item_gap,
+		section_gap,
+	)
+	calendar_action_bar_layout_row(
+		bounds,
+		row_height,
+		items,
+		rects,
+		first_count,
+		second_count,
+		bounds.y,
+		second_width,
+		item_gap,
+		section_gap,
+	)
+	return result
+}
 
 calendar_text_style_spec :: proc(style: Calendar_Text_Style) -> Calendar_Text_Style_Spec {
 	switch style {
-	case .Label: return {size_scale=0.7, weight=0, tracking=0}
-	case .Body: return {size_scale=1, weight=0, tracking=-0.45}
-	case .Heading: return {size_scale=2, weight=0.35, tracking=-0.7}
+	case .Label: return {size_scale=1, weight=0, tracking=CALENDAR_TRACKING}
+	case .Body: return {size_scale=1, weight=0, tracking=CALENDAR_TRACKING}
+	case .Heading: return {size_scale=2, weight=0, tracking=CALENDAR_TRACKING}
 	}
-	return {size_scale=1}
+	return {size_scale=1, tracking=CALENDAR_TRACKING}
 }
 CALENDAR_WINDOW_MIN_WIDTH :: 640.0
 CALENDAR_WINDOW_MIN_HEIGHT :: 480.0
@@ -1043,11 +1303,14 @@ calendar_ui_header_rect :: proc() -> Calendar_UI_Rect {
 }
 
 calendar_ui_title_rect :: proc() -> Calendar_UI_Rect {
+	settings := calendar_ui_window_control_rect(3)
+	today := calendar_ui_today_rect()
+	title_x := settings.x+settings.w+calendar_cell_width()
 	return {
-		160,
-		calendar_ui.height-CALENDAR_HEADER_CONTROL_HEIGHT-1,
-		360,
-		CALENDAR_HEADER_CONTROL_HEIGHT,
+		title_x,
+		calendar_ui.height-calendar_cell_height(),
+		max(0, today.x-calendar_cell_width()-title_x),
+		calendar_cell_height(),
 	}
 }
 
@@ -1055,8 +1318,20 @@ calendar_ui_window_control_rect_for_height :: proc(
 	index: int,
 	height: f64,
 ) -> Calendar_UI_Rect {
-	rect := hal_ui.window_control_rect(index, f32(height))
-	return {f64(rect.x), f64(rect.y), f64(rect.w), f64(rect.h)}
+	labels := calendar_window_control_labels()
+	if index < 0 || index >= len(labels) {return {}}
+	gap := calendar_cell_width()
+	btn_h := calendar_cell_height()
+	x := 0.0
+	for control_index in 0..<index {
+		x += calendar_label_width(calendar_bracket(labels[control_index]))+gap
+	}
+	return {
+		x,
+		height-btn_h,
+		calendar_label_width(calendar_bracket(labels[index])),
+		btn_h,
+	}
 }
 
 calendar_ui_window_control_rect :: proc(index: int) -> Calendar_UI_Rect {
@@ -1064,8 +1339,7 @@ calendar_ui_window_control_rect :: proc(index: int) -> Calendar_UI_Rect {
 }
 
 calendar_ui_window_icon_rect :: proc(index: int) -> Calendar_UI_Rect {
-	rect := hal_ui.window_icon_rect(index, f32(calendar_ui.height))
-	return {f64(rect.x), f64(rect.y), f64(rect.w), f64(rect.h)}
+	return calendar_ui_window_control_rect(index)
 }
 
 calendar_ui_settings_rect :: proc() -> Calendar_UI_Rect {
@@ -1073,8 +1347,7 @@ calendar_ui_settings_rect :: proc() -> Calendar_UI_Rect {
 }
 
 calendar_ui_settings_icon_rect :: proc() -> Calendar_UI_Rect {
-	control := calendar_ui_settings_rect()
-	return {control.x+6, control.y+6, 18, 18}
+	return calendar_ui_settings_rect()
 }
 
 calendar_ui_is_window_action :: proc(action: Calendar_UI_Action) -> bool {
@@ -1083,31 +1356,34 @@ calendar_ui_is_window_action :: proc(action: Calendar_UI_Action) -> bool {
 	       action == .Window_Zoom
 }
 
-calendar_ui_today_rect :: proc() -> Calendar_UI_Rect {
+calendar_ui_header_action_rect :: proc(from_right: int, label: string) -> Calendar_UI_Rect {
+	gap := calendar_cell_width()
+	width := calendar_label_width(calendar_bracket(label))
+	x := calendar_ui.width
+	labels := [3]string{"NEW EVENT", "SEARCH", "TODAY"}
+	for index in 0..=from_right {
+		item_width := calendar_label_width(calendar_bracket(labels[index]))
+		x -= item_width
+		if index < from_right {x -= gap}
+	}
 	return {
-		calendar_ui.width-270,
-		calendar_ui.height-CALENDAR_HEADER_CONTROL_HEIGHT-1,
-		76,
+		x,
+		calendar_ui.height-CALENDAR_HEADER_CONTROL_HEIGHT,
+		width,
 		CALENDAR_HEADER_CONTROL_HEIGHT,
 	}
+}
+
+calendar_ui_today_rect :: proc() -> Calendar_UI_Rect {
+	return calendar_ui_header_action_rect(2, "TODAY")
 }
 
 calendar_ui_search_rect :: proc() -> Calendar_UI_Rect {
-	return {
-		calendar_ui.width-186,
-		calendar_ui.height-CALENDAR_HEADER_CONTROL_HEIGHT-1,
-		88,
-		CALENDAR_HEADER_CONTROL_HEIGHT,
-	}
+	return calendar_ui_header_action_rect(1, "SEARCH")
 }
 
 calendar_ui_new_rect :: proc() -> Calendar_UI_Rect {
-	return {
-		calendar_ui.width-90,
-		calendar_ui.height-CALENDAR_HEADER_CONTROL_HEIGHT-1,
-		90,
-		CALENDAR_HEADER_CONTROL_HEIGHT,
-	}
+	return calendar_ui_header_action_rect(0, "NEW EVENT")
 }
 
 calendar_ui_visible_day_count_for_size :: proc(width, height: f64) -> int {
@@ -1174,44 +1450,31 @@ calendar_ui_details_rect :: proc() -> Calendar_UI_Rect {
 
 calendar_ui_action_bar_layout_for_width :: proc(
 	view_width: f64,
-) -> ([7]Calendar_UI_Rect, hal_ui.Action_Bar_Result) {
-	items := [7]hal_ui.Action_Bar_Item{
-		{90, 1},
-		{110, 1},
-		{110, 1},
-		{120, 1},
-		{110, 1},
-		{100, 1},
-		{130, 2},
-	}
-	shared_rects: [7]framework_draw.Rect
-	rects: [7]Calendar_UI_Rect
-	result := hal_ui.action_bar_layout(
-		{
-			bounds = {
-				f32(CALENDAR_LAYOUT_MARGIN),
-				f32(CALENDAR_ACTION_BAR_BOTTOM),
-				f32(view_width-CALENDAR_LAYOUT_MARGIN*2),
-				0,
-			},
-			row_height = f32(CALENDAR_ACTION_BAR_HEIGHT),
-			item_gap = f32(CALENDAR_ACTION_BAR_GAP),
-			section_gap = f32(CALENDAR_ACTION_BAR_GAP*2),
-			row_gap = f32(CALENDAR_ACTION_BAR_ROW_GAP),
-		},
-		items[:],
-		shared_rects[:],
-	)
-	if result.fits {
-		for rect, index in shared_rects {
-			rects[index] = {
-				f64(rect.x),
-				f64(rect.y),
-				f64(rect.w),
-				f64(rect.h),
-			}
+) -> ([7]Calendar_UI_Rect, Calendar_Action_Bar_Result) {
+	items: [7]Calendar_Action_Bar_Item
+	for index in 0..<7 {
+		section := 1
+		if index == 6 {section = 2}
+		items[index] = {
+			minimum_width = calendar_action_bar_item_width(index),
+			section = section,
 		}
 	}
+	rects: [7]Calendar_UI_Rect
+	result := calendar_action_bar_layout(
+		{
+			CALENDAR_LAYOUT_MARGIN,
+			CALENDAR_ACTION_BAR_BOTTOM,
+			view_width-CALENDAR_LAYOUT_MARGIN*2,
+			0,
+		},
+		CALENDAR_ACTION_BAR_HEIGHT,
+		CALENDAR_ACTION_BAR_GAP,
+		CALENDAR_ACTION_BAR_GAP*2,
+		CALENDAR_ACTION_BAR_ROW_GAP,
+		items[:],
+		rects[:],
+	)
 	return rects, result
 }
 
@@ -1234,8 +1497,10 @@ calendar_ui_action_rect :: proc(index: int) -> Calendar_UI_Rect {
 }
 
 calendar_ui_archive_modal_rect :: proc() -> Calendar_UI_Rect {
-	width := min(560.0, calendar_ui.width-48)
-	height := 210.0
+	cell := calendar_cell_height()
+	pad := calendar_half_cell()
+	width := calendar_modal_width(560, calendar_ui.width)
+	height := cell*8+pad*2
 	return {
 		(calendar_ui.width-width)/2,
 		(calendar_ui.height-height)/2,
@@ -1246,13 +1511,14 @@ calendar_ui_archive_modal_rect :: proc() -> Calendar_UI_Rect {
 
 calendar_ui_archive_button_rect :: proc(index, count: int) -> Calendar_UI_Rect {
 	modal := calendar_ui_archive_modal_rect()
-	gap := 8.0
-	width := (modal.w-48-gap*f64(count-1))/f64(count)
+	gap := calendar_cell_width()
+	pad := calendar_half_cell()
+	width := (modal.w-pad*2-gap*f64(count-1))/f64(count)
 	return {
-		modal.x+24+f64(index)*(width+gap),
-		modal.y+24,
+		modal.x+pad+f64(index)*(width+gap),
+		modal.y+pad,
 		width,
-		34,
+		calendar_cell_height(),
 	}
 }
 
@@ -1326,15 +1592,16 @@ calendar_ui_event_rect :: proc(
 	visible_count: int,
 ) -> Calendar_UI_Rect {
 	count := max(1, min(3, visible_count))
-	left := day_rect.x+178
-	right := day_rect.x+day_rect.w-12
-	gap := 6.0
+	date_w := calendar_label_width("WWW  0000-00-00")+calendar_cell_width()
+	left := day_rect.x+date_w
+	right := day_rect.x+day_rect.w-calendar_cell_width()
+	gap := calendar_cell_width()
 	width := (right-left-gap*f64(count-1))/f64(count)
 	return {
 		left+f64(index)*(width+gap),
-		day_rect.y+3,
+		day_rect.y,
 		width,
-		day_rect.h-6,
+		day_rect.h,
 	}
 }
 
@@ -1357,12 +1624,14 @@ calendar_ui_reload_data :: proc() {
 	delete(calendar_ui.occurrences)
 	delete(calendar_ui.holiday_occurrences)
 	agenda_entries_destroy(&calendar_ui.due_entries)
+	birthday_upcoming_destroy(&calendar_ui.birthday_upcoming)
 	calendar_ui.entries = agenda_entries_list("", "", "")
 	calendar_ui.occurrences = make([dynamic]Agenda_Occurrence)
 	now_stamp := time.to_unix_seconds(time.now())
 	now := agenda_local_date_at_unix(now_stamp)
 	calendar_ui.local_day_stamp = agenda_date_time_stamp(now)
 	calendar_ui.due_entries = agenda_due_entries(now_stamp)
+	calendar_ui.birthday_upcoming = birthday_upcoming()
 	calendar_ui.next_chore_due_stamp = calendar_next_chore_due_stamp(
 		calendar_ui.entries[:],
 		now_stamp,
@@ -2054,7 +2323,7 @@ calendar_ui_open_palette :: proc() {
 		"Open Settings",
 		"Search and configure application settings",
 		"Command",
-		[]string{"preferences", "configuration", "gear"},
+		[]string{"preferences", "configuration", "settings"},
 		{none = CALENDAR_PALETTE_SETTINGS},
 		"Settings is already open",
 	)
@@ -2377,9 +2646,26 @@ calendar_ui_palette_rect :: proc() -> Calendar_UI_Rect {
 	}
 }
 
+calendar_ui_palette_result_rect :: proc(index: int) -> Calendar_UI_Rect {
+	modal := calendar_ui_palette_rect()
+	search := calendar_text_field_rect(.Command_Palette)
+	pad := calendar_half_cell()
+	row_h := calendar_cell_height() * 2
+	// Sit the first result one half-cell below the search field.
+	return {
+		modal.x+pad,
+		search.y-pad-row_h-f64(index)*row_h,
+		modal.w-pad*2,
+		row_h,
+	}
+}
+
 calendar_ui_editor_rect :: proc() -> Calendar_UI_Rect {
-	width := min(680.0, calendar_ui.width-48)
-	height := min(520.0, calendar_ui.height-72)
+	cell := calendar_cell_height()
+	pad := calendar_half_cell()
+	inset := CALENDAR_DIALOG_VIEWPORT_INSET*2
+	width := min(680.0, max(CALENDAR_DIALOG_MIN_WIDTH, calendar_ui.width-inset))
+	height := min(cell*18+pad*2, calendar_ui.height-inset)
 	return {
 		(calendar_ui.width-width)/2,
 		(calendar_ui.height-height)/2,
@@ -2389,15 +2675,19 @@ calendar_ui_editor_rect :: proc() -> Calendar_UI_Rect {
 }
 
 calendar_ui_discard_rect :: proc() -> Calendar_UI_Rect {
-	width := min(460.0, calendar_ui.width-48)
-	height := 164.0
+	cell := calendar_cell_height()
+	pad := calendar_half_cell()
+	width := calendar_dialog_width(460, calendar_ui.width)
+	height := cell*6+pad*2
 	return {(calendar_ui.width-width)/2, (calendar_ui.height-height)/2, width, height}
 }
 
 calendar_ui_discard_button_rect :: proc(index: int) -> Calendar_UI_Rect {
 	modal := calendar_ui_discard_rect()
-	width := (modal.w-56)/2
-	return {modal.x+24+f64(index)*(width+8), modal.y+24, width, 34}
+	gap := calendar_cell_width()
+	pad := calendar_half_cell()
+	width := (modal.w-pad*2-gap)/2
+	return {modal.x+pad+f64(index)*(width+gap), modal.y+pad, width, calendar_cell_height()}
 }
 
 calendar_active_modal :: proc() -> Calendar_Modal {
@@ -2475,25 +2765,43 @@ calendar_editor_is_dirty :: proc() -> bool {
 
 calendar_ui_editor_field_rect :: proc(index: int) -> Calendar_UI_Rect {
 	modal := calendar_ui_editor_rect()
+	cell := calendar_cell_height()
+	pad := calendar_half_cell()
+	label_w := calendar_label_width("LOCATION")+calendar_cell_width()
 	column := index / 5
 	row := index % 5
-	column_width := modal.w/2
+	column_width := (modal.w-pad*2)/2
 	return {
-		modal.x+90+f64(column)*column_width,
-		modal.y+modal.h-86-f64(row)*48,
-		column_width-106,
-		34,
+		modal.x+pad+label_w+f64(column)*column_width,
+		modal.y+modal.h-pad-cell*2-f64(row)*cell*2,
+		column_width-label_w-pad,
+		cell,
 	}
 }
 
 calendar_ui_editor_button_rect :: proc(index: int) -> Calendar_UI_Rect {
 	modal := calendar_ui_editor_rect()
-	return {modal.x+150+f64(index)*112, modal.y+20, 100, 34}
+	pad := calendar_half_cell()
+	gap := calendar_cell_width()
+	labels := [3]string{"SAVE", "CANCEL", "DELETE"}
+	width := calendar_label_width(calendar_bracket(labels[index]))
+	x := modal.x+pad
+	for button_index in 0..<index {
+		x += calendar_label_width(calendar_bracket(labels[button_index]))+gap
+	}
+	return {x, modal.y+pad, width, calendar_cell_height()}
 }
 
 calendar_ui_editor_all_day_rect :: proc() -> Calendar_UI_Rect {
 	modal := calendar_ui_editor_rect()
-	return {modal.x+modal.w-154, modal.y+modal.h-48, 136, 34}
+	pad := calendar_half_cell()
+	width := calendar_label_width(fmt.tprintf("%s ALL DAY", calendar_toggle_mark(true)))
+	return {
+		modal.x+modal.w-width-pad,
+		modal.y+modal.h-pad-calendar_cell_height(),
+		width,
+		calendar_cell_height(),
+	}
 }
 
 calendar_editor_toggle_all_day_dates :: proc(
@@ -2649,8 +2957,10 @@ calendar_chore_interval_from_days :: proc(value: string) -> (i64, bool) {
 }
 
 calendar_ui_chore_rect :: proc() -> Calendar_UI_Rect {
-	width := min(560.0, calendar_ui.width-48)
-	height := 326.0
+	cell := calendar_cell_height()
+	pad := calendar_half_cell()
+	width := calendar_modal_width(560, calendar_ui.width)
+	height := cell*12+pad*2
 	return {
 		(calendar_ui.width-width)/2,
 		(calendar_ui.height-height)/2,
@@ -2661,36 +2971,68 @@ calendar_ui_chore_rect :: proc() -> Calendar_UI_Rect {
 
 calendar_chore_name_rect :: proc() -> Calendar_UI_Rect {
 	modal := calendar_ui_chore_rect()
-	return {modal.x+90, modal.y+modal.h-94, modal.w-114, 34}
+	cell := calendar_cell_height()
+	pad := calendar_half_cell()
+	label_w := calendar_label_width("NAME")+calendar_cell_width()
+	return {modal.x+pad+label_w, modal.y+modal.h-pad-cell*2, modal.w-pad*2-label_w, cell}
 }
 
 calendar_chore_days_rect :: proc() -> Calendar_UI_Rect {
 	modal := calendar_ui_chore_rect()
-	return {modal.x+112, modal.y+modal.h-142, 88, 34}
+	cell := calendar_cell_height()
+	pad := calendar_half_cell()
+	label_w := calendar_label_width("DAYS")+calendar_cell_width()
+	return {
+		modal.x+pad+label_w,
+		modal.y+modal.h-pad-cell*4,
+		calendar_label_width("0000"),
+		cell,
+	}
 }
 
 calendar_chore_interval_rect :: proc(index: int) -> Calendar_UI_Rect {
 	modal := calendar_ui_chore_rect()
-	gap := 8.0
+	cell := calendar_cell_height()
+	pad := calendar_half_cell()
+	gap := calendar_cell_width()
 	width := (
-		modal.w-48-gap*f64(len(CALENDAR_CHORE_PRESETS)-1)
+		modal.w-pad*2-gap*f64(len(CALENDAR_CHORE_PRESETS)-1)
 	)/f64(len(CALENDAR_CHORE_PRESETS))
 	return {
-		modal.x+24+f64(index)*(width+gap),
-		modal.y+modal.h-210,
+		modal.x+pad+f64(index)*(width+gap),
+		modal.y+modal.h-pad-cell*7,
 		width,
-		34,
+		cell,
 	}
 }
 
 calendar_chore_button_rect :: proc(index: int) -> Calendar_UI_Rect {
 	modal := calendar_ui_chore_rect()
-	return {modal.x+modal.w-232+f64(index)*112, modal.y+20, 100, 34}
+	pad := calendar_half_cell()
+	gap := calendar_cell_width()
+	labels := [2]string{"SAVE", "CANCEL"}
+	codes := [2]int{6, 7}
+	width := calendar_numbered_action_width(codes[index], labels[index])
+	x := modal.x+modal.w-pad
+	for button_index in 0..<len(labels) {
+		x -= calendar_numbered_action_width(codes[button_index], labels[button_index])
+		if button_index < len(labels)-1 {x -= gap}
+	}
+	for button_index in 0..<index {
+		x += calendar_numbered_action_width(codes[button_index], labels[button_index])+gap
+	}
+	return {x, modal.y+pad, width, calendar_cell_height()}
 }
 
 calendar_chore_error_rect :: proc() -> Calendar_UI_Rect {
 	modal := calendar_ui_chore_rect()
-	return {modal.x+18, modal.y+60, modal.w-36, 28}
+	pad := calendar_half_cell()
+	return {
+		modal.x+pad,
+		modal.y+pad+calendar_cell_height()*2,
+		modal.w-pad*2,
+		calendar_cell_height()*2,
+	}
 }
 
 calendar_chore_action_for_slot :: proc(slot: int) -> Calendar_App_Action {
@@ -3154,7 +3496,9 @@ calendar_ui_execute_action :: proc(action: Calendar_App_Action) {
 	case .Command_Palette_Search:
 		calendar_text_focus(.Command_Palette)
 	case .Set_Theme:
-		_ = calendar_ui_apply_theme(action.theme_id)
+		next := Calendar_Theme_ID.HW_Light
+		if calendar_ui.theme_id != .HW_Dark {next = .HW_Dark}
+		_ = calendar_ui_apply_theme(next)
 	case .Configure_Flash:
 		calendar_shortcut_recorder_open()
 	case .Export_Agenda:
@@ -4199,13 +4543,7 @@ calendar_mix_color :: proc(
 	base, accent: [4]f32,
 	amount: f32,
 ) -> [4]f32 {
-	value := max(f32(0), min(f32(1), amount))
-	return {
-		base[0]+(accent[0]-base[0])*value,
-		base[1]+(accent[1]-base[1])*value,
-		base[2]+(accent[2]-base[2])*value,
-		base[3]+(accent[3]-base[3])*value,
-	}
+	return calendar_blend(base, accent, amount)
 }
 
 calendar_push_leading_edge :: proc(
@@ -4213,7 +4551,15 @@ calendar_push_leading_edge :: proc(
 	rect: Calendar_UI_Rect,
 	color: [4]f32,
 ) {
-	calendar_push_rect(vertices, {rect.x, rect.y, 4, rect.h}, color)
+	calendar_push_rect(vertices, {rect.x, rect.y, CALENDAR_TICK_WIDTH, rect.h}, color)
+}
+
+calendar_push_banner_accent :: proc(
+	vertices: ^[dynamic]Calendar_Solid_Vertex,
+	rect: Calendar_UI_Rect,
+	color: [4]f32,
+) {
+	calendar_push_rect(vertices, {rect.x, rect.y, CALENDAR_BANNER_ACCENT, rect.h}, color)
 }
 
 calendar_occurrences_for_day :: proc(day: Agenda_Date_Time) -> []Agenda_Occurrence {
@@ -4455,19 +4801,21 @@ calendar_detail_draw_field :: proc(
 	label_font: rawptr = nil,
 ) {
 	if len(value) == 0 {return}
+	pad := calendar_half_cell()
+	cell := calendar_cell_height()
 	effective_label_font := label_font
 	if effective_label_font == nil {effective_label_font = font}
 	calendar_draw_text(
 		ctx,
 		effective_label_font,
 		label,
-		{panel.x+20, cursor^-16, panel.w-40, 16},
+		{panel.x+pad, cursor^-cell, panel.w-pad*2, cell},
 		label_color,
 		0,
 		style = .Label,
 	)
-	cursor^ -= 10
-	maximum := max(18, int((panel.w-40)/7))
+	cursor^ -= cell
+	maximum := max(18, int((panel.w-pad*2)/calendar_cell_width()))
 	line := ""
 	remaining := value
 	for word in strings.split_iterator(&remaining, " ") {
@@ -4477,11 +4825,11 @@ calendar_detail_draw_field :: proc(
 				ctx,
 				font,
 				line,
-				{panel.x+20, cursor^-16, panel.w-40, 16},
+				{panel.x+pad, cursor^-cell, panel.w-pad*2, cell},
 				value_color,
 				0,
 			)
-			cursor^ -= 16
+			cursor^ -= cell
 			line = word
 		} else {
 			line = candidate
@@ -4492,13 +4840,13 @@ calendar_detail_draw_field :: proc(
 			ctx,
 			font,
 			line,
-			{panel.x+20, cursor^-16, panel.w-40, 16},
+			{panel.x+pad, cursor^-cell, panel.w-pad*2, cell},
 			value_color,
 			0,
 		)
-		cursor^ -= 16
+		cursor^ -= cell
 	}
-	cursor^ -= 6
+	cursor^ -= calendar_half_cell()
 }
 
 calendar_ui_event_index_for_entry :: proc(entry_id: i64) -> int {
@@ -4508,9 +4856,49 @@ calendar_ui_event_index_for_entry :: proc(entry_id: i64) -> int {
 	return -1
 }
 
-CALENDAR_DUE_HEADER_HEIGHT :: 38.0
-CALENDAR_DUE_ROW_HEIGHT :: 54.0
-CALENDAR_DUE_FOOTER_HEIGHT :: 10.0
+CALENDAR_BIRTHDAY_HEADER_HEIGHT :: CALENDAR_CELL_HEIGHT
+CALENDAR_BIRTHDAY_ROW_HEIGHT :: CALENDAR_CELL_HEIGHT * 2
+CALENDAR_BIRTHDAY_MAX_ROWS :: 3
+
+calendar_ui_birthday_visible_count :: proc() -> int {
+	if calendar_ui.day_offset != 0 {return 0}
+	return min(len(calendar_ui.birthday_upcoming), CALENDAR_BIRTHDAY_MAX_ROWS)
+}
+
+calendar_ui_birthday_section_height :: proc() -> f64 {
+	visible_count := calendar_ui_birthday_visible_count()
+	if visible_count == 0 {return 0}
+	return CALENDAR_BIRTHDAY_HEADER_HEIGHT+
+	       f64(visible_count)*CALENDAR_BIRTHDAY_ROW_HEIGHT
+}
+
+calendar_ui_birthday_section_rect :: proc() -> Calendar_UI_Rect {
+	panel := calendar_ui_details_rect()
+	height := calendar_ui_birthday_section_height()
+	return {panel.x, panel.y, panel.w, height}
+}
+
+calendar_ui_birthday_row_rect :: proc(index: int) -> Calendar_UI_Rect {
+	section := calendar_ui_birthday_section_rect()
+	return {
+		section.x,
+		section.y+CALENDAR_BIRTHDAY_HEADER_HEIGHT+
+		f64(index)*CALENDAR_BIRTHDAY_ROW_HEIGHT,
+		section.w,
+		CALENDAR_BIRTHDAY_ROW_HEIGHT,
+	}
+}
+
+calendar_ui_birthday_meta :: proc(item: ^Birthday_Upcoming) -> string {
+	if item == nil {return ""}
+	if item.days_until == 0 {return "TODAY"}
+	if item.days_until == 1 {return "TOMORROW"}
+	return fmt.tprintf("IN %d DAYS", item.days_until)
+}
+
+CALENDAR_DUE_HEADER_HEIGHT :: CALENDAR_CELL_HEIGHT
+CALENDAR_DUE_ROW_HEIGHT :: CALENDAR_CELL_HEIGHT * 2
+CALENDAR_DUE_FOOTER_HEIGHT :: CALENDAR_CELL_HEIGHT
 
 calendar_ui_due_visible_capacity :: proc(panel: Calendar_UI_Rect) -> int {
 	maximum_height := panel.h*2/3
@@ -4556,11 +4944,11 @@ calendar_ui_due_row_rect :: proc(index: int) -> Calendar_UI_Rect {
 	start, _ := calendar_ui_due_visible_range()
 	slot := index-start
 	return {
-		section.x+12,
+		section.x,
 		section.y+section.h-CALENDAR_DUE_HEADER_HEIGHT-
-		f64(slot+1)*CALENDAR_DUE_ROW_HEIGHT+4,
-		section.w-24,
-		CALENDAR_DUE_ROW_HEIGHT-8,
+		f64(slot+1)*CALENDAR_DUE_ROW_HEIGHT,
+		section.w,
+		CALENDAR_DUE_ROW_HEIGHT,
 	}
 }
 
@@ -4579,14 +4967,32 @@ calendar_ui_scroll_due_rows :: proc(delta: f64) {
 	calendar_ui.needs_redraw = true
 }
 
-calendar_ui_due_focus_rect :: proc(index: int) -> Calendar_UI_Rect {
+calendar_ui_due_row_content_rect :: proc(index: int) -> Calendar_UI_Rect {
 	row := calendar_ui_due_row_rect(index)
-	return {row.x, row.y, row.w-94, row.h}
+	pad := calendar_half_cell()
+	return {
+		row.x+pad,
+		row.y+pad,
+		max(0, row.w-pad*2),
+		max(0, row.h-pad*2),
+	}
+}
+
+calendar_ui_due_focus_rect :: proc(index: int) -> Calendar_UI_Rect {
+	content := calendar_ui_due_row_content_rect(index)
+	done := calendar_ui_due_done_rect(index)
+	return {
+		content.x,
+		content.y,
+		max(0, done.x-content.x-calendar_cell_width()),
+		content.h,
+	}
 }
 
 calendar_ui_due_done_rect :: proc(index: int) -> Calendar_UI_Rect {
-	row := calendar_ui_due_row_rect(index)
-	return {row.x+row.w-82, row.y+8, 70, row.h-16}
+	content := calendar_ui_due_row_content_rect(index)
+	width := calendar_label_width(calendar_bracket("DONE"))
+	return {content.x+content.w-width, content.y, width, content.h}
 }
 
 calendar_ui_due_row_selected :: proc(index: int) -> bool {
@@ -4607,8 +5013,8 @@ calendar_ui_due_entry_meta :: proc(entry: ^Agenda_Entry) -> string {
 	)
 }
 
-CALENDAR_DAY_AGENDA_HEADER_HEIGHT :: 48.0
-CALENDAR_DAY_AGENDA_ROW_HEIGHT :: 58.0
+CALENDAR_DAY_AGENDA_HEADER_HEIGHT :: CALENDAR_CELL_HEIGHT
+CALENDAR_DAY_AGENDA_ROW_HEIGHT :: CALENDAR_CELL_HEIGHT * 2
 
 calendar_ui_selected_day :: proc() -> Agenda_Date_Time {
 	now := agenda_local_today()
@@ -4649,12 +5055,12 @@ calendar_ui_day_agenda_panel_rect :: proc() -> Calendar_UI_Rect {
 calendar_ui_day_agenda_row_rect :: proc(index: int) -> Calendar_UI_Rect {
 	panel := calendar_ui_day_agenda_panel_rect()
 	return {
-		panel.x+12,
+		panel.x,
 		panel.y+panel.h-CALENDAR_DAY_AGENDA_HEADER_HEIGHT-
-		f64(index+1)*CALENDAR_DAY_AGENDA_ROW_HEIGHT+4+
+		f64(index+1)*CALENDAR_DAY_AGENDA_ROW_HEIGHT+
 		calendar_ui.details_scroll,
-		panel.w-24,
-		CALENDAR_DAY_AGENDA_ROW_HEIGHT-8,
+		panel.w,
+		CALENDAR_DAY_AGENDA_ROW_HEIGHT,
 	}
 }
 
@@ -4743,6 +5149,7 @@ calendar_draw_day_agenda :: proc(
 	panel := calendar_ui_day_agenda_panel_rect()
 	day := calendar_ui_selected_day()
 	items := calendar_day_agenda_items()
+	header_h := CALENDAR_DAY_AGENDA_HEADER_HEIGHT
 	calendar_draw_text(
 		ctx,
 		font,
@@ -4752,7 +5159,7 @@ calendar_draw_day_agenda :: proc(
 			day.month,
 			day.day,
 		),
-		{panel.x+16, panel.y+panel.h-34, panel.w-120, 20},
+		{panel.x, panel.y+panel.h-header_h, panel.w-calendar_label_width("00 ITEMS"), header_h},
 		ink,
 		0,
 		style = .Label,
@@ -4761,7 +5168,7 @@ calendar_draw_day_agenda :: proc(
 		ctx,
 		font,
 		fmt.tprintf("%d ITEMS", len(items)),
-		{panel.x+panel.w-106, panel.y+panel.h-34, 90, 20},
+		{panel.x+panel.w-calendar_label_width("00 ITEMS"), panel.y+panel.h-header_h, calendar_label_width("00 ITEMS"), header_h},
 		muted,
 		0,
 		.End,
@@ -4772,7 +5179,7 @@ calendar_draw_day_agenda :: proc(
 			ctx,
 			font,
 			"NO CALENDAR ITEMS",
-			{panel.x+16, panel.y+panel.h-76, panel.w-32, 20},
+			{panel.x, panel.y+panel.h-header_h-CALENDAR_DAY_AGENDA_ROW_HEIGHT, panel.w, CALENDAR_DAY_AGENDA_ROW_HEIGHT},
 			muted,
 			0,
 		)
@@ -4790,24 +5197,76 @@ calendar_draw_day_agenda :: proc(
 			 {panel.w*calendar_ui.scale, panel.h*calendar_ui.scale}},
 		)
 	}
-	theme := calendar_theme(calendar_ui.theme_id)
 	for item, index in items {
 		row := calendar_ui_day_agenda_row_rect(index)
-		accent := theme.cool
-		if item.kind == .Holiday {accent = theme.holiday}
-		if item.kind == .Event && calendar_occurrence_is_chore(item.event) {
-			accent = theme.positive
-		}
+		meta := calendar_day_agenda_item_meta(item)
+		meta_w := calendar_label_width(meta)
 		calendar_draw_text(
 			ctx, font, calendar_day_agenda_item_title(item),
-			{row.x+12, row.y+22, row.w-24, 20}, ink, 0,
+			{row.x, row.y, max(0, row.w-meta_w-calendar_cell_width()), row.h}, ink, 0,
 		)
 		calendar_draw_text(
-			ctx, font, calendar_day_agenda_item_meta(item),
-			{row.x+12, row.y+6, row.w-24, 14},
-			calendar_color64(accent), 0, style = .Label,
+			ctx, font, meta,
+			{row.x+row.w-meta_w, row.y, meta_w, row.h},
+			muted, 0, .End, style = .Label,
 		)
 	}
+}
+
+calendar_draw_birthday_section :: proc(
+	ctx, font: rawptr,
+	ink, muted: [4]f64,
+) -> f64 {
+	if calendar_active_modal().kind != .None {return 0}
+	section := calendar_ui_birthday_section_rect()
+	if section.h <= 0 {return 0}
+	if calendar_ordered_active {
+		calendar_ordered_push_clip(section)
+		defer calendar_ordered_pop_clip()
+	} else {
+		CGContextSaveGState(ctx)
+		defer CGContextRestoreGState(ctx)
+		CGContextClipToRect(
+			ctx,
+			{{section.x*calendar_ui.scale, section.y*calendar_ui.scale},
+			 {section.w*calendar_ui.scale, section.h*calendar_ui.scale}},
+		)
+	}
+	calendar_draw_text(
+		ctx,
+		font,
+		"BIRTHDAYS",
+		{section.x, section.y+section.h-CALENDAR_BIRTHDAY_HEADER_HEIGHT, section.w, CALENDAR_BIRTHDAY_HEADER_HEIGHT},
+		ink,
+		0,
+		style = .Label,
+	)
+	visible_count := calendar_ui_birthday_visible_count()
+	for index in 0..<visible_count {
+		item := &calendar_ui.birthday_upcoming[index]
+		row_rect := calendar_ui_birthday_row_rect(index)
+		meta := calendar_ui_birthday_meta(item)
+		meta_w := calendar_label_width(meta)
+		calendar_draw_text(
+			ctx,
+			font,
+			item.name,
+			{row_rect.x, row_rect.y, max(0, row_rect.w-meta_w-calendar_cell_width()), row_rect.h},
+			ink,
+			0,
+		)
+		calendar_draw_text(
+			ctx,
+			font,
+			meta,
+			{row_rect.x+row_rect.w-meta_w, row_rect.y, meta_w, row_rect.h},
+			muted,
+			0,
+			.End,
+			style = .Label,
+		)
+	}
+	return section.h
 }
 
 calendar_draw_due_section :: proc(
@@ -4834,7 +5293,7 @@ calendar_draw_due_section :: proc(
 		ctx,
 		font,
 		"DUE TASKS",
-		{section.x+12, section.y+section.h-27, section.w-110, 16},
+		{section.x, section.y+section.h-CALENDAR_DUE_HEADER_HEIGHT, section.w-calendar_label_width("000 OF 000"), CALENDAR_DUE_HEADER_HEIGHT},
 		ink,
 		0,
 		style = .Label,
@@ -4853,7 +5312,7 @@ calendar_draw_due_section :: proc(
 		ctx,
 		font,
 		count_text,
-		{section.x+section.w-108, section.y+section.h-27, 96, 16},
+		{section.x+section.w-calendar_label_width(count_text), section.y+section.h-CALENDAR_DUE_HEADER_HEIGHT, calendar_label_width(count_text), CALENDAR_DUE_HEADER_HEIGHT},
 		muted,
 		0,
 		.End,
@@ -4861,30 +5320,32 @@ calendar_draw_due_section :: proc(
 	)
 	for index in start..<end {
 		entry := &calendar_ui.due_entries[index]
-		row_rect := calendar_ui_due_row_rect(index)
 		name_rect := calendar_ui_due_focus_rect(index)
+		meta := calendar_ui_due_entry_meta(entry)
+		meta_w := calendar_label_width(meta)
 		calendar_draw_text(
 			ctx,
 			font,
 			entry.original_text,
-			{name_rect.x+12, row_rect.y+22, name_rect.w-16, 20},
+			{name_rect.x, name_rect.y, max(0, name_rect.w-meta_w-calendar_cell_width()), name_rect.h},
 			ink,
 			0,
 		)
 		calendar_draw_text(
 			ctx,
 			font,
-			calendar_ui_due_entry_meta(entry),
-			{name_rect.x+12, row_rect.y+6, name_rect.w-16, 14},
+			meta,
+			{name_rect.x+name_rect.w-meta_w, name_rect.y, meta_w, name_rect.h},
 			muted,
 			0,
+			.End,
 			style = .Label,
 		)
 		done_rect := calendar_ui_due_done_rect(index)
 		calendar_draw_text(
 			ctx,
 			font,
-			"DONE",
+			calendar_bracket("DONE"),
 			done_rect,
 			ink,
 			0,
@@ -4899,8 +5360,13 @@ calendar_draw_details :: proc(
 	ink, muted: [4]f64,
 ) {
 	panel := calendar_ui_details_rect()
-	due_height := calendar_draw_due_section(ctx, font, panel, ink, muted)
+	birthday_height := calendar_draw_birthday_section(ctx, font, ink, muted)
 	content_panel := panel
+	if birthday_height > 0 {
+		content_panel.y += birthday_height
+		content_panel.h -= birthday_height
+	}
+	due_height := calendar_draw_due_section(ctx, font, panel, ink, muted)
 	if due_height > 0 {
 		content_panel.h -= due_height
 	}
@@ -4918,7 +5384,7 @@ calendar_draw_details :: proc(
 			 {content_panel.w*calendar_ui.scale, content_panel.h*calendar_ui.scale}},
 		)
 	}
-	cursor := content_panel.y+content_panel.h-16+calendar_ui.details_scroll
+	cursor := content_panel.y+content_panel.h-calendar_half_cell()+calendar_ui.details_scroll
 	if calendar_ui.navigation_kind == .Event &&
 	   calendar_ui.navigation_event_index >= 0 &&
 	   calendar_ui.navigation_event_index < len(calendar_ui.entries) {
@@ -4997,50 +5463,97 @@ calendar_draw_details :: proc(
 			label_font := calendar_system_monospaced_font_for_style(.Label)
 			heading_font := calendar_system_monospaced_font_for_style(.Heading)
 			section_font := calendar_system_monospaced_font_weight(
-				11*calendar_ui.scale,
-				0.25,
+				CALENDAR_TEXT_BASE_SIZE*calendar_ui.scale,
+				0,
 			)
 			if heading_font != nil {defer CFRelease(heading_font)}
 			if section_font != nil {defer CFRelease(section_font)}
 			if label_font != nil {defer CFRelease(label_font)}
+			pad := calendar_half_cell()
+			cell := calendar_cell_height()
 			calendar_draw_text(
 				ctx, label_font if label_font != nil else font,
 				"HOLIDAY",
-				{panel.x+20, cursor-16, panel.w-40, 16},
+				{panel.x+pad, cursor-cell, panel.w-pad*2, cell},
 				muted,
 				0,
 				style = .Label,
 			)
-			cursor -= 44
+			cursor -= cell*2
 			calendar_draw_text(
 				ctx, heading_font if heading_font != nil else font,
 				definition.name,
-				{panel.x+20, cursor-28, panel.w-40, 32},
+				{panel.x+pad, cursor-cell*2, panel.w-pad*2, cell*2},
 				ink,
 				0,
 				style = .Heading,
 			)
-			cursor -= 58
-			column_gap := 20.0
-			column_width := (panel.w-40-column_gap)/2
-			calendar_draw_text(ctx, label_font if label_font != nil else font, "COUNTRY", {panel.x+20, cursor-16, column_width, 16}, muted, 0, style=.Label)
-			calendar_draw_text(ctx, label_font if label_font != nil else font, "CATEGORY", {panel.x+20+column_width+column_gap, cursor-16, column_width, 16}, muted, 0, style=.Label)
-			cursor -= 10
-			calendar_draw_text(ctx, section_font if section_font != nil else font, country.country_name, {panel.x+20, cursor-20, column_width, 20}, ink, 0)
-			calendar_draw_text(ctx, section_font if section_font != nil else font, calendar_holiday_kind_label(calendar_holiday_kind(definition.kind)), {panel.x+20+column_width+column_gap, cursor-20, column_width, 20}, ink, 0)
-			cursor -= 22
-			calendar_draw_text(ctx, label_font if label_font != nil else font, "DATE", {panel.x+20, cursor-16, panel.w-40, 16}, muted, 0, style=.Label)
-			cursor -= 10
+			cursor -= cell*3
+			column_gap := calendar_cell_width()*2
+			column_width := (panel.w-pad*2-column_gap)/2
 			calendar_draw_text(
-				ctx, section_font if section_font != nil else font,
-				fmt.tprintf("%04d-%02d-%02d", occurrence.date.year, occurrence.date.month, occurrence.date.day),
-				{panel.x+20, cursor-20, panel.w-40, 20},
+				ctx,
+				label_font if label_font != nil else font,
+				"COUNTRY",
+				{panel.x+pad, cursor-cell, column_width, cell},
+				muted,
+				0,
+				style=.Label,
+			)
+			calendar_draw_text(
+				ctx,
+				label_font if label_font != nil else font,
+				"CATEGORY",
+				{panel.x+pad+column_width+column_gap, cursor-cell, column_width, cell},
+				muted,
+				0,
+				style=.Label,
+			)
+			cursor -= cell
+			calendar_draw_text(
+				ctx,
+				section_font if section_font != nil else font,
+				country.country_name,
+				{panel.x+pad, cursor-cell, column_width, cell},
 				ink,
 				0,
 			)
-			cursor -= 36
-			calendar_draw_text(ctx, section_font if section_font != nil else font, "SOURCE", {panel.x+20, cursor-18, panel.w-40, 18}, ink, 0)
-			cursor -= 28
+			calendar_draw_text(
+				ctx,
+				section_font if section_font != nil else font,
+				calendar_holiday_kind_label(calendar_holiday_kind(definition.kind)),
+				{panel.x+pad+column_width+column_gap, cursor-cell, column_width, cell},
+				ink,
+				0,
+			)
+			cursor -= cell*2
+			calendar_draw_text(
+				ctx,
+				label_font if label_font != nil else font,
+				"DATE",
+				{panel.x+pad, cursor-cell, panel.w-pad*2, cell},
+				muted,
+				0,
+				style=.Label,
+			)
+			cursor -= cell
+			calendar_draw_text(
+				ctx, section_font if section_font != nil else font,
+				fmt.tprintf("%04d-%02d-%02d", occurrence.date.year, occurrence.date.month, occurrence.date.day),
+				{panel.x+pad, cursor-cell, panel.w-pad*2, cell},
+				ink,
+				0,
+			)
+			cursor -= cell*2
+			calendar_draw_text(
+				ctx,
+				section_font if section_font != nil else font,
+				"SOURCE",
+				{panel.x+pad, cursor-cell, panel.w-pad*2, cell},
+				ink,
+				0,
+			)
+			cursor -= cell*2
 			calendar_detail_draw_field(ctx, font, "REFERENCE", country.source_title, panel, &cursor, muted, ink, label_font)
 			calendar_detail_draw_field(ctx, font, "URL", country.source_url, panel, &cursor, muted, ink, label_font)
 		}
@@ -5055,24 +5568,9 @@ calendar_draw_details :: proc(
 calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> int {
 	theme := calendar_theme(calendar_ui.theme_id)
 	chassis := theme.canvas
-	header := theme.header
-	row := theme.surface
-	row_alt := theme.raised
-	button := theme.control
-	ink := theme.overlay
-	field := theme.control
-	focus := theme.focus
 	calendar_push_rect(vertices, {0, 0, calendar_ui.width, calendar_ui.height}, chassis)
-	calendar_push_rect(vertices, calendar_ui_header_rect(), header)
-	calendar_push_rect(vertices, calendar_ui_details_rect(), row_alt)
-	buttons := [3]Calendar_UI_Rect{
-		calendar_ui_today_rect(),
-		calendar_ui_search_rect(),
-		calendar_ui_new_rect(),
-	}
-	for rect in buttons {
-		calendar_push_rect(vertices, rect, button)
-	}
+	calendar_push_rect(vertices, calendar_ui_header_rect(), theme.canvas)
+	calendar_push_rect(vertices, calendar_ui_details_rect(), theme.canvas)
 	now := agenda_local_today()
 	anchor := agenda_days_from_civil(now.year, now.month, now.day) +
 	          i64(calendar_ui.day_offset)
@@ -5084,41 +5582,23 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 		day := agenda_date_time_from_stamp(day_days*86400, true)
 		rect := calendar_ui_day_rect(index)
 		day_items := calendar_day_items(day)
-		color := row
-		if index%2 == 1 {color = row_alt}
+		color := theme.canvas
 		selected_day := day_days == anchor
 		current_day := day_days == today_days
-		if selected_day {
-			color = calendar_mix_color(color, theme.focus, 0.12)
-		}
 		if current_day {
-			color = calendar_mix_color(color, theme.warm_strong, 0.28)
+			color = theme.text
 		}
 		calendar_push_rect(vertices, rect, color)
 		if selected_day {
-			calendar_push_border(vertices, rect, theme.focus)
-		}
-		if current_day {
-			calendar_push_border(vertices, rect, theme.warm_strong)
-			calendar_push_border(
-				vertices,
-				{rect.x+1, rect.y+1, rect.w-2, rect.h-2},
-				theme.warm_strong,
-			)
+			calendar_push_leading_edge(vertices, rect, current_day ? theme.canvas : theme.text)
 		}
 		for item, item_index in day_items {
 			if item_index >= 3 {break}
 			event_rect := calendar_ui_event_rect(rect, item_index, min(3, len(day_items)))
-			event_color := button
+			event_color := theme.canvas
 			if item.kind == .Chores {
-				calendar_push_rect(
-					vertices,
-					event_rect,
-					calendar_mix_color(event_color, theme.positive, 0.18),
-				)
-				calendar_push_leading_edge(vertices, event_rect, theme.positive)
 				if calendar_day_item_is_navigation_selected(item) {
-					calendar_push_leading_edge(vertices, event_rect, focus)
+					calendar_push_leading_edge(vertices, event_rect, current_day ? theme.canvas : theme.text)
 				}
 				if !calendar_ui.editor_open && !calendar_ui.archive_modal_open &&
 				   !calendar_ui.settings_open && !calendar_ui.shortcut_open {
@@ -5140,22 +5620,8 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 				continue
 			}
 			if item.kind == .Holiday {
-				calendar_push_rect(vertices, event_rect, event_color)
-				_, definition, found :=
-					calendar_holiday_definition_for_occurrence(item.holiday)
-				if found {
-					accent := theme.holiday
-					if calendar_holiday_kind(definition.kind) == .Memorial_Day {
-						accent = theme.memorial
-					}
-					calendar_push_rect(
-						vertices,
-						{event_rect.x, event_rect.y, 4, event_rect.h},
-						accent,
-					)
-				}
 				if calendar_day_item_is_navigation_selected(item) {
-					calendar_push_leading_edge(vertices, event_rect, focus)
+					calendar_push_leading_edge(vertices, event_rect, current_day ? theme.canvas : theme.text)
 				}
 				if !calendar_ui.editor_open && !calendar_ui.archive_modal_open &&
 				   !calendar_ui.settings_open && !calendar_ui.shortcut_open {
@@ -5176,9 +5642,8 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 				}
 				continue
 			}
-			calendar_push_rect(vertices, event_rect, event_color)
 			if calendar_day_item_is_navigation_selected(item) {
-				calendar_push_leading_edge(vertices, event_rect, focus)
+				calendar_push_leading_edge(vertices, event_rect, current_day ? theme.canvas : theme.text)
 			}
 			if !calendar_ui.editor_open && !calendar_ui.archive_modal_open &&
 			   !calendar_ui.settings_open && !calendar_ui.shortcut_open {
@@ -5206,22 +5671,13 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 		for index in start..<end {
 			entry := &calendar_ui.due_entries[index]
 			row_rect := calendar_ui_due_row_rect(index)
-			row_color := button
-			if calendar_ui_due_row_selected(index) {
-				row_color = calendar_mix_color(row_color, theme.focus, 0.16)
-			}
+			row_color := theme.canvas
 			calendar_push_rect(vertices, row_rect, row_color)
-			calendar_push_leading_edge(vertices, row_rect, theme.positive)
+			calendar_push_border(vertices, row_rect, theme.hairline)
+			calendar_push_banner_accent(vertices, row_rect, theme.text)
 			if calendar_ui_due_row_selected(index) {
-				calendar_push_border(vertices, row_rect, theme.focus)
+				calendar_push_leading_edge(vertices, row_rect, theme.text)
 			}
-			done_rect := calendar_ui_due_done_rect(index)
-			calendar_push_rect(
-				vertices,
-				done_rect,
-				calendar_mix_color(button, theme.positive, 0.18),
-			)
-			calendar_push_border(vertices, done_rect, theme.positive)
 			due_stamp, _ := strconv.parse_i64(entry.due_at)
 			event_index := calendar_ui_event_index_for_entry(entry.id)
 			calendar_ui_add_control(
@@ -5250,17 +5706,9 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 			   item_rect.y >= panel.y+panel.h {
 				continue
 			}
-			accent := theme.cool
-			if item.kind == .Holiday {accent = theme.holiday}
-			if item.kind == .Event && calendar_occurrence_is_chore(item.event) {
-				accent = theme.positive
+			if calendar_day_item_is_navigation_selected(item) {
+				calendar_push_leading_edge(vertices, item_rect, theme.text)
 			}
-			calendar_push_rect(
-				vertices,
-				item_rect,
-				calendar_mix_color(button, accent, 0.10),
-			)
-			calendar_push_leading_edge(vertices, item_rect, accent)
 		}
 		calendar_register_day_agenda_controls()
 	}
@@ -5282,27 +5730,18 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 		"action reject proposal",
 		"new chore",
 	}
-	action_labels := [7]string{
-		"edit",
-		"open url",
-		"archive",
-		"complete",
-		"confirm",
-		"reject",
-		"new chore",
-	}
+	action_labels := calendar_action_bar_labels()
 	number_time_ms := calendar_number_time_ms()
 	for action, action_index in action_kinds {
 		action_rect := calendar_ui_action_rect(action_index)
 		available := calendar_ui_action_available(action)
-		calendar_push_rect(vertices, action_rect, available ? button : field)
 		if calendar_action_number_section_active(
 			action,
 			calendar_ui.number_prefix,
 			calendar_ui.number_prefix_deadline_ms,
 			number_time_ms,
 		) {
-			calendar_push_border(vertices, action_rect, focus)
+			calendar_push_leading_edge(vertices, action_rect, theme.text)
 		}
 		if available && !calendar_ui.editor_open &&
 		   !calendar_ui.chore_open &&
@@ -5326,17 +5765,10 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 			theme.overlay,
 		)
 		modal := calendar_ui_editor_rect()
-		calendar_push_rect(vertices, modal, theme.modal)
+		calendar_push_rect(vertices, modal, theme.canvas)
+		calendar_push_border(vertices, modal, theme.hairline)
 		for field_index in 0..<5 {
 			field_rect := calendar_ui_editor_field_rect(field_index)
-			calendar_push_rect(
-				vertices,
-				field_rect,
-				field,
-			)
-			if field_index == calendar_ui.editor_field {
-				calendar_push_border(vertices, field_rect, focus)
-			}
 			calendar_ui_add_control(
 				fmt.tprintf("editor field %d", field_index),
 				"field",
@@ -5346,11 +5778,6 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 			)
 		}
 		all_day_rect := calendar_ui_editor_all_day_rect()
-		calendar_push_rect(vertices, all_day_rect, row_alt)
-		if calendar_ui.editor_all_day {
-			calendar_push_border(vertices, all_day_rect, theme.important)
-			calendar_push_leading_edge(vertices, all_day_rect, theme.important)
-		}
 		calendar_ui_add_control(
 			"editor all day",
 			"all day",
@@ -5359,10 +5786,7 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 		)
 		save_rect := calendar_ui_editor_button_rect(0)
 		cancel_rect := calendar_ui_editor_button_rect(1)
-		calendar_push_rect(vertices, save_rect, button)
-		calendar_push_border(vertices, save_rect, theme.positive)
-		calendar_push_rect(vertices, cancel_rect, button)
-		calendar_ui_add_control(
+								calendar_ui_add_control(
 			"editor save",
 			"save",
 			save_rect,
@@ -5376,9 +5800,7 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 		)
 		if calendar_ui.editor_event_index >= 0 {
 			delete_rect := calendar_ui_editor_button_rect(2)
-			calendar_push_rect(vertices, delete_rect, button)
-			calendar_push_border(vertices, delete_rect, theme.destructive)
-			calendar_ui_add_control(
+									calendar_ui_add_control(
 				"editor delete",
 				"delete",
 				delete_rect,
@@ -5397,12 +5819,9 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 			theme.overlay,
 		)
 		modal := calendar_ui_chore_rect()
-		calendar_push_rect(vertices, modal, theme.modal)
+		calendar_push_rect(vertices, modal, theme.canvas)
+		calendar_push_border(vertices, modal, theme.hairline)
 		name_rect := calendar_chore_name_rect()
-		calendar_push_rect(vertices, name_rect, field)
-		if calendar_ui.chore_focus_slot == CALENDAR_CHORE_FOCUS_NAME {
-			calendar_push_border(vertices, name_rect, focus)
-		}
 		calendar_ui_add_control(
 			"chore name",
 			"name",
@@ -5410,10 +5829,6 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 			.Chore_Name,
 		)
 		days_rect := calendar_chore_days_rect()
-		calendar_push_rect(vertices, days_rect, field)
-		if calendar_ui.chore_focus_slot == CALENDAR_CHORE_FOCUS_DAYS {
-			calendar_push_border(vertices, days_rect, focus)
-		}
 		calendar_ui_add_control(
 			"chore days",
 			"days",
@@ -5424,16 +5839,11 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 			preset_rect := calendar_chore_interval_rect(preset_index)
 			selected := calendar_ui.chore_interval ==
 			            CALENDAR_CHORE_PRESETS[preset_index]
-			calendar_push_rect(
-				vertices,
-				preset_rect,
-				selected ? row_alt : button,
-			)
 			if selected {
-				calendar_push_border(vertices, preset_rect, focus)
+				calendar_push_rect(vertices, preset_rect, theme.text)
 			}
 			if calendar_ui.chore_focus_slot == preset_index && !selected {
-				calendar_push_border(vertices, preset_rect, focus)
+				calendar_push_leading_edge(vertices, preset_rect, theme.text)
 			}
 			calendar_ui_add_control(
 				fmt.tprintf("chore interval %d", preset_index),
@@ -5447,14 +5857,11 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 		}
 		save_rect := calendar_chore_button_rect(0)
 		cancel_rect := calendar_chore_button_rect(1)
-		calendar_push_rect(vertices, save_rect, button)
-		calendar_push_border(vertices, save_rect, theme.positive)
-		calendar_push_rect(vertices, cancel_rect, button)
 		if calendar_ui.chore_focus_slot == len(CALENDAR_CHORE_PRESETS) {
-			calendar_push_border(vertices, save_rect, focus)
+			calendar_push_leading_edge(vertices, save_rect, theme.text)
 		}
 		if calendar_ui.chore_focus_slot == len(CALENDAR_CHORE_PRESETS)+1 {
-			calendar_push_border(vertices, cancel_rect, focus)
+			calendar_push_leading_edge(vertices, cancel_rect, theme.text)
 		}
 		calendar_ui_add_control(
 			"chore save",
@@ -5479,10 +5886,9 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 			theme.overlay,
 		)
 		modal := calendar_ui_archive_modal_rect()
-		calendar_push_rect(vertices, modal, theme.modal)
+		calendar_push_rect(vertices, modal, theme.canvas)
+		calendar_push_border(vertices, modal, theme.hairline)
 		archive_rect := calendar_ui_archive_button_rect(0, 2)
-		calendar_push_rect(vertices, archive_rect, button)
-		calendar_push_border(vertices, archive_rect, theme.destructive)
 		calendar_ui_add_control(
 			"archive event",
 			"archive event",
@@ -5490,8 +5896,7 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 			.Archive_Confirm,
 		)
 		cancel_rect := calendar_ui_archive_button_rect(1, 2)
-		calendar_push_rect(vertices, cancel_rect, button)
-		calendar_ui_add_control(
+				calendar_ui_add_control(
 			"archive cancel",
 			"cancel archive",
 			cancel_rect,
@@ -5507,12 +5912,10 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 			theme.overlay,
 		)
 		modal := calendar_ui_archive_import_rect()
-		calendar_push_rect(vertices, modal, theme.modal)
+		calendar_push_rect(vertices, modal, theme.canvas)
+		calendar_push_border(vertices, modal, theme.hairline)
 		cancel_rect := calendar_ui_archive_import_button_rect(0)
 		replace_rect := calendar_ui_archive_import_button_rect(1)
-		calendar_push_rect(vertices, cancel_rect, button)
-		calendar_push_rect(vertices, replace_rect, button)
-		calendar_push_border(vertices, replace_rect, theme.destructive)
 		calendar_ui_add_action_control(
 			"agenda import cancel",
 			"cancel agenda import",
@@ -5535,12 +5938,9 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 			theme.overlay,
 		)
 		modal := calendar_settings_rect()
-		calendar_push_rect(vertices, modal, theme.modal)
+		calendar_push_rect(vertices, modal, theme.canvas)
+		calendar_push_border(vertices, modal, theme.hairline)
 		search_rect := calendar_settings_search_rect()
-		calendar_push_rect(vertices, search_rect, theme.control)
-		if calendar_ui.settings_query_focused {
-			calendar_push_border(vertices, search_rect, theme.focus)
-		}
 		calendar_ui_add_action_control(
 			"settings search",
 			"search settings",
@@ -5548,7 +5948,6 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 			{kind = .Settings_Search},
 		)
 		close_rect := calendar_settings_close_rect()
-		calendar_push_rect(vertices, close_rect, theme.control)
 		calendar_ui_add_action_control(
 			"settings close",
 			"close settings",
@@ -5563,10 +5962,9 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 		}
 		for category, index in categories {
 			rect := calendar_settings_category_rect(index)
-			calendar_push_rect(vertices, rect, theme.control)
 			if !calendar_settings_search_active() &&
 			   category == calendar_ui.settings_category {
-				calendar_push_border(vertices, rect, theme.focus)
+				calendar_push_rect(vertices, rect, theme.text)
 			}
 			calendar_ui_add_action_control(
 				fmt.tprintf("settings category %s", calendar_settings_category_name(category)),
@@ -5578,10 +5976,9 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 		for descriptor, index in calendar_settings_result_descriptors() {
 			if index >= 10 {break}
 			rect := calendar_settings_result_rect(index)
-			calendar_push_rect(vertices, rect, theme.raised)
 			if descriptor.action.kind == .Set_Theme &&
 			   descriptor.action.theme_id == calendar_ui.theme_id {
-				calendar_push_border(vertices, rect, theme.focus)
+				calendar_push_leading_edge(vertices, rect, theme.text)
 			}
 			calendar_ui_add_action_control(
 				fmt.tprintf("setting:%d", descriptor.id),
@@ -5600,12 +5997,10 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 			theme.overlay,
 		)
 		modal := calendar_shortcut_modal_rect()
-		calendar_push_rect(vertices, modal, theme.modal)
+		calendar_push_rect(vertices, modal, theme.canvas)
+		calendar_push_border(vertices, modal, theme.hairline)
 		record_rect := calendar_shortcut_record_rect()
-		calendar_push_rect(vertices, record_rect, theme.control)
-		if calendar_ui.shortcut_listening {
-			calendar_push_border(vertices, record_rect, theme.focus)
-		} else {
+		if !calendar_ui.shortcut_listening {
 			calendar_ui_add_action_control(
 				"shortcut record",
 				"record another shortcut",
@@ -5618,12 +6013,6 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 		cancel_rect := calendar_shortcut_action_rect(2)
 		save_enabled := calendar_ui.shortcut_candidate_valid &&
 		                len(calendar_ui.shortcut_collision) == 0
-		calendar_push_rect(vertices, save_rect, theme.control)
-		if save_enabled {
-			calendar_push_border(vertices, save_rect, theme.positive)
-		}
-		calendar_push_rect(vertices, reset_rect, theme.control)
-		calendar_push_rect(vertices, cancel_rect, theme.control)
 		if save_enabled {
 			calendar_ui_add_action_control(
 				"shortcut save",
@@ -5654,11 +6043,8 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 			{0, 0, calendar_ui.width, calendar_ui.height},
 			theme.overlay,
 		)
-		calendar_push_rect(
-			vertices,
-			modal,
-			theme.modal,
-		)
+		calendar_push_rect(vertices, modal, theme.canvas)
+		calendar_push_border(vertices, modal, theme.hairline)
 		calendar_ui_add_action_control(
 			"command palette search",
 			"search commands",
@@ -5670,12 +6056,10 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 	if calendar_ui.discard_changes_open {
 		calendar_control_scope_begin(.Discard_Changes)
 		modal := calendar_ui_discard_rect()
-		calendar_push_rect(vertices, modal, theme.modal)
+		calendar_push_rect(vertices, modal, theme.canvas)
+		calendar_push_border(vertices, modal, theme.hairline)
 		keep := calendar_ui_discard_button_rect(0)
 		discard := calendar_ui_discard_button_rect(1)
-		calendar_push_rect(vertices, keep, theme.control)
-		calendar_push_rect(vertices, discard, theme.control)
-		calendar_push_border(vertices, discard, theme.destructive)
 		calendar_ui_add_action_control(
 			"discard keep editing",
 			"keep editing",
@@ -5690,13 +6074,6 @@ calendar_build_geometry :: proc(vertices: ^[dynamic]Calendar_Solid_Vertex) -> in
 		)
 		calendar_control_scope_end()
 	}
-	for index in 0..<4 {
-		calendar_push_rect(
-			vertices,
-			calendar_ui_window_control_rect(index),
-			button,
-		)
-	}
 	if calendar_active_modal().kind == .None {return len(vertices)}
 	return modal_start
 }
@@ -5710,48 +6087,6 @@ Calendar_Text_Alignment :: enum {
 	Start,
 	Center,
 	End,
-}
-
-Calendar_Icon_Point :: struct {
-	point: Point,
-	move: bool,
-}
-
-calendar_icon_xmark_points :: proc() -> [8]Calendar_Icon_Point {
-	return {
-		{{6.75827, 17.2426}, true},
-		{{12.0009, 12}, false},
-		{{17.2435, 6.75736}, true},
-		{{12.0009, 12}, false},
-		{{12.0009, 12}, true},
-		{{6.75827, 6.75736}, false},
-		{{12.0009, 12}, true},
-		{{17.2435, 17.2426}, false},
-	}
-}
-
-calendar_icon_minus_points :: proc() -> [2]Calendar_Icon_Point {
-	return {
-		{{6, 12}, true},
-		{{18, 12}, false},
-	}
-}
-
-calendar_icon_maximize_points :: proc() -> [12]Calendar_Icon_Point {
-	return {
-		{{7, 4}, true},
-		{{4, 4}, false},
-		{{4, 7}, false},
-		{{17, 4}, true},
-		{{20, 4}, false},
-		{{20, 7}, false},
-		{{7, 20}, true},
-		{{4, 20}, false},
-		{{4, 17}, false},
-		{{17, 20}, true},
-		{{20, 20}, false},
-		{{20, 17}, false},
-	}
 }
 
 calendar_text_run :: proc(
@@ -5860,6 +6195,34 @@ calendar_draw_text :: proc(
 	CGContextRestoreGState(ctx)
 }
 
+calendar_draw_text_run_at :: proc(
+	ctx: rawptr,
+	run: Calendar_Text_Run,
+	x, y: f64,
+	clip: Calendar_UI_Rect,
+	color: [4]f64,
+) {
+	if run.line == nil {return}
+	if calendar_ordered_active {
+		calendar_ordered_push_clip(clip)
+		calendar_ordered_emit_line(run.line, x, y, color)
+		calendar_ordered_pop_clip()
+		return
+	}
+	CGContextSaveGState(ctx)
+	CGContextClipToRect(
+		ctx,
+		{
+			{clip.x*calendar_ui.scale, clip.y*calendar_ui.scale},
+			{clip.w*calendar_ui.scale, clip.h*calendar_ui.scale},
+		},
+	)
+	CGContextSetRGBFillColor(ctx, color[0], color[1], color[2], color[3])
+	CGContextSetTextPosition(ctx, x*calendar_ui.scale, y*calendar_ui.scale)
+	CTLineDraw(run.line, ctx)
+	CGContextRestoreGState(ctx)
+}
+
 calendar_draw_numbered_action :: proc(
 	ctx, font: rawptr,
 	label: string,
@@ -5867,19 +6230,45 @@ calendar_draw_numbered_action :: proc(
 	rect: Calendar_UI_Rect,
 	label_color, number_color: [4]f64,
 ) {
-	calendar_draw_text(
-		ctx,
-		font,
-		fmt.tprintf("%d", number),
-		{rect.x+8, rect.y, 28, rect.h},
-		number_color,
-		0,
+	number_text := fmt.tprintf("%d", number)
+	open_w := calendar_label_width("[")
+	number_w := calendar_action_number_width(number)
+	tail := fmt.tprintf(" %s]", label)
+
+	open_run := calendar_text_run(font, "[")
+	if open_run.line != nil {
+		defer CFRelease(open_run.line)
+		open_y := rect.y +
+		          (rect.h-(open_run.ascent+open_run.descent)/calendar_ui.scale)/2 +
+		          open_run.descent/calendar_ui.scale
+		calendar_draw_text_run_at(ctx, open_run, rect.x, open_y, rect, label_color)
+	}
+
+	number_font := calendar_system_monospaced_font(
+		CALENDAR_TEXT_BASE_SIZE*CALENDAR_ACTION_NUMBER_SCALE*calendar_ui.scale,
 	)
+	if number_font != nil {
+		defer CFRelease(number_font)
+		run := calendar_text_run(number_font, number_text)
+		if run.line != nil {
+			defer CFRelease(run.line)
+			// Keep the shortcut digit on the button baseline inside the brackets.
+			calendar_draw_text_run_at(
+				ctx,
+				run,
+				rect.x+open_w,
+				rect.y+run.descent/calendar_ui.scale,
+				rect,
+				number_color,
+			)
+		}
+	}
+
 	calendar_draw_text(
 		ctx,
 		font,
-		label,
-		{rect.x+36, rect.y, rect.w-44, rect.h},
+		tail,
+		{rect.x+open_w+number_w, rect.y, max(0, rect.w-open_w-number_w), rect.h},
 		label_color,
 		0,
 	)
@@ -5932,17 +6321,17 @@ calendar_flash_badge_rect :: proc(
 	label_length: int,
 	view_width, view_height: f64,
 ) -> Calendar_UI_Rect {
-	width := max(16, 8+f64(label_length)*8)
-	height := 18.0
+	width := max(calendar_cell_width()*3, f64(label_length+2)*calendar_cell_width())
+	height := calendar_cell_height()
 	rect := target.rect
-	x, y := rect.x+2, rect.y+rect.h-height-2
+	x, y := rect.x, rect.y+rect.h-height
 	#partial switch target.anchor {
 	case .Top_Right:
-		x = rect.x+rect.w-width-2
+		x = rect.x+rect.w-width
 	case .Bottom_Left:
-		y = rect.y+2
+		y = rect.y
 	case .Bottom_Right:
-		x, y = rect.x+rect.w-width-2, rect.y+2
+		x, y = rect.x+rect.w-width, rect.y
 	case .Center:
 		x, y = rect.x+(rect.w-width)/2, rect.y+(rect.h-height)/2
 	}
@@ -5953,11 +6342,13 @@ calendar_flash_badge_rect :: proc(
 
 calendar_draw_flash_hints :: proc(ctx, font: rawptr) {
 	if !flash.is_active(&calendar_ui.flash) {return}
-	background := [4]f64{0.96, 0.94, 0.85, 1}
-	foreground := [4]f64{0.025, 0.027, 0.026, 1}
-	border := [4]f64{0.02, 0.02, 0.02, 1}
-	selected_background := [4]f64{0.98, 0.35, 0.09, 1}
-	selected_border := [4]f64{1.0, 0.55, 0.18, 1}
+	theme := calendar_theme(calendar_ui.theme_id)
+	background := calendar_color64(theme.canvas)
+	foreground := calendar_color64(theme.text)
+	border := calendar_color64(theme.hairline)
+	selected_background := calendar_color64(theme.text)
+	selected_foreground := calendar_color64(theme.canvas)
+	selected_border := calendar_color64(theme.text)
 	for &hint in flash.visible_hints(&calendar_ui.flash) {
 		badge := calendar_flash_badge_rect(
 			hint.target,
@@ -5967,6 +6358,7 @@ calendar_draw_flash_hints :: proc(ctx, font: rawptr) {
 		)
 		badge_background := hint.selected ? selected_background : background
 		badge_border := hint.selected ? selected_border : border
+		label_color := hint.selected ? selected_foreground : foreground
 		if hint.selected {
 			target := hint.target.rect
 			calendar_fill_overlay_border(
@@ -5980,355 +6372,38 @@ calendar_draw_flash_hints :: proc(ctx, font: rawptr) {
 		calendar_draw_text(
 			ctx,
 			font,
-			hint.label,
+			calendar_bracket(hint.label),
 			badge,
-			foreground,
+			label_color,
 			0,
 			.Center,
 		)
 	}
 }
 
-calendar_ordered_line :: proc(from, to: Point, color: [4]f64, thickness: f64) {
-	dx, dy := to.x-from.x, to.y-from.y
-	length := math.sqrt(dx*dx+dy*dy)
-	if length <= 0 {return}
-	angle := math.atan2(dy, dx)
-	framework_draw.push_transform(
-		&calendar_ordered_draw,
-		{
-			f32(math.cos(angle)),
-			f32(math.sin(angle)),
-			-f32(math.sin(angle)),
-			f32(math.cos(angle)),
-			f32(from.x),
-			f32(from.y),
-		},
-	)
-	framework_draw.solid(
-		&calendar_ordered_draw,
-		{0, -f32(thickness/2), f32(length), f32(thickness)},
-		calendar_ordered_color(color),
-		f32(thickness/2),
-	)
-	framework_draw.pop_transform(&calendar_ordered_draw)
-}
-
-calendar_draw_icon_path :: proc(
-	ctx: rawptr,
-	rect: Calendar_UI_Rect,
-	color: [4]f64,
-	points: []Calendar_Icon_Point,
-) {
-	if calendar_ordered_active {
-		calendar_ordered_push_clip(rect)
-		defer calendar_ordered_pop_clip()
-		previous: Point
-		has_previous := false
-		thickness := 1.5*min(rect.w, rect.h)/24
-		for command in points {
-			point := Point{
-				rect.x+command.point.x*rect.w/24,
-				rect.y+(24-command.point.y)*rect.h/24,
-			}
-			if command.move {
-				previous = point
-				has_previous = true
-				continue
-			}
-			if has_previous {calendar_ordered_line(previous, point, color, thickness)}
-			previous = point
-			has_previous = true
-		}
-		return
-	}
-	CGContextSaveGState(ctx)
-	defer CGContextRestoreGState(ctx)
-	CGContextClipToRect(
-		ctx,
-		{
-			{rect.x*calendar_ui.scale, rect.y*calendar_ui.scale},
-			{rect.w*calendar_ui.scale, rect.h*calendar_ui.scale},
-		},
-	)
-	CGContextSetRGBStrokeColor(
-		ctx,
-		color[0],
-		color[1],
-		color[2],
-		color[3],
-	)
-	CGContextSetLineWidth(
-		ctx,
-		1.5*calendar_ui.scale*min(rect.w, rect.h)/24,
-	)
-	CGContextSetLineCap(ctx, 1)
-	CGContextSetLineJoin(ctx, 1)
-	CGContextBeginPath(ctx)
-	for command in points {
-		x := (rect.x+command.point.x*rect.w/24)*calendar_ui.scale
-		y := (rect.y+(24-command.point.y)*rect.h/24)*calendar_ui.scale
-		if command.move {
-			CGContextMoveToPoint(ctx, x, y)
-		} else {
-			CGContextAddLineToPoint(ctx, x, y)
-		}
-	}
-	CGContextStrokePath(ctx)
-}
-
-calendar_icon_point :: proc(
-	rect: Calendar_UI_Rect,
-	x, y: f64,
-) -> Point {
-	return {
-		(rect.x+x*rect.w/24)*calendar_ui.scale,
-		(rect.y+(24-y)*rect.h/24)*calendar_ui.scale,
-	}
-}
-
-calendar_icon_logical_point :: proc(
-	rect: Calendar_UI_Rect,
-	x, y: f64,
-) -> Point {
-	return {rect.x+x*rect.w/24, rect.y+(24-y)*rect.h/24}
-}
-
-calendar_ordered_cubic :: proc(
-	from, control_1, control_2, to: Point,
-	color: [4]f64,
-	thickness: f64,
-) {
-	previous := from
-	for index in 1..=12 {
-		t := f64(index)/12
-		inverse := 1-t
-		next := Point{
-			inverse*inverse*inverse*from.x+
-			3*inverse*inverse*t*control_1.x+
-			3*inverse*t*t*control_2.x+
-			t*t*t*to.x,
-			inverse*inverse*inverse*from.y+
-			3*inverse*inverse*t*control_1.y+
-			3*inverse*t*t*control_2.y+
-			t*t*t*to.y,
-		}
-		calendar_ordered_line(previous, next, color, thickness)
-		previous = next
-	}
-}
-
-calendar_draw_ordered_settings_icon :: proc(
-	rect: Calendar_UI_Rect,
-	color: [4]f64,
-) {
-	calendar_ordered_push_clip(rect)
-	defer calendar_ordered_pop_clip()
-	thickness := 1.5*min(rect.w, rect.h)/24
-	previous := calendar_icon_logical_point(rect, 12, 15)
-	inner_curves := [4][3]Point{
-		{{13.6569, 15}, {15, 13.6569}, {15, 12}},
-		{{15, 10.3431}, {13.6569, 9}, {12, 9}},
-		{{10.3431, 9}, {9, 10.3431}, {9, 12}},
-		{{9, 13.6569}, {10.3431, 15}, {12, 15}},
-	}
-	for curve in inner_curves {
-		control_1 := calendar_icon_logical_point(rect, curve[0].x, curve[0].y)
-		control_2 := calendar_icon_logical_point(rect, curve[1].x, curve[1].y)
-		next := calendar_icon_logical_point(rect, curve[2].x, curve[2].y)
-		calendar_ordered_cubic(
-			previous,
-			control_1,
-			control_2,
-			next,
-			color,
-			thickness,
-		)
-		previous = next
-	}
-	gear := [30]Point{
-		{19.6224, 10.3954}, {18.5247, 7.7448}, {20, 6}, {18, 4},
-		{16.2647, 5.48295}, {13.5578, 4.36974}, {12.9353, 2}, {10.981, 2},
-		{10.3491, 4.40113}, {7.70441, 5.51596}, {6, 4}, {4, 6},
-		{5.45337, 7.78885}, {4.3725, 10.4463}, {2, 11}, {2, 13},
-		{4.40111, 13.6555}, {5.51575, 16.2997}, {4, 18}, {6, 20},
-		{7.79116, 18.5403}, {10.397, 19.6123}, {11, 22}, {13, 22},
-		{13.6045, 19.6132}, {16.2551, 18.5155}, {18.5159, 16.2494},
-		{19.6139, 13.598}, {21.9999, 12.9772}, {22, 11},
-	}
-	previous = calendar_icon_logical_point(rect, gear[0].x, gear[0].y)
-	for index in 1..<26 {
-		next := calendar_icon_logical_point(rect, gear[index].x, gear[index].y)
-		calendar_ordered_line(previous, next, color, thickness)
-		previous = next
-	}
-	control_1 := calendar_icon_logical_point(rect, 16.6969, 18.8313)
-	control_2 := calendar_icon_logical_point(rect, 18, 20)
-	next := calendar_icon_logical_point(rect, 18, 20)
-	calendar_ordered_cubic(
-		previous,
-		control_1,
-		control_2,
-		next,
-		color,
-		thickness,
-	)
-	previous = next
-	next = calendar_icon_logical_point(rect, 20, 18)
-	calendar_ordered_line(previous, next, color, thickness)
-	previous = next
-	for index in 26..<len(gear) {
-		next = calendar_icon_logical_point(rect, gear[index].x, gear[index].y)
-		calendar_ordered_line(previous, next, color, thickness)
-		previous = next
-	}
-	calendar_ordered_line(
-		previous,
-		calendar_icon_logical_point(rect, gear[0].x, gear[0].y),
-		color,
-		thickness,
-	)
-}
-
-calendar_draw_settings_icon :: proc(
-	ctx: rawptr,
-	rect: Calendar_UI_Rect,
-	color: [4]f64,
-) {
-	if calendar_ordered_active {
-		calendar_draw_ordered_settings_icon(rect, color)
-		return
-	}
-	CGContextSaveGState(ctx)
-	defer CGContextRestoreGState(ctx)
-	CGContextClipToRect(
-		ctx,
-		{
-			{rect.x*calendar_ui.scale, rect.y*calendar_ui.scale},
-			{rect.w*calendar_ui.scale, rect.h*calendar_ui.scale},
-		},
-	)
-	CGContextSetRGBStrokeColor(
-		ctx,
-		color[0],
-		color[1],
-		color[2],
-		color[3],
-	)
-	CGContextSetLineWidth(
-		ctx,
-		1.5*calendar_ui.scale*min(rect.w, rect.h)/24,
-	)
-	CGContextSetLineCap(ctx, 1)
-	CGContextSetLineJoin(ctx, 1)
-	CGContextBeginPath(ctx)
-	p := calendar_icon_point(rect, 12, 15)
-	CGContextMoveToPoint(ctx, p.x, p.y)
-	c1 := calendar_icon_point(rect, 13.6569, 15)
-	c2 := calendar_icon_point(rect, 15, 13.6569)
-	p = calendar_icon_point(rect, 15, 12)
-	CGContextAddCurveToPoint(ctx, c1.x, c1.y, c2.x, c2.y, p.x, p.y)
-	c1 = calendar_icon_point(rect, 15, 10.3431)
-	c2 = calendar_icon_point(rect, 13.6569, 9)
-	p = calendar_icon_point(rect, 12, 9)
-	CGContextAddCurveToPoint(ctx, c1.x, c1.y, c2.x, c2.y, p.x, p.y)
-	c1 = calendar_icon_point(rect, 10.3431, 9)
-	c2 = calendar_icon_point(rect, 9, 10.3431)
-	p = calendar_icon_point(rect, 9, 12)
-	CGContextAddCurveToPoint(ctx, c1.x, c1.y, c2.x, c2.y, p.x, p.y)
-	c1 = calendar_icon_point(rect, 9, 13.6569)
-	c2 = calendar_icon_point(rect, 10.3431, 15)
-	p = calendar_icon_point(rect, 12, 15)
-	CGContextAddCurveToPoint(ctx, c1.x, c1.y, c2.x, c2.y, p.x, p.y)
-	CGContextClosePath(ctx)
-
-	gear := [30]Point{
-		{19.6224, 10.3954},
-		{18.5247, 7.7448},
-		{20, 6},
-		{18, 4},
-		{16.2647, 5.48295},
-		{13.5578, 4.36974},
-		{12.9353, 2},
-		{10.981, 2},
-		{10.3491, 4.40113},
-		{7.70441, 5.51596},
-		{6, 4},
-		{4, 6},
-		{5.45337, 7.78885},
-		{4.3725, 10.4463},
-		{2, 11},
-		{2, 13},
-		{4.40111, 13.6555},
-		{5.51575, 16.2997},
-		{4, 18},
-		{6, 20},
-		{7.79116, 18.5403},
-		{10.397, 19.6123},
-		{11, 22},
-		{13, 22},
-		{13.6045, 19.6132},
-		{16.2551, 18.5155},
-		{18.5159, 16.2494},
-		{19.6139, 13.598},
-		{21.9999, 12.9772},
-		{22, 11},
-	}
-	p = calendar_icon_point(rect, gear[0].x, gear[0].y)
-	CGContextMoveToPoint(ctx, p.x, p.y)
-	for index in 1..<26 {
-		p = calendar_icon_point(rect, gear[index].x, gear[index].y)
-		CGContextAddLineToPoint(ctx, p.x, p.y)
-	}
-	c1 = calendar_icon_point(rect, 16.6969, 18.8313)
-	c2 = calendar_icon_point(rect, 18, 20)
-	p = calendar_icon_point(rect, 18, 20)
-	CGContextAddCurveToPoint(ctx, c1.x, c1.y, c2.x, c2.y, p.x, p.y)
-	p = calendar_icon_point(rect, 20, 18)
-	CGContextAddLineToPoint(ctx, p.x, p.y)
-	for index in 26..<len(gear) {
-		p = calendar_icon_point(rect, gear[index].x, gear[index].y)
-		CGContextAddLineToPoint(ctx, p.x, p.y)
-	}
-	p = calendar_icon_point(rect, 19.6224, 10.3954)
-	CGContextAddLineToPoint(ctx, p.x, p.y)
-	CGContextClosePath(ctx)
-	CGContextStrokePath(ctx)
-}
-
 calendar_draw_window_controls :: proc(ctx: rawptr) {
 	theme := calendar_theme(calendar_ui.theme_id)
-	colors := [3][4]f64{
-		calendar_color64(theme.destructive),
-		calendar_color64(theme.warm),
-		calendar_color64(theme.cool),
+	ink := calendar_color64(theme.text)
+	font := calendar_system_monospaced_font_for_style(.Body)
+	if font == nil {return}
+	defer CFRelease(font)
+	labels := [4]string{
+		calendar_bracket("x"),
+		calendar_bracket("-"),
+		calendar_bracket("+"),
+		calendar_bracket("set"),
 	}
-	xmark := calendar_icon_xmark_points()
-	calendar_draw_icon_path(
-		ctx,
-		calendar_ui_window_icon_rect(0),
-		colors[0],
-		xmark[:],
-	)
-	minus := calendar_icon_minus_points()
-	calendar_draw_icon_path(
-		ctx,
-		calendar_ui_window_icon_rect(1),
-		colors[1],
-		minus[:],
-	)
-	maximize := calendar_icon_maximize_points()
-	calendar_draw_icon_path(
-		ctx,
-		calendar_ui_window_icon_rect(2),
-		colors[2],
-		maximize[:],
-	)
-	calendar_draw_settings_icon(
-		ctx,
-		calendar_ui_settings_icon_rect(),
-		calendar_color64(theme.text_soft),
-	)
+	for index in 0..<4 {
+		calendar_draw_text(
+			ctx,
+			font,
+			labels[index],
+			calendar_ui_window_control_rect(index),
+			ink,
+			0,
+			.Center,
+		)
+	}
 }
 
 calendar_build_overlay_commands :: proc(modal_only := false) {
@@ -6350,15 +6425,12 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 		ink,
 		0,
 	)
-	today_color := calendar_color64(theme.warm)
-	search_color := calendar_color64(theme.cool)
-	new_color := calendar_color64(theme.warm_strong)
-	calendar_draw_text(ctx, font, "TODAY", calendar_ui_today_rect(), today_color, 0, .Center)
-	calendar_draw_text(ctx, font, "SEARCH", calendar_ui_search_rect(), search_color, 0, .Center)
-	calendar_draw_text(ctx, font, "NEW EVENT", calendar_ui_new_rect(), new_color, 0, .Center)
+	calendar_draw_text(ctx, font, calendar_bracket("TODAY"), calendar_ui_today_rect(), ink, 0, .Center)
+	calendar_draw_text(ctx, font, calendar_bracket("SEARCH"), calendar_ui_search_rect(), ink, 0, .Center)
+	calendar_draw_text(ctx, font, calendar_bracket("NEW EVENT"), calendar_ui_new_rect(), ink, 0, .Center)
 	now := agenda_local_today()
-	anchor := agenda_days_from_civil(now.year, now.month, now.day) +
-	          i64(calendar_ui.day_offset)
+	today_days := agenda_days_from_civil(now.year, now.month, now.day)
+	anchor := today_days + i64(calendar_ui.day_offset)
 	visible := calendar_ui_visible_day_count()
 	first_visible_day := calendar_ui_first_visible_day(anchor, visible)
 	weekdays := [7]string{"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"}
@@ -6375,19 +6447,34 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 			day.month,
 			day.day,
 		)
-		calendar_draw_text(ctx, font, date_text, {rect.x+8, rect.y, 164, rect.h}, muted, 0)
+		day_days := agenda_days_from_civil(day.year, day.month, day.day)
+		current_day := day_days == today_days
+		day_ink := current_day ? inverse : ink
+		day_muted := current_day ? inverse : muted
+		calendar_draw_text(
+			ctx,
+			font,
+			date_text,
+			{
+				rect.x+calendar_cell_width(),
+				rect.y,
+				calendar_label_width("WWW  0000-00-00"),
+				rect.h,
+			},
+			day_muted,
+			0,
+		)
 		day_items := calendar_day_items(day)
 		for item, item_index in day_items {
 			if item_index >= 3 {break}
 			event_rect := calendar_ui_event_rect(rect, item_index, min(3, len(day_items)))
 			if item.kind == .Chores {
-				text_color := calendar_color64(theme.positive)
 				calendar_draw_text(
 					ctx,
 					font,
-					fmt.tprintf("CHORES · %d", item.chore_count),
+					fmt.tprintf("[CHORES] %d", item.chore_count),
 					event_rect,
-					text_color,
+					day_ink,
 					8,
 				)
 				continue
@@ -6400,12 +6487,12 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 						ctx,
 						font,
 						fmt.tprintf(
-							"%s / %s",
+							"[HOL] %s / %s",
 							country.country_code,
 							definition.name,
 						),
 						event_rect,
-						ink,
+						day_ink,
 						8,
 					)
 				}
@@ -6424,11 +6511,7 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 			} else {
 				time_text = fmt.tprintf("ALL DAY  %s", entry.original_text)
 			}
-			text_color := ink
-			if theme.dark {
-				text_color = inverse
-			}
-			calendar_draw_text(ctx, font, time_text, event_rect, text_color)
+			calendar_draw_text(ctx, font, time_text, event_rect, day_ink)
 		}
 		if len(day_items) > 3 {
 			calendar_draw_text(
@@ -6436,7 +6519,7 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 				font,
 				fmt.tprintf("+%d", len(day_items)-3),
 				{rect.x+rect.w-42, rect.y, 38, rect.h},
-				ink_soft,
+				day_muted,
 				0,
 			)
 		}
@@ -6451,22 +6534,14 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 		.Action_Reject_Proposal,
 		.New_Chore,
 	}
-	action_labels := [7]string{
-		"EDIT",
-		"OPEN URL",
-		"DISMISS",
-		"COMPLETE",
-		"CONFIRM",
-		"REJECT",
-		"NEW CHORE",
-	}
+	action_labels := calendar_action_bar_labels()
 	for action, action_index in action_kinds {
 		label := action_labels[action_index]
 		rect := calendar_ui_action_rect(action_index)
 		color := muted
 		if calendar_ui_action_available(action) {color = ink}
-		code := 11+action_index
-		if action == .New_Chore {code = 21}
+		codes := calendar_action_bar_codes()
+		code := codes[action_index]
 		calendar_draw_numbered_action(
 			ctx,
 			font,
@@ -6480,13 +6555,15 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 	}
 	if modal_only && calendar_ui.editor_open {
 		modal := calendar_ui_editor_rect()
+		pad := calendar_half_cell()
+		cell := calendar_cell_height()
 		title := "NEW EVENT"
 		if calendar_ui.editor_event_index >= 0 {title = "EDIT EVENT"}
 		calendar_draw_text(
 			ctx,
 			font,
 			title,
-			{modal.x+18, modal.y+modal.h-48, modal.w-36, 34},
+			{modal.x+pad, modal.y+modal.h-pad-cell, modal.w-pad*2, cell},
 			ink,
 			0,
 		)
@@ -6506,11 +6583,17 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 		}
 		for field_index in 0..<5 {
 			field_rect := calendar_ui_editor_field_rect(field_index)
+			label_w := calendar_label_width(labels[field_index])
 			calendar_draw_text(
 				ctx,
 				font,
 				labels[field_index],
-				{field_rect.x-82, field_rect.y, 76, field_rect.h},
+				{
+					field_rect.x-label_w-calendar_cell_width(),
+					field_rect.y,
+					label_w,
+					field_rect.h,
+				},
 				muted,
 				0,
 			)
@@ -6523,32 +6606,28 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 				field_rect,
 				ink,
 				muted,
-				calendar_color64(theme.focus),
+				ink,
 			)
 		}
-		all_day_text_color := muted
-		if calendar_ui.editor_all_day {
-			all_day_text_color = calendar_color64(theme.important)
-		}
 		calendar_draw_text(
 			ctx,
 			font,
-			calendar_ui.editor_all_day ? "ALL DAY: YES" : "ALL DAY: NO",
+			fmt.tprintf("%s ALL DAY", calendar_toggle_mark(calendar_ui.editor_all_day)),
 			calendar_ui_editor_all_day_rect(),
-			all_day_text_color,
-			8,
+			ink,
+			0,
 		)
 		calendar_draw_text(
 			ctx,
 			font,
-			"SAVE",
+			calendar_bracket("SAVE"),
 			calendar_ui_editor_button_rect(0),
-			calendar_color64(theme.positive),
+			ink,
 		)
 		calendar_draw_text(
 			ctx,
 			font,
-			"CANCEL",
+			calendar_bracket("CANCEL"),
 			calendar_ui_editor_button_rect(1),
 			muted,
 		)
@@ -6556,17 +6635,24 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 			calendar_draw_text(
 				ctx,
 				font,
-				"DELETE",
+				calendar_bracket("DELETE"),
 				calendar_ui_editor_button_rect(2),
 				calendar_color64(theme.destructive),
 			)
 		}
 		if len(calendar_ui.editor_error) > 0 {
+			modal := calendar_ui_editor_rect()
+			pad := calendar_half_cell()
 			calendar_draw_text(
 				ctx,
 				font,
 				calendar_ui.editor_error,
-				calendar_chore_error_rect(),
+				{
+					modal.x+pad,
+					modal.y+pad+calendar_cell_height()*2,
+					modal.w-pad*2,
+					calendar_cell_height()*2,
+				},
 				calendar_color64(theme.destructive),
 				0,
 			)
@@ -6579,16 +6665,22 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 			ctx,
 			font,
 			calendar_ui.chore_entry_id > 0 ? "EDIT CHORE" : "NEW CHORE",
-			{modal.x+18, modal.y+modal.h-48, modal.w-36, 34},
+			{modal.x+calendar_half_cell(), modal.y+modal.h-calendar_half_cell()-calendar_cell_height(), modal.w-calendar_half_cell()*2, calendar_cell_height()},
 			ink,
 			0,
 		)
 		name_rect := calendar_chore_name_rect()
+		name_label_w := calendar_label_width("NAME")
 		calendar_draw_text(
 			ctx,
 			font,
 			"NAME",
-			{name_rect.x-66, name_rect.y, 60, name_rect.h},
+			{
+				name_rect.x-name_label_w-calendar_cell_width(),
+				name_rect.y,
+				name_label_w,
+				name_rect.h,
+			},
 			muted,
 			0,
 		)
@@ -6601,14 +6693,20 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 			name_rect,
 			ink,
 			muted,
-			calendar_color64(theme.focus),
+			ink,
 		)
 		days_rect := calendar_chore_days_rect()
+		every_w := calendar_label_width("EVERY")
 		calendar_draw_text(
 			ctx,
 			font,
 			"EVERY",
-			{modal.x+24, days_rect.y, 82, days_rect.h},
+			{
+				days_rect.x-every_w-calendar_cell_width(),
+				days_rect.y,
+				every_w,
+				days_rect.h,
+			},
 			muted,
 			0,
 		)
@@ -6621,13 +6719,19 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 			days_rect,
 			ink,
 			muted,
-			calendar_color64(theme.focus),
+			ink,
 		)
+		days_label_w := calendar_label_width("DAYS")
 		calendar_draw_text(
 			ctx,
 			font,
 			"DAYS",
-			{days_rect.x+days_rect.w+12, days_rect.y, 64, days_rect.h},
+			{
+				days_rect.x+days_rect.w+calendar_cell_width(),
+				days_rect.y,
+				days_label_w,
+				days_rect.h,
+			},
 			muted,
 			0,
 		)
@@ -6636,10 +6740,10 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 			font,
 			"PRESETS",
 			{
-				modal.x+24,
-				calendar_chore_interval_rect(0).y+38,
-				modal.w-48,
-				16,
+				modal.x+calendar_half_cell(),
+				calendar_chore_interval_rect(0).y+calendar_cell_height()*2,
+				modal.w-calendar_half_cell()*2,
+				calendar_cell_height(),
 			},
 			muted,
 			0,
@@ -6647,10 +6751,11 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 		)
 		for preset_index in 0..<len(CALENDAR_CHORE_PRESETS) {
 			preset_rect := calendar_chore_interval_rect(preset_index)
+			selected := calendar_ui.chore_interval ==
+			            CALENDAR_CHORE_PRESETS[preset_index]
 			color := muted
-			if calendar_ui.chore_interval ==
-			   CALENDAR_CHORE_PRESETS[preset_index] {
-				color = ink
+			if selected {
+				color = inverse
 			}
 			calendar_draw_numbered_action(
 				ctx,
@@ -6661,7 +6766,7 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 				preset_index+1,
 				preset_rect,
 				color,
-				muted,
+				color,
 			)
 		}
 		calendar_draw_numbered_action(
@@ -6670,7 +6775,7 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 			"SAVE",
 			6,
 			calendar_chore_button_rect(0),
-			calendar_color64(theme.positive),
+			ink,
 			muted,
 		)
 		calendar_draw_numbered_action(
@@ -6687,7 +6792,7 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 				ctx,
 				font,
 				calendar_ui.chore_error,
-				{modal.x+18, modal.y+60, modal.w-36, 28},
+				{modal.x+calendar_half_cell(), modal.y+calendar_half_cell()+calendar_cell_height()*2, modal.w-calendar_half_cell()*2, calendar_cell_height()*2},
 				calendar_color64(theme.destructive),
 				0,
 			)
@@ -6700,7 +6805,7 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 			ctx,
 			font,
 			"ARCHIVE EVENT",
-			{modal.x+24, modal.y+modal.h-52, modal.w-48, 30},
+			{modal.x+calendar_half_cell(), modal.y+modal.h-calendar_half_cell()-calendar_cell_height(), modal.w-calendar_half_cell()*2, calendar_cell_height()},
 			ink,
 			0,
 		)
@@ -6708,8 +6813,8 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 			ctx,
 			font,
 			event.original_text,
-			{modal.x+24, modal.y+modal.h-92, modal.w-48, 28},
-			calendar_color64(theme.warm),
+			{modal.x+calendar_half_cell(), modal.y+modal.h-calendar_half_cell()-calendar_cell_height()*3, modal.w-calendar_half_cell()*2, calendar_cell_height()*2},
+			ink,
 			0,
 		)
 		message := "ARCHIVED EVENTS ARE HIDDEN FROM THE CALENDAR AND REMINDERS"
@@ -6717,7 +6822,7 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 			ctx,
 			font,
 			message,
-			{modal.x+24, modal.y+modal.h-128, modal.w-48, 24},
+			{modal.x+calendar_half_cell(), modal.y+modal.h-calendar_half_cell()-calendar_cell_height()*5, modal.w-calendar_half_cell()*2, calendar_cell_height()},
 			muted,
 			0,
 		)
@@ -6744,7 +6849,7 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 				ctx,
 				font,
 				calendar_ui.archive_error,
-				{modal.x+24, modal.y+62, modal.w-48, 24},
+				{modal.x+calendar_half_cell(), modal.y+calendar_half_cell()+calendar_cell_height()*2, modal.w-calendar_half_cell()*2, calendar_cell_height()},
 				calendar_color64(theme.destructive),
 				0,
 			)
@@ -6756,7 +6861,7 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 			ctx,
 			font,
 			"REPLACE AGENDA DATA?",
-			{modal.x+24, modal.y+modal.h-52, modal.w-48, 30},
+			{modal.x+calendar_half_cell(), modal.y+modal.h-calendar_half_cell()-calendar_cell_height(), modal.w-calendar_half_cell()*2, calendar_cell_height()},
 			ink,
 			0,
 		)
@@ -6769,15 +6874,15 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 				calendar_ui.archive_import_summary.proposal_count,
 				calendar_ui.archive_import_summary.completion_count,
 			),
-			{modal.x+24, modal.y+modal.h-90, modal.w-48, 26},
-			calendar_color64(theme.warm),
+			{modal.x+calendar_half_cell(), modal.y+modal.h-calendar_half_cell()-calendar_cell_height()*3, modal.w-calendar_half_cell()*2, calendar_cell_height()},
+			ink,
 			0,
 		)
 		calendar_draw_text(
 			ctx,
 			font,
 			"THE CURRENT AGENDA WILL BE BACKED UP BEFORE REPLACEMENT",
-			{modal.x+24, modal.y+modal.h-124, modal.w-48, 24},
+			{modal.x+calendar_half_cell(), modal.y+modal.h-calendar_half_cell()-calendar_cell_height()*5, modal.w-calendar_half_cell()*2, calendar_cell_height()},
 			muted,
 			0,
 		)
@@ -6804,7 +6909,7 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 				ctx,
 				font,
 				calendar_ui.archive_import_error,
-				{modal.x+24, modal.y+66, modal.w-48, 24},
+				{modal.x+calendar_half_cell(), modal.y+calendar_half_cell()+calendar_cell_height()*2, modal.w-calendar_half_cell()*2, calendar_cell_height()},
 				calendar_color64(theme.destructive),
 				0,
 			)
@@ -6821,15 +6926,16 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 			calendar_settings_search_rect(),
 			ink,
 			muted,
-			calendar_color64(theme.focus),
+			ink,
 		)
-		xmark := calendar_icon_xmark_points()
-		close_icon := calendar_settings_close_rect()
-		calendar_draw_icon_path(
+		calendar_draw_text(
 			ctx,
-			{close_icon.x+5, close_icon.y+8, 18, 18},
-			muted,
-			xmark[:],
+			font,
+			calendar_bracket("x"),
+			calendar_settings_close_rect(),
+			ink,
+			0,
+			.Center,
 		)
 		categories := [4]Calendar_Settings_Category{
 			.Styling,
@@ -6839,11 +6945,9 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 		}
 		for category, index in categories {
 			count := calendar_settings_category_match_count(category)
-			color := muted
-			if !calendar_settings_search_active() &&
-			   category == calendar_ui.settings_category {
-				color = ink
-			}
+			selected := !calendar_settings_search_active() &&
+			            category == calendar_ui.settings_category
+			color := inverse if selected else muted
 			calendar_draw_text(
 				ctx,
 				font,
@@ -6861,9 +6965,8 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 			rect := calendar_settings_result_rect(index)
 			color := ink
 			value := ""
-			if descriptor.action.kind == .Set_Theme &&
-			   descriptor.action.theme_id == calendar_ui.theme_id {
-				value = "CURRENT"
+			if descriptor.action.kind == .Set_Theme {
+				value = calendar_toggle_mark(calendar_ui.theme_id == .HW_Dark)
 			} else if descriptor.action.kind == .Configure_Flash {
 				value = calendar_shortcut_display(calendar_ui.flash_leader)
 			}
@@ -6871,20 +6974,21 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 				ctx,
 				font,
 				descriptor.title,
-				{rect.x+8, rect.y, rect.w*0.58, rect.h},
+				{rect.x, rect.y, rect.w*0.58, rect.h},
 				color,
 				0,
 			)
 			if len(value) > 0 {
 				value_color := muted
 				if descriptor.action.kind == .Set_Theme {
-					value_color = calendar_color64(theme.focus)
+					value_color = ink
 				}
+				value_w := calendar_label_width(value)
 				calendar_draw_text(
 					ctx,
 					font,
 					value,
-					{rect.x+rect.w*0.60, rect.y, rect.w*0.38-8, rect.h},
+					{rect.x+rect.w-value_w, rect.y, value_w, rect.h},
 					value_color,
 					0,
 					.End,
@@ -6893,7 +6997,7 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 		}
 		if len(calendar_ui.settings_error) > 0 {
 			content := calendar_settings_content_rect()
-			message_color := calendar_color64(theme.positive)
+			message_color := ink
 			if calendar_ui.settings_message_is_error {
 				message_color = calendar_color64(theme.destructive)
 			}
@@ -6913,7 +7017,7 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 			ctx,
 			font,
 			"CONFIGURE FLASH LEADER",
-			{modal.x+24, modal.y+modal.h-50, modal.w-48, 30},
+			{modal.x+calendar_half_cell(), modal.y+modal.h-calendar_half_cell()-calendar_cell_height(), modal.w-calendar_half_cell()*2, calendar_cell_height()},
 			ink,
 			0,
 		)
@@ -6921,7 +7025,7 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 			ctx,
 			font,
 			"PRESS ONE KEY WITH ANY COMMAND, CONTROL, OPTION, OR SHIFT MODIFIERS",
-			{modal.x+24, modal.y+modal.h-80, modal.w-48, 22},
+			{modal.x+calendar_half_cell(), modal.y+modal.h-calendar_half_cell()-calendar_cell_height()*3, modal.w-calendar_half_cell()*2, calendar_cell_height()},
 			muted,
 			0,
 		)
@@ -6944,7 +7048,7 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 			font,
 			record_text,
 			calendar_shortcut_record_rect(),
-			calendar_ui.shortcut_listening ? calendar_color64(theme.focus) : ink,
+			calendar_ui.shortcut_listening ? ink : ink,
 			0,
 			.Center,
 		)
@@ -6957,7 +7061,7 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 				ctx,
 				font,
 				status,
-				{modal.x+24, modal.y+64, modal.w-48, 20},
+				{modal.x+calendar_half_cell(), modal.y+calendar_half_cell()+calendar_cell_height()*2, modal.w-calendar_half_cell()*2, calendar_cell_height()},
 				calendar_color64(theme.destructive),
 				0,
 			)
@@ -6966,15 +7070,15 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 				ctx,
 				font,
 				"READY TO SAVE",
-				{modal.x+24, modal.y+64, modal.w-48, 20},
-				calendar_color64(theme.positive),
+				{modal.x+calendar_half_cell(), modal.y+calendar_half_cell()+calendar_cell_height()*2, modal.w-calendar_half_cell()*2, calendar_cell_height()},
+				ink,
 				0,
 			)
 		}
 		save_color := muted
 		if calendar_ui.shortcut_candidate_valid &&
 		   len(calendar_ui.shortcut_collision) == 0 {
-			save_color = calendar_color64(theme.positive)
+			save_color = ink
 		}
 		calendar_draw_numbered_action(
 			ctx,
@@ -7010,7 +7114,7 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 			ctx,
 			font,
 			"DISCARD CHANGES?",
-			{modal.x+24, modal.y+modal.h-54, modal.w-48, 30},
+			{modal.x+calendar_half_cell(), modal.y+modal.h-calendar_half_cell()-calendar_cell_height(), modal.w-calendar_half_cell()*2, calendar_cell_height()},
 			ink,
 			0,
 		)
@@ -7018,7 +7122,7 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 			ctx,
 			font,
 			"YOUR UNSAVED CHANGES WILL BE LOST",
-			{modal.x+24, modal.y+modal.h-88, modal.w-48, 24},
+			{modal.x+calendar_half_cell(), modal.y+modal.h-calendar_half_cell()-calendar_cell_height()*3, modal.w-calendar_half_cell()*2, calendar_cell_height()},
 			muted,
 			0,
 		)
@@ -7042,7 +7146,6 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 		)
 	}
 	if modal_only && command_palette.is_open(&calendar_ui.palette) {
-		modal := calendar_ui_palette_rect()
 		calendar_draw_editable_text(
 			ctx,
 			font,
@@ -7052,7 +7155,7 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 			calendar_text_field_rect(.Command_Palette),
 			ink,
 			muted,
-			calendar_color64(theme.focus),
+			ink,
 		)
 		for result, index in command_palette.visible_results(&calendar_ui.palette) {
 			if index >= 10 {break}
@@ -7077,7 +7180,7 @@ calendar_build_overlay_commands :: proc(modal_only := false) {
 				ctx,
 				font,
 				title,
-				{modal.x+16, modal.y+modal.h-84-f64(index)*34, modal.w-32, 30},
+				calendar_ui_palette_result_rect(index),
 				color,
 			)
 		}
@@ -7285,6 +7388,7 @@ calendar_on_frame :: proc "c" (self: Id, command: Sel, timer: Id) {
 		scale := msg_f64(window, sel_registerName("backingScaleFactor"))
 		if scale > 0 && scale != calendar_ui.scale {
 			calendar_ui.scale = scale
+			calendar_refresh_cell_width()
 			calendar_ui.needs_redraw = true
 		}
 	}
@@ -7509,6 +7613,7 @@ calendar_ui_destroy :: proc() {
 	agenda_entries_destroy(&calendar_ui.entries)
 	delete(calendar_ui.occurrences)
 	agenda_entries_destroy(&calendar_ui.due_entries)
+	birthday_upcoming_destroy(&calendar_ui.birthday_upcoming)
 	calendar_holiday_countries_destroy(&calendar_ui.holiday_countries)
 	delete(calendar_ui.holiday_occurrences)
 	framework_ui.context_destroy(&calendar_ui.control_context)
@@ -7575,6 +7680,7 @@ calendar_gui_initialize :: proc() -> bool {
 		return false
 	}
 	calendar_ui.scale = 1
+	calendar_refresh_cell_width()
 	calendar_ui.needs_redraw = true
 	calendar_ui.theme_id = .HW_Light
 	if theme, found := calendar_meta_get("interface_theme", context.temp_allocator);

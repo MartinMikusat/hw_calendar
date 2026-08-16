@@ -19,29 +19,30 @@ calendar_text_styles_bind_size_and_tracking_test :: proc(t: ^testing.T) {
 	label := calendar_text_style_spec(.Label)
 	body := calendar_text_style_spec(.Body)
 	heading := calendar_text_style_spec(.Heading)
-	testing.expect_value(t, label.size_scale, 0.7)
-	testing.expect_value(t, label.tracking, 0.0)
+	testing.expect_value(t, label.size_scale, 1.0)
+	testing.expect_value(t, label.tracking, -0.45)
 	testing.expect_value(t, body.size_scale, 1.0)
 	testing.expect_value(t, body.tracking, -0.45)
 	testing.expect_value(t, heading.size_scale, 2.0)
-	testing.expect(t, heading.tracking < body.tracking)
+	testing.expect_value(t, heading.tracking, body.tracking)
 }
 
 @(test)
 calendar_event_rect_uses_available_day_width_test :: proc(t: ^testing.T) {
 	day := Calendar_UI_Rect{0, 0, 900, CALENDAR_DAY_ROW_HEIGHT}
+	date_w := calendar_label_width("WWW  0000-00-00")+calendar_cell_width()
 	single := calendar_ui_event_rect(day, 0, 1)
 	first_of_two := calendar_ui_event_rect(day, 0, 2)
 	second_of_two := calendar_ui_event_rect(day, 1, 2)
 	first_of_three := calendar_ui_event_rect(day, 0, 3)
-	testing.expect_value(t, single.x, 178.0)
-	testing.expect_value(t, single.x+single.w, 888.0)
+	testing.expect_value(t, single.x, date_w)
+	testing.expect_value(t, single.x+single.w, day.x+day.w-calendar_cell_width())
 	testing.expect(t, single.w > first_of_two.w)
 	testing.expect(t, first_of_two.w > first_of_three.w)
 	testing.expect_value(
 		t,
 		second_of_two.x-(first_of_two.x+first_of_two.w),
-		6.0,
+		calendar_cell_width(),
 	)
 }
 
@@ -109,9 +110,9 @@ calendar_automation_uses_accessory_activation_policy_test :: proc(t: ^testing.T)
 }
 
 @(test)
-calendar_modal_backdrop_uses_eighty_percent_opacity_test :: proc(t: ^testing.T) {
-	testing.expect_value(t, calendar_theme(.HW_Light).overlay[3], f32(0.80))
-	testing.expect_value(t, calendar_theme(.HW_Dark).overlay[3], f32(0.80))
+calendar_modal_backdrop_uses_catalog_dim_opacity_test :: proc(t: ^testing.T) {
+	testing.expect_value(t, calendar_theme(.HW_Light).overlay[3], f32(0.45))
+	testing.expect_value(t, calendar_theme(.HW_Dark).overlay[3], f32(0.45))
 	testing.expect_value(t, calendar_theme(.HW_Light).modal[3], f32(1.0))
 	testing.expect_value(t, calendar_theme(.HW_Dark).modal[3], f32(1.0))
 }
@@ -193,14 +194,15 @@ calendar_chore_geometry_stays_inside_modal_test :: proc(t: ^testing.T) {
 		)
 		error_rect := calendar_chore_error_rect()
 		save := calendar_chore_button_rect(0)
-		testing.expect(t, name.x >= modal.x+24)
-		testing.expect(t, name.x+name.w <= modal.x+modal.w-24)
-		testing.expect(t, days.x >= modal.x+24)
-		testing.expect(t, days.x+days.w <= modal.x+modal.w-24)
+		pad := calendar_half_cell()
+		testing.expect(t, name.x >= modal.x+pad)
+		testing.expect(t, name.x+name.w <= modal.x+modal.w-pad)
+		testing.expect(t, days.x >= modal.x+pad)
+		testing.expect(t, days.x+days.w <= modal.x+modal.w-pad)
 		testing.expect(t, days.y+days.h < name.y)
 		testing.expect(t, first_interval.y+first_interval.h < days.y)
-		testing.expect(t, first_interval.x >= modal.x+24)
-		testing.expect(t, last_interval.x+last_interval.w <= modal.x+modal.w-24)
+		testing.expect(t, first_interval.x >= modal.x+pad)
+		testing.expect(t, last_interval.x+last_interval.w <= modal.x+modal.w-pad)
 		testing.expect(t, save.y+save.h < error_rect.y)
 		testing.expect(t, error_rect.y+error_rect.h < first_interval.y)
 	}
@@ -264,11 +266,19 @@ calendar_due_section_is_top_pinned_and_bounded_test :: proc(t: ^testing.T) {
 	first := calendar_ui_due_row_rect(start)
 	last := calendar_ui_due_row_rect(end-1)
 	testing.expect(t, first.y+first.h <= section.y+section.h-CALENDAR_DUE_HEADER_HEIGHT)
-	testing.expect(t, last.y >= section.y+CALENDAR_DUE_FOOTER_HEIGHT)
+	calendar_test_expect_approx(t, last.y, section.y+CALENDAR_DUE_FOOTER_HEIGHT)
 	done := calendar_ui_due_done_rect(start)
 	focus := calendar_ui_due_focus_rect(start)
+	content := calendar_ui_due_row_content_rect(start)
+	pad := calendar_half_cell()
 	testing.expect(t, done.x >= focus.x+focus.w)
 	testing.expect(t, done.y >= first.y && done.y+done.h <= first.y+first.h)
+	calendar_test_expect_approx(t, content.x, first.x+pad)
+	calendar_test_expect_approx(t, content.y, first.y+pad)
+	calendar_test_expect_approx(t, content.w, first.w-pad*2)
+	calendar_test_expect_approx(t, content.h, first.h-pad*2)
+	testing.expect(t, focus.x >= content.x)
+	testing.expect(t, done.x+done.w <= content.x+content.w)
 	calendar_ui_scroll_due_rows(-24)
 	start, _ = calendar_ui_due_visible_range()
 	testing.expect(t, start > 0)
@@ -365,51 +375,42 @@ calendar_day_items_group_chores_and_preserve_selected_chore_test :: proc(
 	}
 }
 
-calendar_icon_points_use_iconoir_viewbox_test :: proc(
-	t: ^testing.T,
-	points: []Calendar_Icon_Point,
-	path_length: int,
-) {
-	for point, index in points {
-		testing.expect(t, point.point.x >= 0 && point.point.x <= 24)
-		testing.expect(t, point.point.y >= 0 && point.point.y <= 24)
-		testing.expect_value(t, point.move, index%path_length == 0)
-	}
-}
-
 @(test)
-calendar_window_icons_match_iconoir_paths_test :: proc(t: ^testing.T) {
-	xmark := calendar_icon_xmark_points()
-	testing.expect_value(t, len(xmark), 8)
-	calendar_icon_points_use_iconoir_viewbox_test(t, xmark[:], 2)
-
-	minus := calendar_icon_minus_points()
-	testing.expect_value(t, len(minus), 2)
-	calendar_icon_points_use_iconoir_viewbox_test(t, minus[:], 2)
-
-	maximize := calendar_icon_maximize_points()
-	testing.expect_value(t, len(maximize), 12)
-	calendar_icon_points_use_iconoir_viewbox_test(t, maximize[:], 3)
-}
-
-@(test)
-calendar_window_controls_reach_top_edge_test :: proc(t: ^testing.T) {
+calendar_window_controls_use_bracket_label_widths_test :: proc(t: ^testing.T) {
 	height := 720.0
 	close := calendar_ui_window_control_rect_for_height(0, height)
 	minimize := calendar_ui_window_control_rect_for_height(1, height)
 	zoom := calendar_ui_window_control_rect_for_height(2, height)
-	testing.expect_value(t, close, Calendar_UI_Rect{0, 690, 30, 30})
-	testing.expect_value(t, minimize, Calendar_UI_Rect{38, 690, 30, 30})
-	testing.expect_value(t, zoom, Calendar_UI_Rect{76, 690, 30, 30})
+	settings := calendar_ui_window_control_rect_for_height(3, height)
+	testing.expect_value(t, close.w, calendar_label_width(calendar_bracket("x")))
+	testing.expect_value(t, minimize.w, calendar_label_width(calendar_bracket("-")))
+	testing.expect_value(t, zoom.w, calendar_label_width(calendar_bracket("+")))
+	testing.expect_value(t, settings.w, calendar_label_width(calendar_bracket("set")))
+	calendar_test_expect_approx(t, close.h, CALENDAR_CELL_HEIGHT)
+	testing.expect_value(t, close.x, 0.0)
+	testing.expect_value(
+		t,
+		minimize.x,
+		close.w+calendar_cell_width(),
+	)
+	testing.expect_value(
+		t,
+		zoom.x,
+		minimize.x+minimize.w+calendar_cell_width(),
+	)
+	testing.expect_value(
+		t,
+		settings.x,
+		zoom.x+zoom.w+calendar_cell_width(),
+	)
 	testing.expect_value(t, close.y+close.h, height)
 }
 
 @(test)
 calendar_settings_control_precedes_title_without_overlap_test :: proc(t: ^testing.T) {
 	settings := calendar_ui_window_control_rect_for_height(3, 760)
-	title := Calendar_UI_Rect{160, 729, 360, 30}
-	testing.expect_value(t, settings, Calendar_UI_Rect{114, 730, 30, 30})
-	testing.expect_value(t, title.x-(settings.x+settings.w), 16.0)
+	testing.expect_value(t, settings.w, calendar_label_width(calendar_bracket("set")))
+	testing.expect(t, settings.x+settings.w < 160.0)
 }
 
 @(test)
@@ -419,14 +420,17 @@ calendar_details_layout_splits_default_content_width_test :: proc(t: ^testing.T)
 		CALENDAR_DEFAULT_WINDOW_HEIGHT,
 	)
 	testing.expect_value(t, calendar.x, CALENDAR_LAYOUT_MARGIN)
-	testing.expect_value(t, calendar.w, 632.0)
-	testing.expect_value(t, details.w, 632.0)
-	testing.expect_value(
+	calendar_test_expect_approx(t, calendar.w, details.w)
+	calendar_test_expect_approx(
 		t,
 		details.x-(calendar.x+calendar.w),
 		CALENDAR_PANEL_GAP,
 	)
-	testing.expect_value(t, details.x+details.w, 1274.0)
+	calendar_test_expect_approx(
+		t,
+		details.x+details.w,
+		CALENDAR_DEFAULT_WINDOW_WIDTH-CALENDAR_LAYOUT_MARGIN,
+	)
 	testing.expect_value(
 		t,
 		calendar.h,
@@ -451,6 +455,8 @@ calendar_action_bar_uses_one_row_with_section_gap_when_wide_test :: proc(t: ^tes
 	testing.expect_value(t, first.x, CALENDAR_LAYOUT_MARGIN)
 	testing.expect_value(t, first.y, CALENDAR_ACTION_BAR_BOTTOM)
 	testing.expect_value(t, first.h, CALENDAR_ACTION_BAR_HEIGHT)
+	testing.expect_value(t, first.w, calendar_action_bar_item_width(0))
+	testing.expect_value(t, seventh.w, calendar_action_bar_item_width(6))
 	calendar_test_expect_approx(t, second.x-(first.x+first.w), CALENDAR_ACTION_BAR_GAP)
 	calendar_test_expect_approx(t, third.x-(second.x+second.w), CALENDAR_ACTION_BAR_GAP)
 	calendar_test_expect_approx(t, fourth.x-(third.x+third.w), CALENDAR_ACTION_BAR_GAP)
@@ -461,12 +467,24 @@ calendar_action_bar_uses_one_row_with_section_gap_when_wide_test :: proc(t: ^tes
 		seventh.x-(sixth.x+sixth.w),
 		CALENDAR_ACTION_BAR_GAP*2,
 	)
-	testing.expect_value(t, seventh.x+seventh.w, 1274.0)
+	testing.expect(t, seventh.x+seventh.w < 1280.0-CALENDAR_LAYOUT_MARGIN)
 }
 
 @(test)
 calendar_action_bar_wraps_four_plus_three_when_narrow_test :: proc(t: ^testing.T) {
-	rects, layout := calendar_ui_action_bar_layout_for_width(CALENDAR_WINDOW_MIN_WIDTH)
+	min_rects, min_layout := calendar_ui_action_bar_layout_for_width(CALENDAR_WINDOW_MIN_WIDTH)
+	testing.expect(t, min_layout.fits)
+	testing.expect_value(t, min_layout.row_count, 1)
+	testing.expect(t, min_rects[6].x+min_rects[6].w <= CALENDAR_WINDOW_MIN_WIDTH-CALENDAR_LAYOUT_MARGIN)
+	calendar_test_expect_approx(
+		t,
+		calendar_ui_content_bottom_for_width(CALENDAR_WINDOW_MIN_WIDTH),
+		CALENDAR_ACTION_BAR_BOTTOM+CALENDAR_ACTION_BAR_HEIGHT+CALENDAR_LAYOUT_MARGIN,
+	)
+
+	// Force the wrap path with a footer narrower than one compact row.
+	narrow := min_layout.required_width + CALENDAR_LAYOUT_MARGIN*2 - 1
+	rects, layout := calendar_ui_action_bar_layout_for_width(narrow)
 	testing.expect(t, layout.fits)
 	testing.expect_value(t, layout.row_count, 2)
 	testing.expect_value(t, layout.first_row_count, 4)
@@ -474,12 +492,43 @@ calendar_action_bar_wraps_four_plus_three_when_narrow_test :: proc(t: ^testing.T
 		testing.expect(t, rects[index].x+rects[index].w < rects[index+1].x)
 	}
 	testing.expect(t, rects[0].y > rects[4].y)
-	testing.expect_value(
+	calendar_test_expect_approx(
 		t,
-		calendar_ui_content_bottom_for_width(CALENDAR_WINDOW_MIN_WIDTH),
+		calendar_ui_content_bottom_for_width(narrow),
 		CALENDAR_ACTION_BAR_BOTTOM+CALENDAR_ACTION_BAR_HEIGHT*2+
 			CALENDAR_ACTION_BAR_ROW_GAP+CALENDAR_LAYOUT_MARGIN,
 	)
+}
+
+@(test)
+calendar_editor_and_settings_use_cell_grid_padding_test :: proc(t: ^testing.T) {
+	calendar_ui.width = CALENDAR_DEFAULT_WINDOW_WIDTH
+	calendar_ui.height = CALENDAR_DEFAULT_WINDOW_HEIGHT
+	editor := calendar_ui_editor_rect()
+	field := calendar_ui_editor_field_rect(0)
+	save := calendar_ui_editor_button_rect(0)
+	testing.expect(t, editor.w >= CALENDAR_DIALOG_MIN_WIDTH)
+	testing.expect_value(t, field.h, CALENDAR_CELL_HEIGHT)
+	testing.expect_value(t, save.h, CALENDAR_CELL_HEIGHT)
+	search := calendar_settings_search_rect()
+	close := calendar_settings_close_rect()
+	sidebar := calendar_settings_sidebar_rect()
+	testing.expect(t, search.y > sidebar.y+sidebar.h)
+	testing.expect(t, close.x > search.x+search.w)
+	testing.expect_value(t, search.h, CALENDAR_CELL_HEIGHT)
+}
+
+@(test)
+calendar_palette_results_sit_below_search_field_test :: proc(t: ^testing.T) {
+	calendar_ui.width = CALENDAR_DEFAULT_WINDOW_WIDTH
+	calendar_ui.height = CALENDAR_DEFAULT_WINDOW_HEIGHT
+	search := calendar_text_field_rect(.Command_Palette)
+	first := calendar_ui_palette_result_rect(0)
+	second := calendar_ui_palette_result_rect(1)
+	testing.expect_value(t, search.h, CALENDAR_CELL_HEIGHT)
+	testing.expect(t, first.y+first.h <= search.y)
+	testing.expect(t, second.y+second.h <= first.y)
+	testing.expect_value(t, first.h, CALENDAR_CELL_HEIGHT*2)
 }
 
 @(test)
@@ -488,7 +537,7 @@ calendar_day_list_stops_above_action_bar_test :: proc(t: ^testing.T) {
 		CALENDAR_DEFAULT_WINDOW_WIDTH,
 		CALENDAR_DEFAULT_WINDOW_HEIGHT,
 	)
-	testing.expect_value(t, count, 22)
+	testing.expect_value(t, count, 27)
 	last_y := CALENDAR_DEFAULT_WINDOW_HEIGHT-CALENDAR_HEADER_HEIGHT-
 	          CALENDAR_DAY_TOP_GAP-
 	          CALENDAR_DAY_ROW_PITCH*f64(count-1)-CALENDAR_DAY_ROW_HEIGHT
@@ -869,8 +918,8 @@ calendar_flash_badges_use_vocal_training_geometry_test :: proc(t: ^testing.T) {
 	)
 	testing.expect(t, left.x < right.x)
 	testing.expect_value(t, left.y, right.y)
-	testing.expect_value(t, left.w, 24.0)
-	testing.expect_value(t, left.h, 18.0)
+	testing.expect_value(t, left.w, calendar_cell_width()*4)
+	testing.expect_value(t, left.h, CALENDAR_CELL_HEIGHT)
 }
 
 @(test)
@@ -887,7 +936,7 @@ calendar_flash_badges_clamp_to_view_test :: proc(t: ^testing.T) {
 	)
 	testing.expect_value(t, badge.x, 0.0)
 	testing.expect_value(t, badge.y, 0.0)
-	testing.expect_value(t, badge.w, 16.0)
+	testing.expect_value(t, badge.w, calendar_cell_width()*3)
 }
 
 @(test)

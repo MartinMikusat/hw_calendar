@@ -2,13 +2,17 @@
 
 `hw_calendar` is a local personal agenda for Apple Silicon macOS. It stores one
 unstructured stream of entries and renders confirmed dates in a Metal period
-view.
+view. The interface uses the terminal catalog language from
+`hw_odin_components`: System Monospaced ink on paper, hairline frames,
+bracket buttons, and red only for destructive work.
 
 ## AI-assisted development disclosure
 
 Models used:
 
 - **gpt-5.6-sol**
+- **Cursor Grok 4.6**
+- **Cursor Grok 4.5**
 
 ## Product contract
 
@@ -31,9 +35,9 @@ current product boundary.
 The main interface shows a chronological period. Dated entries, due recurring
 work, and enabled holidays share this view. An entry without a confirmed date
 remains available through search and the structured command interface.
-The focused date stays in the center row and always has a subtle focus tint and
-border, including when the date has no entries. The current date has a stronger
-warm tint and border.
+The focused date stays in the center row and always has a 2-point ink tick,
+including when the date has no entries. The current date inverts to ink on
+paper.
 
 Each date groups its recurring chores into one distinct `CHORES · count` target.
 Regular all-day and timed entries remain separate calendar cards.
@@ -68,14 +72,14 @@ Down to jump to the previous or next date that contains an entry, chore, or
 holiday. Each jump occurs once per occupied date. The selected date moves to
 the center row.
 
-Use the gear control or `Command-,` to open Settings. Settings contains Styling,
-Data, Shortcuts, and Updates. Data exports and imports the portable
-agenda archive. Updates starts a signed update check. The application stores
-interface preferences in its local database.
+Use `[set]` or `Command-,` to open Settings. Settings contains Styling,
+Data, Shortcuts, and Updates. Styling is one Dark toggle. Data exports and
+imports the portable agenda archive. Updates starts a signed update check. The
+application stores interface preferences in its local database.
 
-Each project-styled modal uses one 80-percent backdrop over the visible
-interface. Escape, Cancel, and a backdrop click dismiss ordinary modals. An
-edited form requests confirmation before it discards unsaved changes.
+Each modal uses a hairline frame over a 45-percent dim. Escape, Cancel, and a
+backdrop click dismiss ordinary modals. An edited form requests confirmation
+before it discards unsaved changes.
 
 ## Structured commands
 
@@ -151,11 +155,11 @@ not read or migrate records from that file.
 
 ## Development
 
-Install the Xcode command-line tools and Homebrew LLVM. Install the optional
-Metal toolchain for release builds. The dependency script downloads the locked
-Odin macOS ARM64 release and creates isolated sibling checkouts in the user
-cache. Each build verifies the Odin archive and its embedded source revision.
-It also verifies the LLVM version and the checksums of the compiler and AddressSanitizer runtime.
+Install the Xcode command-line tools, Homebrew LLVM, and the workspace-global
+compiler through `hw_odin_toolchain`. Install the optional Metal toolchain for
+release builds. The dependency script creates isolated sibling checkouts in
+the user cache. Each build verifies the active global compiler, LLVM version,
+and the checksums of Clang and the AddressSanitizer runtime.
 The build rejects a repository or bundled icon that differs from
 [`dependencies.lock`](dependencies.lock).
 
@@ -168,9 +172,9 @@ The build rejects a repository or bundled icon that differs from
 ./dev.sh asan
 ```
 
-Normal builds do not resolve Odin from `PATH`. Run `sync` after a lock change
-or on a new machine. Run `brew upgrade llvm` when an update report requires a
-new locked LLVM version. Set `HW_CALENDAR_DEPS_DIR` to relocate the cache.
+Normal builds invoke `hw-odin`. Run `sync` after a lock change or on a new
+machine. Run `brew upgrade llvm` when an update report requires a new locked
+LLVM version. Set `HW_CALENDAR_DEPS_DIR` to relocate the cache.
 
 Run the complete update gate manually with:
 
@@ -229,7 +233,8 @@ or bundle the concrete font family.
 
 Bundled icons:
 
-- Iconoir Regular 7.11.1 at commit `3497016dcb93122b5a64a2df1221598a14ecf4f3`
+- App icon only: Iconoir Regular `calendar.svg` 7.11.1 at commit `3497016dcb93122b5a64a2df1221598a14ecf4f3`
+- Window controls use bracket labels (`[x]` `[-]` `[+]` `[set]`) instead of Iconoir glyphs
 - Source: <https://github.com/iconoir-icons/iconoir/tree/v7.11.1/icons/regular>
 - Archive SHA-256: `6a22cb1c3eaa49485a5f40cf276c0d063af0792d7bfed8b4bec4fbfc8866e5b2`
 - Bundled file checksums: [dependencies.lock](dependencies.lock)

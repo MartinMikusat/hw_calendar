@@ -9,9 +9,12 @@ calendar_settings_layout_contains_two_columns_at_minimum_size_test :: proc(
 	t: ^testing.T,
 ) {
 	modal := calendar_settings_rect_for_size(640, 480)
-	testing.expect_value(t, modal, Calendar_UI_Rect{24, 36, 592, 408})
-	testing.expect(t, modal.w > 168+32+240)
-	testing.expect(t, modal.h > 300)
+	inset := CALENDAR_DIALOG_VIEWPORT_INSET
+	testing.expect_value(t, modal.x, inset)
+	testing.expect_value(t, modal.w, 640-inset*2)
+	testing.expect(t, modal.h <= calendar_cell_height()*24)
+	testing.expect(t, modal.w > calendar_label_width("SHORTCUTS  00")+calendar_cell_width()*4)
+	testing.expect(t, modal.h > calendar_cell_height()*10)
 }
 
 @(test)
@@ -28,9 +31,9 @@ calendar_settings_catalog_contains_every_theme_and_flash_test :: proc(t: ^testin
 		if descriptor.category == .Data {data_count += 1}
 		if descriptor.category == .Updates {update_count += 1}
 	}
-	testing.expect_value(t, theme_count, 2)
+	testing.expect_value(t, theme_count, 1)
 	testing.expect_value(t, flash_count, 1)
-	testing.expect_value(t, data_count, 2)
+	testing.expect_value(t, data_count, 3)
 	testing.expect_value(t, update_count, 1)
 }
 

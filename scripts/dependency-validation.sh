@@ -2,7 +2,7 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-ODIN=$("$ROOT/scripts/dependencies.sh" path odin)
+ODIN=hw-odin
 LLVM_BIN=$("$ROOT/scripts/dependencies.sh" path llvm-bin)
 MATCH_SORTER_ROOT=$("$ROOT/scripts/dependencies.sh" path repo hw_odin_matchSorter)
 LOCAL_COMMAND_ROOT=$("$ROOT/scripts/dependencies.sh" path repo hw_odin_ipc_localCommand)
@@ -10,7 +10,7 @@ UI_FLASH_ROOT=$("$ROOT/scripts/dependencies.sh" path repo hw_odin_ui_flash)
 COMMAND_PALETTE_ROOT=$("$ROOT/scripts/dependencies.sh" path repo hw_odin_ui_commandPalette)
 COMPONENTS_ROOT=$("$ROOT/scripts/dependencies.sh" path repo hw_odin_ui_components)
 UI_FRAMEWORK_ROOT=$("$ROOT/scripts/dependencies.sh" path repo hw_odin_ui_framework)
-PATH="$(dirname "$ODIN"):$LLVM_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+PATH="${HOME:?}/.local/bin:$LLVM_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export PATH
 
 APP_PID=

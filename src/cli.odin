@@ -35,6 +35,10 @@ Calendar_CLI_Command :: enum {
 	Proposal_Reject,
 	Chore_Due,
 	Chore_Done,
+	Birthday_Create,
+	Birthday_List,
+	Birthday_Due,
+	Birthday_Default,
 	Archive_Export,
 	Archive_Inspect,
 	Archive_Import,
@@ -74,6 +78,9 @@ Calendar_CLI_Request :: struct {
 	clear_source_url: bool,
 	clear_reminder: bool,
 	clear_recurrence: bool,
+	birthday_name: string,
+	birthday_date: string,
+	birthday_advance_days: int,
 }
 
 calendar_cli_command_reads_input :: proc(command: Calendar_CLI_Command) -> bool {
@@ -89,6 +96,7 @@ calendar_cli_command_mutates_database :: proc(command: Calendar_CLI_Command) -> 
 	       command == .Entry_Dismiss || command == .Entry_Restore ||
 	       command == .Proposal_Submit || command == .Proposal_Confirm ||
 	       command == .Proposal_Reject || command == .Chore_Done ||
+	       command == .Birthday_Create || command == .Birthday_Default ||
 	       command == .Archive_Import
 }
 
@@ -199,6 +207,10 @@ calendar_cli_command_name :: proc(command: Calendar_CLI_Command) -> string {
 	case .Proposal_Reject: return "proposal reject"
 	case .Chore_Due: return "chore due"
 	case .Chore_Done: return "chore done"
+	case .Birthday_Create: return "birthday create"
+	case .Birthday_List: return "birthday list"
+	case .Birthday_Due: return "birthday due"
+	case .Birthday_Default: return "birthday default"
 	case .Archive_Export: return "archive export"
 	case .Archive_Inspect: return "archive inspect"
 	case .Archive_Import: return "archive import"
@@ -479,7 +491,7 @@ calendar_cli_parse :: proc(args: []string) -> (Calendar_CLI_Request, Calendar_CL
 	request: Calendar_CLI_Request
 	request.protocol_version = CALENDAR_CLI_PROTOCOL_VERSION
 	if len(args) < 2 {
-		return {}, calendar_cli_error(.None, 2, "usage", "Expected an entry, agenda, proposal, chore, archive, update, reminder, or UI command."), false
+		return {}, calendar_cli_error(.None, 2, "usage", "Expected an entry, agenda, proposal, chore, birthday, archive, update, reminder, or UI command."), false
 	}
 	group, action := args[0], args[1]
 	switch {
@@ -507,6 +519,11 @@ calendar_cli_parse :: proc(args: []string) -> (Calendar_CLI_Request, Calendar_CL
 	case group == "proposal" && action == "reject": request.command = .Proposal_Reject
 	case group == "chore" && action == "due": request.command = .Chore_Due
 	case group == "chore" && action == "done": request.command = .Chore_Done
+	case group == "birthday" && action == "create": request.command = .Birthday_Create
+	case group == "birthday" && action == "add": request.command = .Birthday_Create
+	case group == "birthday" && action == "list": request.command = .Birthday_List
+	case group == "birthday" && action == "due": request.command = .Birthday_Due
+	case group == "birthday" && action == "default": request.command = .Birthday_Default
 	case group == "archive" && action == "export": request.command = .Archive_Export
 	case group == "archive" && action == "inspect": request.command = .Archive_Inspect
 	case group == "archive" && action == "import": request.command = .Archive_Import
@@ -666,6 +683,22 @@ calendar_cli_parse :: proc(args: []string) -> (Calendar_CLI_Request, Calendar_CL
 			request.set_recurrence = true
 			request.clear_recurrence = false
 			has_entry_payload = true
+		case "--name":
+			if request.command != .Birthday_Create {return {}, calendar_cli_error(request.command, 2, "usage", "--name is only available for birthday create."), false}
+			request.birthday_name = value
+		case "--date":
+			if request.command != .Birthday_Create {return {}, calendar_cli_error(request.command, 2, "usage", "--date is only available for birthday create."), false}
+			request.birthday_date = value
+		case "--advance-days":
+			if request.command != .Birthday_Create {return {}, calendar_cli_error(request.command, 2, "usage", "--advance-days is only available for birthday create."), false}
+			parsed, ok := strconv.parse_int(value)
+			if !ok || parsed < 0 {return {}, calendar_cli_error(request.command, 2, "usage", "--advance-days requires a non-negative integer."), false}
+			request.birthday_advance_days = parsed
+		case "--days":
+			if request.command != .Birthday_Default {return {}, calendar_cli_error(request.command, 2, "usage", "--days is only available for birthday default."), false}
+			parsed, ok := strconv.parse_int(value)
+			if !ok || parsed < 1 {return {}, calendar_cli_error(request.command, 2, "usage", "--days requires a positive integer."), false}
+			request.birthday_advance_days = parsed
 		case:
 			return {}, calendar_cli_error(request.command, 2, "usage", fmt.tprintf("Unknown option: %s.", flag)), false
 		}
@@ -712,6 +745,24 @@ calendar_cli_parse :: proc(args: []string) -> (Calendar_CLI_Request, Calendar_CL
 		request.input = input_json
 		if request.command == .Entry_Update {
 			request.command = .Entry_Patch
+		}
+	}
+	if request.command == .Birthday_Create {
+		if len(strings.trim_space(request.birthday_name)) == 0 {
+			return {}, calendar_cli_error(
+				request.command,
+				2,
+				"usage",
+				"birthday create requires --name.",
+			), false
+		}
+		if len(request.birthday_date) == 0 {
+			return {}, calendar_cli_error(
+				request.command,
+				2,
+				"usage",
+				"birthday create requires --date.",
+			), false
 		}
 	}
 	if request.command == .UI_Bridge_Pointer && len(request.target_control) == 0 {
@@ -771,6 +822,9 @@ calendar_cli_execute :: proc(request: Calendar_CLI_Request) -> Calendar_CLI_Resu
 	if (request.command >= .Entry_Create && request.command <= .Chore_Done) ||
 	   request.command == .Entry_Patch {
 		return agenda_cli_execute(request)
+	}
+	if request.command >= .Birthday_Create && request.command <= .Birthday_Default {
+		return birthday_cli_execute(request)
 	}
 	#partial switch request.command {
 	case .Reminder_Status:

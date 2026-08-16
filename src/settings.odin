@@ -24,8 +24,9 @@ Calendar_Setting_Descriptor :: struct {
 CALENDAR_SETTING_FLASH_ID :: command_palette.Entry_ID(100)
 CALENDAR_SETTING_ARCHIVE_EXPORT_ID :: command_palette.Entry_ID(300)
 CALENDAR_SETTING_ARCHIVE_IMPORT_ID :: command_palette.Entry_ID(301)
+CALENDAR_SETTING_BIRTHDAY_DEFAULT_ID :: command_palette.Entry_ID(302)
 CALENDAR_SETTING_UPDATE_CHECK_ID :: command_palette.Entry_ID(400)
-CALENDAR_SETTINGS_ROW_HEIGHT :: 36.0
+CALENDAR_SETTINGS_ROW_HEIGHT :: 25.2
 
 calendar_settings_category_name :: proc(category: Calendar_Settings_Category) -> string {
 	switch category {
@@ -41,23 +42,16 @@ calendar_settings_descriptors :: proc(
 	allocator := context.temp_allocator,
 ) -> [dynamic]Calendar_Setting_Descriptor {
 	result := make([dynamic]Calendar_Setting_Descriptor, allocator)
-	for id in calendar_theme_ids() {
-		theme := calendar_theme(id)
-		keywords := make([]string, 5, allocator)
-		keywords[0] = "theme"
-		keywords[1] = "appearance"
-		keywords[2] = "style"
-		keywords[3] = theme.dark ? "dark" : "light"
-		keywords[4] = theme.storage_id
-		append(&result, Calendar_Setting_Descriptor{
-			id = command_palette.Entry_ID(int(id)+1),
-			category = .Styling,
-			title = theme.name,
-			subtitle = theme.dark ? "Dark interface theme" : "Light interface theme",
-			keywords = keywords,
-			action = {kind = .Set_Theme, theme_id = id},
-		})
-	}
+	dark_keywords := make([]string, 5, allocator)
+	copy(dark_keywords, []string{"theme", "appearance", "style", "dark", "light"})
+	append(&result, Calendar_Setting_Descriptor{
+		id = command_palette.Entry_ID(2),
+		category = .Styling,
+		title = "Dark",
+		subtitle = "Invert paper and ink",
+		keywords = dark_keywords,
+		action = {kind = .Set_Theme, theme_id = .HW_Dark},
+	})
 	flash_keywords := make([]string, 5, allocator)
 	copy(
 		flash_keywords,
@@ -101,6 +95,19 @@ calendar_settings_descriptors :: proc(
 		keywords = update_keywords,
 		action = {kind = .Check_For_Updates},
 	})
+	birthday_keywords := make([]string, 4, allocator)
+	copy(birthday_keywords, []string{"birthday", "advance", "days", "default"})
+	append(&result, Calendar_Setting_Descriptor{
+		id = CALENDAR_SETTING_BIRTHDAY_DEFAULT_ID,
+		category = .Data,
+		title = "Birthday advance",
+		subtitle = fmt.tprintf(
+			"Default advance notice: %d days (use birthday default --days N)",
+			birthday_default_advance_days(),
+		),
+		keywords = birthday_keywords,
+		action = {},
+	})
 	return result
 }
 
@@ -133,8 +140,9 @@ calendar_settings_entries :: proc(
 calendar_settings_rect_for_size :: proc(
 	width, height: f64,
 ) -> Calendar_UI_Rect {
-	modal_width := min(900.0, width-48)
-	modal_height := min(600.0, height-72)
+	inset := CALENDAR_DIALOG_VIEWPORT_INSET*2
+	modal_width := min(900.0, max(CALENDAR_DIALOG_MIN_WIDTH, width-inset))
+	modal_height := min(calendar_cell_height()*24, height-inset)
 	return {
 		(width-modal_width)/2,
 		(height-modal_height)/2,
@@ -149,31 +157,64 @@ calendar_settings_rect :: proc() -> Calendar_UI_Rect {
 
 calendar_settings_search_rect :: proc() -> Calendar_UI_Rect {
 	modal := calendar_settings_rect()
-	return {modal.x+20, modal.y+modal.h-62, modal.w-76, 34}
+	cell := calendar_cell_height()
+	gap := calendar_cell_width()
+	close_w := calendar_label_width(calendar_bracket("x"))
+	return {
+		modal.x+gap,
+		modal.y+modal.h-cell-gap,
+		modal.w-close_w-gap*3,
+		cell,
+	}
 }
 
 calendar_settings_close_rect :: proc() -> Calendar_UI_Rect {
 	modal := calendar_settings_rect()
-	return {modal.x+modal.w-48, modal.y+modal.h-62, 28, 34}
+	cell := calendar_cell_height()
+	gap := calendar_cell_width()
+	close_w := calendar_label_width(calendar_bracket("x"))
+	return {
+		modal.x+modal.w-close_w-gap,
+		modal.y+modal.h-cell-gap,
+		close_w,
+		cell,
+	}
 }
 
 calendar_settings_sidebar_rect :: proc() -> Calendar_UI_Rect {
 	modal := calendar_settings_rect()
-	return {modal.x+20, modal.y+20, 168, modal.h-94}
+	pad := calendar_half_cell()
+	search := calendar_settings_search_rect()
+	return {
+		modal.x+pad,
+		modal.y+pad,
+		calendar_label_width("SHORTCUTS  00")+calendar_cell_width()*2,
+		search.y-modal.y-pad*2,
+	}
 }
 
 calendar_settings_content_rect :: proc() -> Calendar_UI_Rect {
 	modal := calendar_settings_rect()
-	return {modal.x+200, modal.y+20, modal.w-220, modal.h-94}
+	sidebar := calendar_settings_sidebar_rect()
+	pad := calendar_half_cell()
+	search := calendar_settings_search_rect()
+	x := sidebar.x+sidebar.w+calendar_cell_width()
+	return {
+		x,
+		modal.y+pad,
+		modal.x+modal.w-pad-x,
+		search.y-modal.y-pad*2,
+	}
 }
 
 calendar_settings_category_rect :: proc(index: int) -> Calendar_UI_Rect {
 	sidebar := calendar_settings_sidebar_rect()
 	return {
 		sidebar.x,
-		sidebar.y+sidebar.h-CALENDAR_SETTINGS_ROW_HEIGHT-f64(index)*CALENDAR_SETTINGS_ROW_HEIGHT,
+		sidebar.y+sidebar.h-CALENDAR_SETTINGS_ROW_HEIGHT-
+			f64(index)*CALENDAR_SETTINGS_ROW_HEIGHT,
 		sidebar.w,
-		CALENDAR_SETTINGS_ROW_HEIGHT-2,
+		CALENDAR_SETTINGS_ROW_HEIGHT,
 	}
 }
 
@@ -181,9 +222,10 @@ calendar_settings_result_rect :: proc(index: int) -> Calendar_UI_Rect {
 	content := calendar_settings_content_rect()
 	return {
 		content.x,
-		content.y+content.h-CALENDAR_SETTINGS_ROW_HEIGHT-f64(index)*CALENDAR_SETTINGS_ROW_HEIGHT,
+		content.y+content.h-CALENDAR_SETTINGS_ROW_HEIGHT-
+			f64(index)*CALENDAR_SETTINGS_ROW_HEIGHT,
 		content.w,
-		CALENDAR_SETTINGS_ROW_HEIGHT-2,
+		CALENDAR_SETTINGS_ROW_HEIGHT,
 	}
 }
 
@@ -408,8 +450,10 @@ calendar_shortcut_recorder_reset :: proc() -> bool {
 }
 
 calendar_shortcut_modal_rect :: proc() -> Calendar_UI_Rect {
-	width := min(560.0, calendar_ui.width-48)
-	height := 260.0
+	cell := calendar_cell_height()
+	pad := calendar_half_cell()
+	width := calendar_modal_width(560, calendar_ui.width)
+	height := cell*10+pad*2
 	return {
 		(calendar_ui.width-width)/2,
 		(calendar_ui.height-height)/2,
@@ -420,17 +464,24 @@ calendar_shortcut_modal_rect :: proc() -> Calendar_UI_Rect {
 
 calendar_shortcut_record_rect :: proc() -> Calendar_UI_Rect {
 	modal := calendar_shortcut_modal_rect()
-	return {modal.x+24, modal.y+86, modal.w-48, 54}
+	pad := calendar_half_cell()
+	return {
+		modal.x+pad,
+		modal.y+pad+calendar_cell_height()*3,
+		modal.w-pad*2,
+		calendar_cell_height()*2,
+	}
 }
 
 calendar_shortcut_action_rect :: proc(index: int) -> Calendar_UI_Rect {
 	modal := calendar_shortcut_modal_rect()
-	gap := 8.0
-	width := (modal.w-48-gap*2)/3
+	gap := calendar_cell_width()
+	pad := calendar_half_cell()
+	width := (modal.w-pad*2-gap*2)/3
 	return {
-		modal.x+24+f64(index)*(width+gap),
-		modal.y+24,
+		modal.x+pad+f64(index)*(width+gap),
+		modal.y+pad,
 		width,
-		34,
+		calendar_cell_height(),
 	}
 }
